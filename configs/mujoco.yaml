@@ -1,0 +1,43 @@
+# Simulation parameters
+sim:
+  timestep: 0.002
+  nsubsteps: 1
+  duration_sec: 30
+  render: true
+
+# Green / environment
+green:
+  size_xy: [6.0, 4.0]          # meters (length x width of playable area)
+  friction: [0.8, 0.005, 0.0001]  # [slide, spin, roll] MuJoCo friction triplet
+  elevation: 0.0               # z of the green plane
+
+# Hole (logical cup)
+hole:
+  position: [-1.0, 0.0, 0.0]    # x, y, z of hole center; z should match green elevation
+  radius: 0.108                # 108 mm (regulation cup ~ 108 mm diameter -> radius ~0.108/2? adjust as you like)
+  rim_height: 0.01             # z threshold to consider ball sunk (above plane a tad)
+  cup_depth: 0.12              # where we “drop” the ball to when sunk
+
+# Ball
+ball:
+  radius: 0.02135              # ~42.7 mm diameter
+  mass: 0.04593                # 45.93 g
+  friction: [0.2, 0.0001, 0.00001]
+  restitution: 0.6
+
+# Club (simple 1-DOF “putter” on a hinge)
+club:
+  shaft_length: 0.4            # meters
+  head_length: 0.1             # visual only here
+  mass: 0.5
+  hinge_pos: [0.5, 0.0, 0.4]   # hinge anchor in world coords
+  damping: 0.2
+  armature: 0.002
+  motor_gear: 8.0              # motor gear
+  swing_impulse: 1.5           # control pulse magnitude on keypress
+  swing_duration: 0.08         # seconds
+
+# Ball start
+start:
+  ball_pos: [0.0, 0.0, 0.02135]
+  ball_quat: [1, 0, 0, 0]      # w, x, y, z
