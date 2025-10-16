@@ -1,6 +1,6 @@
 import re, socket, struct, time, numpy as np
-from .config import HOST_ROBOT, PORT_SCRIPT, PORT_SERVOJ, LOCAL_PORT, STATE_FILE, DT
-from .utils import spin_until
+from config import HOST_ROBOT, PORT_SCRIPT, PORT_SERVOJ, LOCAL_PORT, STATE_FILE, DT, DQ_MAX
+from utils import spin_until
 
 _FLOAT_RE = re.compile(r"[-+]?\d*\.\d+|[-+]?\d+")
 
@@ -79,6 +79,78 @@ def stream_servoj(Q, host=HOST_ROBOT, port=PORT_SERVOJ, dt=DT, lookahead=0.20, g
         s.send(b"stopj(1.0)\n")
     finally:
         s.close()
+
+
+def _finite_diff_vel(Q: np.ndarray, dt: float) -> np.ndarray:
+    Q = np.asarray(Q, float)
+    N = len(Q)
+    if N < 2:
+        return np.zeros_like(Q)
+    DQ = np.zeros_like(Q)
+    DQ[0]    = (Q[1]  - Q[0])  / dt
+    DQ[-1]   = (Q[-1] - Q[-2]) / dt
+    DQ[1:-1] = (Q[2:] - Q[:-2])/(2*dt)
+    return DQ
+
+def stream_speedj(Q,
+                  host=HOST_ROBOT,
+                  port=PORT_SCRIPT,   # 30002
+                  dt=DT,
+                  a=12.0,             # try 10–20 for responsiveness
+                  prewarm_cycles=2,   # very short prewarm
+                  settle_cycles=4,
+                  clip_to_limits=True,
+                  ema=None,           # keep None at first
+                  debug=True):
+    Q  = np.asarray(Q, float)
+    DQ = _finite_diff_vel(Q, dt)
+
+    if ema is not None and len(DQ) > 1:
+        alpha = float(ema)
+        for i in range(1, len(DQ)):
+            DQ[i] = alpha*DQ[i] + (1.0-alpha)*DQ[i-1]
+
+    if clip_to_limits:
+        lim = np.asarray(DQ_MAX, float)
+        DQ  = np.clip(DQ, -lim, lim)
+
+    # --- diagnostics
+    if debug and len(DQ) > 0:
+        print(f"[speedj] dq mean |.| = {np.mean(np.linalg.norm(DQ, axis=1)):.4f} rad/s, "
+              f"max |dq| = {np.max(np.abs(DQ)):.4f} rad/s")
+
+    # minimum robust command duration
+    t_cmd = max(0.012, float(dt))   # 12 ms minimum
+    zero  = "0,0,0,0,0,0"
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    s.connect((host, port))
+    try:
+        t_next = time.perf_counter() + 0.05
+
+        # short prewarm at zero vel (just to enter RT loop)
+        for _ in range(prewarm_cycles):
+            s.send(f"speedj([{zero}], a={a:.3f}, t={t_cmd:.6f})\n".encode("ascii"))
+            spin_until(t_next); t_next += dt
+
+        # stream velocities
+        for dq in DQ:
+            s.send(f"speedj([{','.join(f'{x:.6f}' for x in dq)}], a={a:.3f}, t={t_cmd:.6f})\n".encode("ascii"))
+            spin_until(t_next); t_next += dt
+
+        # short settle at zero, then stop
+        for _ in range(settle_cycles):
+            s.send(f"speedj([{zero}], a={a:.3f}, t={t_cmd:.6f})\n".encode("ascii"))
+            spin_until(t_next); t_next += dt
+        s.send(b"stopj(1.0)\n")
+    finally:
+        s.close()
+
+
+
+
+
 
 def stream_servoj_with_feedback(Q, host=HOST_ROBOT, fb_port=LOCAL_PORT, dt=DT,
                                     lookahead=0.20, gain=1200): # for CB2

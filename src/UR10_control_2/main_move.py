@@ -1,10 +1,11 @@
 import numpy as np, time
-from .config import HOST_ROBOT, DT, STATE_FILE, IMPACT
-from .utils import T_from_xyz_rpy, normalize
-from .kinematics import pick_ik_solution, fk_ur10
-from .trajectory import plan_piecewise_quintic, concat_with_holds
-from .comms import read_actual_q_reverse_socket, stream_servoj, read_q_stream_realtime, movej_and_wait, stream_servoj_with_feedback, start_joint_publisher, read_joint_stream, read_q_stream_primary, movej_blocking
-from .plotter import tcp_path_from_Q, plot_paths
+from config import HOST_ROBOT, DT, STATE_FILE, IMPACT
+from utils import T_from_xyz_rpy, normalize
+from kinematics import pick_ik_solution, fk_ur10
+from trajectory import plan_piecewise_quintic, concat_with_holds
+from comms import read_actual_q_reverse_socket, stream_servoj, stream_speedj, read_q_stream_realtime, movej_and_wait, stream_servoj_with_feedback, start_joint_publisher, read_joint_stream, read_q_stream_primary, movej_blocking
+from plotter import tcp_path_from_Q, plot_paths
+from ur10_logger import UR10Logger
 
 def load_last_q(path):
     try:
@@ -80,35 +81,44 @@ def main():
     swing_time = DT * len(Q_all)
     read_time  = swing_time + 1.5  # margin
 
-    # --- start passive 30003 reader in a thread ---
-    import threading
-    q_actual_series = None
-    def _reader():
-        nonlocal q_actual_series
-        q_actual_series = read_q_stream_realtime(HOST_ROBOT, duration_s=read_time, max_hz=125)
+    # --- start UR10Logger on 30003 (records q, dq, tcp/dtcp if present) ---
+    logger = UR10Logger(HOST_ROBOT, port=30013, log_folder="log")
+    logger.connect(timeout=2.0)
+    logger.start_logging(print_rows=False)
+    try:
+        # --- stream the trajectory over 30002 (controller executes URScript) ---
+        stream_speedj(Q_all, host=HOST_ROBOT, port=30003, dt=DT, a=3.0, ema=0.2)
+        #stream_servoj(Q_all, host=HOST_ROBOT, port=30002, dt=DT, lookahead=0.05, gain=1200)  # :contentReference[oaicite:1]{index=1}
+    finally:
+        # ensure the logger stops even if streaming raises
+        logger.stop_logging()
+        logger.close()
 
-    t = threading.Thread(target=_reader, daemon=True)
-    t.start()
 
-    # --- stream the trajectory over 30002 (controller executes URScript) ---
-    stream_servoj(Q_all, host=HOST_ROBOT, port=30002, dt=DT, lookahead=0.05, gain=1200) # lookahead=0.22, gain=1200
-
-    # --- wait for the reader to finish and plot ---
-    t.join(read_time + 1.0)
+    # --- pull recorded data from logger ---
+    q_actual_series = logger.as_array("q")     # Nx6, may be empty if connection failed
+    t_series        = logger.time()
 
     if q_actual_series is not None and len(q_actual_series) > 1:
-        print(f"Realtime stream samples: {len(q_actual_series)} "
-            f"(~{len(q_actual_series)/read_time:.1f} Hz)")
-        P_actual = tcp_path_from_Q(q_actual_series, fk_ur10)
-        plot_paths(P_plan, P_actual, show_xy=True, title="UR10 TCP path (planned vs actual)")
         q_last = q_actual_series[-1]
     else:
-        print("Realtime stream had no/low samples; plotting planned only.")
-        plot_paths(P_plan, None, show_xy=True, title="UR10 TCP path (planned only)")
         q_last = Q_all[-1]
 
     save_last_q(STATE_FILE, q_last)
     print("Saved last joints to", STATE_FILE)
+
+    path = logger.save_csv(which=("tcp","dtcp","q","dq"), suffix="run1")
+    print("Saved CSV:", path)
+
+    # Optional: plots into ./log
+    logger.plot("q",  pi_axis=True,  save=True, show=False, title="Joint positions vs time")
+    logger.plot("dq", pi_axis=False, save=True, show=False, title="Joint velocities vs time")
+
+    # FK-based pose/twist (robust even if tcp/dtcp aren’t streamed)
+    logger.plot_tcp("tcp",  show=False, ztool=0.0)
+    logger.plot_tcp("dtcp", show=False, ztool=0.0, smoothing=5)
+    logger.plot_tcp_xy(save=True, show=False, fk=True)
+    logger.plot_tcp_xyz(save=True, show=False, fk=True)
 
 if __name__ == "__main__":
     main()
