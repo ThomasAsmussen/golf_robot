@@ -1,17 +1,23 @@
 <mujoco model="golf_world">
   <compiler angle="degree"/>
-  <option timestep="0.0002" gravity="0 0 -9.81" integrator="RK4"/>
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="RK4"/>
 
+  <!-- Defaults: enable 6D friction and make contacts crisp -->
   <default>
-    <geom rgba="0.8 0.8 0.8 1" condim="3"/>
+    <geom condim="6" solref="0.002 1" solimp="0.95 0.99 0.001"
+          friction="0.20 0.001 0.0014"/> <!-- 0.6 0.001 0.0048 slide, spin, roll -->
   </default>
+
 
   <asset>
     <!-- Materials -->
-    <material name="green_mat" rgba="0.2 0.55 0.2 1"/>
-    <material name="cup_mat"   rgba="0.85 0.85 0.85 1"/>
-    <material name="ball_mat"  rgba="1 1 1 1"/>
-    <material name="club_mat"  rgba="0.2 0.2 0.2 1"/>
+    <material name="green_mat"     rgba="0.2 0.55 0.2 1"/>
+    <material name="green_mat_out" rgba="0.5 0.5 0.5 1"/>
+    <material name="cup_mat"       rgba="0.3 0.3 0.3 1"/>
+    <texture  name ="checks" type="2d" builtin="checker" width="512" height="512"
+              rgb1="1 1 1" rgb2="0 0 0" mark="cross" markrgb="1 0 0"/>
+    <material name="ball_mat"  texture="checks" rgba="1 1 1 1"/>
+    <material name="club_mat"  rgba="0.9 0.9 0.9 1"/>
 
     <!-- 27 convex wedges (OBJ). Scale x10 vs earlier (0.01) -->
     <mesh name="cup_w00" file="assets/golf_hole_obj/golf_hole_obj_collision_0.obj"  scale="0.01 0.01 0.01"/>
@@ -41,42 +47,44 @@
     <mesh name="cup_w24" file="assets/golf_hole_obj/golf_hole_obj_collision_24.obj" scale="0.01 0.01 0.01"/>
     <mesh name="cup_w25" file="assets/golf_hole_obj/golf_hole_obj_collision_25.obj" scale="0.01 0.01 0.01"/>
     <mesh name="cup_w26" file="assets/golf_hole_obj/golf_hole_obj_collision_26.obj" scale="0.01 0.01 0.01"/>
+
   </asset>
 
-  <!-- Coefficient of restitution -->
+  <!-- Contacts -->
   <contact>
-  <pair geom1="ball_geom" geom2="club_head"
-        solref="0.004 0.25"
-        solimp="0.95 0.99 0.00108"/>
+    <!-- Ball–club impact: set restitution ~0.62 via damp_ratio ≈ 0.1504 -->
+    <pair geom1="ball_geom" geom2="club_head"
+          solref="0.02 0.26"  
+          solimp="0.7 0.95 0.01"/>
   </contact>
 
+  
   <worldbody>
     <!-- ==== GROUND: 6x4 m area, 0.04 m thick, with a 0.106 m opening at (2, 0) ==== -->
     <!-- Top slab (y in [ +0.053, +2 ]) -->
     <geom name="green_top" type="box"
           pos="0 1.0265 -0.02" size="3.0 0.9735 0.02"
-          material="green_mat" friction="1 0.005 0.00108"/>
+          material="green_mat_out"/>
 
     <!-- Bottom slab (y in [ -2, -0.053 ]) -->
     <geom name="green_bottom" type="box"
           pos="0 -1.0265 -0.02" size="3.0 0.9735 0.02"
-          material="green_mat" friction="1 0.005 0.00108"/>
+          material="green_mat_out"/>
 
-    <!-- Left slab (x in [ -3, 1.947 ]) -->
+    <!-- Left slab (x in [ -3, 1.947 ]) material="green_mat" -->
     <geom name="green_left" type="box"
           pos="-0.5265 0 -0.02" size="2.4735 0.08 0.02"
-          material="green_mat" friction="1 0.005 0.00108"/>
+          material="green_mat"/>
 
     <!-- Right slab (x in [ 2.053, 3 ]) -->
     <geom name="green_right" type="box"
           pos="2.5265 0 -0.02" size="0.4735 0.08 0.02"
-          material="green_mat" friction="1 0.005 0.00108"/>
+          material="green_mat_out"/>
 
-    <!-- ==== CUP (27 convex OBJ wedges only; no bottom or extras) ==== -->
-    <!-- If your OBJs are centered vertically with height H, change pos to (2 0 -H/2). -->
+    <!-- ==== CUP (27 convex OBJ wedges; no bottom) -0.110665 ==== -->
     <body name="cup" pos="2 0 -0.110665">
-      <geom type="mesh" mesh="cup_w00" material="cup_mat" contype="1" conaffinity="1"
-            friction="0.6 0.003 0.00108" solref="0.006 0.8" solimp="0.95 0.99 0.002"/>
+      <!-- Give the first wedge explicit friction; others inherit defaults -->
+      <geom type="mesh" mesh="cup_w00" material="cup_mat" contype="1" conaffinity="1"/>
       <geom type="mesh" mesh="cup_w01" material="cup_mat" contype="1" conaffinity="1"/>
       <geom type="mesh" mesh="cup_w02" material="cup_mat" contype="1" conaffinity="1"/>
       <geom type="mesh" mesh="cup_w03" material="cup_mat" contype="1" conaffinity="1"/>
@@ -108,23 +116,23 @@
       <site name="hole_center" pos="0 0 0" size="0.055" rgba="0 0 0 0.2" type="sphere"/>
     </body>
 
+    
     <!-- ==== BALL ==== -->
     <camera name="overview" pos="2.0 -3.0 1.5" quat="0.7 0.0 0.7 0.0" fovy="45"/>
     <body name="ball" pos="0 0 0.02135">
       <freejoint name="ball_free"/>
       <geom name="ball_geom" type="sphere" size="0.02135"
             rgba="0.6 0.2 0.6 1" mass="0.04593" material="ball_mat"
-            solref="0.005 1" solimp="0.95 0.99 0.001"
-            friction="0.6 0.0001 0.000108" condim="6"/>
+            condim="6"/>
     </body>
 
     <!-- ==== CLUB ==== -->
-    <body name="club_mount" pos="0 0 0.02135">
+    <body name="club_mount" pos="0 0 0">
       <joint name="mount_free" type="free" damping="20"/>
       <geom name="mount_inert" type="sphere" size="0.10" mass="5.0"
             rgba="0 0 0 0" contype="0" conaffinity="0"/>
 
-      <body name="club_offset" pos="0.0 0.05 0.37865">
+      <body name="club_offset" pos="-0.03 0.05 0.37865">
         <body name="club_link" pos="0 0 0">
           <joint name="club_hinge" type="hinge" axis="0 1 0" limited="true" range="-60 60" damping="0.1"/>
           <geom name="club_shaft" type="capsule" fromto="0 0 0  0 0 -0.36" size="0.01" mass="1.0" material="club_mat"/>
@@ -136,6 +144,7 @@
 
   <!-- ==== ACTUATOR ==== -->
   <actuator>
-    <velocity name="club_motor" joint="club_hinge" kv="100" ctrlrange="-10 10"/>
+    <velocity name="club_motor" joint="club_hinge"
+              kv="100" ctrlrange="-20 20" forcerange="-40 40"/>
   </actuator>
 </mujoco>

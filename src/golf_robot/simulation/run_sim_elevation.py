@@ -1,3 +1,11 @@
+# ---------------------------------------------------------------------
+# Obsolete golf robot simulation with elevation changes
+# as of 20-11-2025: this file is deprecated in favor of src/golf_robot/run_sim.py
+# Missing features: 
+# CSV logging
+# keypress interaction R and Q
+# Default swing angle is different
+# ---------------------------------------------------------------------
 import os
 import math
 import copy
@@ -18,7 +26,7 @@ XML_PATH = os.path.join(REPO, "models", "mujoco", "golf_world_elevation.xml")
 # ---------------------------------------------------------------------
 DEFAULT_CFG = {
     "sim": {
-        "timestep": 0.00002,
+        "timestep": 0.0002,
         "nsubsteps": 1,
         "safe_substep": 5e-05,
         "duration_sec": 30.0,

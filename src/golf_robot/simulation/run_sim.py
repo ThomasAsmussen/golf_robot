@@ -5,20 +5,22 @@ import numpy as np
 import mujoco
 from mujoco import viewer
 from contextlib import nullcontext
+import csv
 
+#python run_sim.py --aim-yaw 0.0 --vx 1.0 --sim-timestep 0.001 --csv "C:\Users\marti\OneDrive - Danmarks Tekniske Universitet\DTU\Mini-golf robot Master\Physics Comparison using Detection\log_0\ball_log.csv"        
 # ---------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------
 HERE = os.path.dirname(__file__)
-REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
-XML_PATH = os.path.join(REPO, "models", "mujoco", "golf_world_elevation.xml")
+REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
+XML_PATH = os.path.join(REPO, "models", "mujoco", "golf_world.xml")
 
 # ---------------------------------------------------------------------
 # Default configuration (single source of truth for defaults)
 # ---------------------------------------------------------------------
 DEFAULT_CFG = {
     "sim": {
-        "timestep": 0.00002,
+        "timestep": 0.0002,
         "nsubsteps": 1,
         "safe_substep": 5e-05,
         "duration_sec": 30.0,
@@ -99,7 +101,7 @@ def reset_ball_state(model, data, cfg, ids):
     pos = cfg.get("ball", {}).get("start_pos", [0.0, 0.0, 0.02135])
     quat = (1.0, 0.0, 0.0, 0.0)
     data.qpos[qadr:qadr+7] = np.array([*pos, *quat], float)
-    data.qvel[vadr:vadr+6] = 0.0
+    data.qvel[vadr:vadr+6] = 0
 
 def is_ball_in_hole(model, data, cfg, ids):
     gid = ids["ball_gid"]; sid = ids["hole_sid"]
@@ -119,7 +121,7 @@ def reset_club_pose(model, data, ids, start_deg):
     lo_rad, hi_rad = model.jnt_range[jid]
     q0 = float(np.clip(np.deg2rad(start_deg), lo_rad, hi_rad))
     data.qpos[qadr] = q0
-    data.qvel[dof]  = 0.0
+    data.qvel[dof]  = 0
     mujoco.mj_forward(model, data)
 
 def bake_aim_pose(model, data, base_free="mount_free", ball_xyz=(0,0,0.02135), yaw_rad=0.0):
@@ -196,9 +198,31 @@ def run_loop(model, data, cfg,
     base_jid = ids["base_jid"]  # for telemetry
     pending_actions = []; dx_prev = None
 
+    # ---- CSV setup ----------------------------------------------------
+    csv_path = cfg["sim"].get("csv_path", None)
+    csv_period = float(cfg["sim"].get("csv_period", 0.01))
+    csv_file = None
+    csv_writer = None
+    next_csv_t = 0.0
+    if csv_path:
+        try:
+            dir_ = os.path.dirname(csv_path)
+            if dir_:
+                os.makedirs(dir_, exist_ok=True)
+            csv_file = open(csv_path, "w", newline="")
+            csv_writer = csv.writer(csv_file)
+            csv_writer.writerow(["time", "ball_x", "ball_y", "ball_z"])
+        except Exception as e:
+            print(f"[warn] Could not open CSV '{csv_path}': {e}")
+            csv_file = None
+            csv_writer = None
+    # ------------------------------------------------------------------
+
     def key_callback(keycode):
         if keycode in (ord('r'), ord('R')):
             pending_actions.append("reset_and_swing")
+        if keycode in (ord('q'), ord('Q'), 27):  # ESC
+            pending_actions.append("breaking")
 
     viewer_ctx = (viewer.launch_passive(model, data, key_callback=key_callback)
                   if cfg["sim"].get("render", True)
@@ -209,58 +233,78 @@ def run_loop(model, data, cfg,
 
     next_print_t = 0.0; PRINT_PERIOD = 0.01
 
-    with viewer_ctx as v:
-        while v.is_running():
-            while pending_actions:
-                act = pending_actions.pop(0)
-                if act == "reset_and_swing":
-                    with v.lock():
-                        reset_ball_state(model, data, cfg, ids)
-                        reset_club_pose(model, data, ids, cfg["club"].get("start_angle_deg", 40.0))
-                        mujoco.mj_forward(model, data)
-                    print(f"[{data.time:7.3f}s] RESET + SWING")
+    try:
+        with viewer_ctx as v:
+            while v.is_running():
+                while pending_actions:
+                    act = pending_actions.pop(0)
+                    if act == "reset_and_swing":
+                        with v.lock():
+                            reset_ball_state(model, data, cfg, ids)
+                            reset_club_pose(model, data, ids, cfg["club"].get("start_angle_deg", 40.0))
+                            mujoco.mj_forward(model, data)
+                        print(f"[{data.time:7.3f}s] RESET + SWING")
+                    if act == "breaking":
+                        print(f"[{data.time:7.3f}s] BREAKING")
+                        return
 
-            data.qpos[qadr_base:qadr_base+3] = base_pos_baked
-            data.qpos[qadr_base+3:qadr_base+7] = base_quat_baked
-            data.qvel[vadr_base:vadr_base+6] = 0.0
+                data.qpos[qadr_base:qadr_base+3] = base_pos_baked
+                data.qpos[qadr_base+3:qadr_base+7] = base_quat_baked
+                data.qvel[vadr_base:vadr_base+6] = 0.0
 
-            qd_cmd = command_impact_speed(model, data, ids, vx_des=vx_des)
-            lo, hi = model.actuator_ctrlrange[act_id]
-            qd_cmd = float(np.clip(qd_cmd, -max_vel, max_vel))
-            qd_cmd = float(np.clip(qd_cmd, lo, hi))
-            data.ctrl[act_id] = qd_cmd
-            mujoco.mj_step(model, data, nstep=nstep)
+                qd_cmd = command_impact_speed(model, data, ids, vx_des=vx_des)
+                lo, hi = model.actuator_ctrlrange[act_id]
+                qd_cmd = float(np.clip(qd_cmd, -max_vel, max_vel))
+                qd_cmd = float(np.clip(qd_cmd, lo, hi))
+                data.ctrl[act_id] = qd_cmd
+                mujoco.mj_step(model, data, nstep=nstep)
 
-            dx = head_ball_dx(data, ids)
-            if sign_crossed(dx_prev, dx):
-                vx_now, _ = club_head_vx(model, data, ids)
-                print(f"IMPACT @ t={data.time:7.3f}s | Vx_des={vx_des:+.3f} m/s | Vx_hit={vx_now:+.3f} m/s")
-            dx_prev = dx
+                dx = head_ball_dx(data, ids)
+                if sign_crossed(dx_prev, dx):
+                    vx_now, _ = club_head_vx(model, data, ids)
+                    print(f"IMPACT @ t={data.time:7.3f}s | Vx_des={vx_des:+.3f} m/s | Vx_hit={vx_now:+.3f} m/s")
+                dx_prev = dx
 
-            # telemetry ---------------------------------------------------
-            t = float(data.time)
-            if t >= next_print_t:
-                vx_now, _ = club_head_vx(model, data, ids)
-                q_deg = math.degrees(float(data.qpos[qadr]))
-                ball_p = data.geom_xpos[ids["ball_gid"]]
-                base_bid = ids["base_bid"]
-                quat = data.xquat[base_bid]
-                yaw_deg = quat_yaw_deg(quat)
-                print(
-                    f"Time: {t:7.3f}s | "
-                    f"q: {q_deg:7.2f}° | "
-                    f"qd_cmd: {qd_cmd:7.3f} rad/s | "
-                    f"Vx_des: {vx_des:+6.3f} | "
-                    f"Vx_now: {vx_now:+6.3f} | "
-                    f"Yaw: {yaw_deg:+6.2f}° | "
-                    f"Ball: ({ball_p[0]:+.3f}, {ball_p[1]:+.3f}, {ball_p[2]:+.3f})"
-                )
-                next_print_t += PRINT_PERIOD
-            # -------------------------------------------------------------
+                # telemetry ---------------------------------------------------
+                t = float(data.time)
+                if t >= next_print_t:
+                    vx_now, _ = club_head_vx(model, data, ids)
+                    q_deg = math.degrees(float(data.qpos[qadr]))
+                    ball_p = data.geom_xpos[ids["ball_gid"]]
+                    base_bid = ids["base_bid"]
+                    quat = data.xquat[base_bid]
+                    yaw_deg = quat_yaw_deg(quat)
+                    print(
+                        f"Time: {t:7.3f}s | "
+                        f"q: {q_deg:7.2f}° | "
+                        f"qd_cmd: {qd_cmd:7.3f} rad/s | "
+                        f"Vx_des: {vx_des:+6.3f} | "
+                        f"Vx_now: {vx_now:+6.3f} | "
+                        f"Yaw: {yaw_deg:+6.2f}° | "
+                        f"Ball: ({ball_p[0]:+.3f}, {ball_p[1]:+.3f}, {ball_p[2]:+.3f})"
+                    )
+                    next_print_t += PRINT_PERIOD
 
-            if is_ball_in_hole(model, data, cfg, ids):
-                print(f"[{data.time:6.3f}s] Ball within hole radius — physics should drop it.")
-            v.sync()
+                # ---- CSV logging at requested rate -------------------------
+                if csv_writer is not None and t >= next_csv_t:
+                    bp = data.geom_xpos[ids["ball_gid"]]
+                    csv_writer.writerow([f"{t:.6f}", f"{bp[0]:.9f}", f"{bp[1]:.9f}", f"{bp[2]:.9f}"])
+                    # optional flush for safety during long runs:
+                    # csv_file.flush()
+                    next_csv_t += csv_period
+                # ------------------------------------------------------------
+                
+                if is_ball_in_hole(model, data, cfg, ids):
+                    print(f"[{data.time:6.3f}s] Ball within hole radius — physics should drop it.")
+                v.sync()
+    finally:
+        if csv_file is not None:
+            try:
+                csv_file.flush()
+                csv_file.close()
+                print(f"[info] CSV saved to {csv_path}")
+            except Exception as e:
+                print(f"[warn] Could not close CSV '{csv_path}': {e}")
 
 # ---------------------------------------------------------------------
 # Public API
@@ -334,11 +378,15 @@ def main():
                    help="Ball free-joint start position (m)")
 
     # High-level controls (not stored in cfg by design)
-    p.add_argument("--aim-yaw", type=float, default=20.0, help="Aiming yaw in degrees")
+    p.add_argument("--aim-yaw", type=float, default=0.0, help="Aiming yaw in degrees")
     p.add_argument("--vx", type=float, default=1.0, help="Desired head X velocity (m/s)")
     p.add_argument("--duration", type=float, default=None,
                    help="(Deprecated) Overrides --sim-duration if provided")
     p.add_argument("--no-start", action="store_true", help="Disable auto reset+swing")
+    p.add_argument("--csv", type=str, default=None,
+                help="Path to CSV to log ball position (time,x,y,z)")
+    p.add_argument("--csv-period", type=float, default=0.01,
+                help="How often to sample the ball pose in seconds")
 
     args = p.parse_args()
 
@@ -365,6 +413,8 @@ def main():
     cfg["hole"]["radius"] = args.hole_radius
     cfg["ball"]["radius"] = args.ball_radius
     cfg["ball"]["start_pos"] = list(args.ball_start_pos)
+    cfg["sim"]["csv_path"] = args.csv
+    cfg["sim"]["csv_period"] = args.csv_period
 
     run_sim(
         aim_yaw_deg=args.aim_yaw,
