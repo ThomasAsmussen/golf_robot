@@ -15,8 +15,8 @@ from kinematics import numeric_jacobian
 from trajectory import tcp_path_from_Q, generate_trajectory
 
 # Toggle to True to show TCP position and TCP velocity plots after planning
-SAVE_PLOTS = True
-SHOW_PLOTS = True
+SAVE_PLOTS = False
+SHOW_PLOTS = False
 CSV_OUTPUT_PATH = 'log/trajectory_sim.csv'
 
 
@@ -263,8 +263,8 @@ def plot_trajectory(t_plan, P_plan, tcp_vel_jac, speed_jac, impact_idx):
 
 def main():
     csv_out = CSV_OUTPUT_PATH
-    impact_speed = 1.5  # m/s
-    impact_angle = -2  # desired impact angle (degrees)
+    impact_speed = 1.9  # m/s
+    impact_angle = -5.9  # desired impact angle (degrees)
 
     results = generate_trajectory_csv(impact_speed, impact_angle, csv_out)  
 
