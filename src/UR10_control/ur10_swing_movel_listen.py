@@ -64,11 +64,11 @@ def send_swing(
     # angles
     path_angle_deg=0.0,    # yaw in XY (in-to-out/out-to-in). + rotates toward +Y as X increases
     attack_angle_deg=0.0,  # pitch in XZ (down/up strike). + goes downward in -Z as X increases
-    base_rvec=(0.8161, -1.4130, -0.8167),  # your 0° club pose (UR axis-angle)
+    base_rvec=(0.9463, -1.3572, -0.9484),  # your 0° club pose (UR axis-angle) #base_rvec=(0.8161, -1.4130, -0.8167),  
     face_roll_deg=0.0,     # roll about club X (open/close face)
     # motion
     vel=0.3, acc=6.0,
-    home=(-2.095, -2.618, -1.745, 1.22, 0.5236, -2.618),
+    home=(-2.1694, -2.6840, -1.4999, 1.0404, 0.5964, -2.7892),
     settle_s=0.5
 ):
     """
@@ -173,12 +173,12 @@ if __name__ == "__main__":
 
     print("Sending swing...")
     swing_meta = send_swing(cmd, x_start=-0.997, x_end=-0.297,
-           y_ball=-0.456, z_ball=-0.040,
-           path_angle_deg=-2, attack_angle_deg=0.0,
-           vel=1.2, acc=7.5)
+           y_ball=-0.600, z_ball=0.01, #-0.040 old
+           path_angle_deg=0, attack_angle_deg=0.2,
+           vel=1.0, acc=2.5)
 
     # 3) Let the swing run and the logger collect a bit extra
-    time.sleep(20.0)   # adjust to cover your full motion
+    time.sleep(10.0)   # 8.0 adjust to cover your full motion
 
     # 4) Clean up
     try:
@@ -206,4 +206,5 @@ if __name__ == "__main__":
     logger.plot_tcp("dtcp", show=True,  ztool=0.0, smoothing=5)    # vx..wz
     logger.plot_tcp_xy(save=True, show=True, fk=True)  # XY path with equal axes (square)
     logger.plot_tcp_xyz(save=True, show=True, fk=True)        # 3D path (equal axis)
+    logger.plot_tcp_speed(save=True, show=True)  # speed vs time
     # and you can use swing_meta to annotate the ball/planes in your own plot code.

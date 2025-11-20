@@ -667,6 +667,56 @@ class UR10Logger:
         else: plt.close(fig)
         return out
 
+
+    def plot_tcp_speed(self,
+                    linear: bool = True,
+                    angular: bool = True,
+                    save: bool = True,
+                    show: bool = False,
+                    title: str | None = None,
+                    ztool: float = 0.0,
+                    smoothing: int = 5):
+        """
+        Plot TCP speed magnitudes from FK-based twist:
+        linear speed  = ||[vx,vy,vz]|| (m/s)
+        angular speed = ||[wx,wy,wz]|| (rad/s)
+        """
+        import numpy as np
+        t, V = self._fk_dtcp6_series(ztool=ztool, smoothing=smoothing)
+        if V.shape[0] == 0:
+            print("No TCP velocity samples."); return None
+
+        vmag = np.linalg.norm(V[:, :3], axis=1)
+        wmag = np.linalg.norm(V[:, 3:], axis=1)
+
+        # Drop non-finite
+        m = np.isfinite(t)
+        if linear: m &= np.isfinite(vmag)
+        if angular: m &= np.isfinite(wmag)
+        t = t[m]; vmag = vmag[m]; wmag = wmag[m]
+
+        import matplotlib.pyplot as plt
+        plt.close("all")
+        fig, ax = plt.subplots()
+        if linear:  ax.plot(t, vmag, linewidth=1, label="‖v‖ [m/s]")
+        if angular: ax.plot(t, wmag, linewidth=1, label="‖ω‖ [rad/s]")
+        ax.set_xlabel("Time [s]")
+        ax.set_ylabel("Speed")
+        ax.set_title(title or (f"TCP speed (FK diff)"
+                            + ("" if smoothing in (None,1) else f", sma={int(smoothing)}")))
+        ax.grid(True, linestyle="--", alpha=0.7)
+        ax.legend(); fig.tight_layout()
+
+        out = None
+        if save:
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            out = os.path.join(self.log_folder, f"log_tcp_speed_fk_{ts}.png")
+            fig.savefig(out, dpi=300)
+        if show: plt.show()
+        else: plt.close(fig)
+        return out
+
+
     def plot_comparison(self, 
                        t_plan=None, 
                        P_plan=None, 
