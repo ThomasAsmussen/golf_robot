@@ -6,6 +6,8 @@ manual_test/
 # other local dev info
 .vscode/
 
+log/
+tuning_results/
 # Mac OS-specific storage files
 .DS_Store
 

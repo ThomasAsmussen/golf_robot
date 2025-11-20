@@ -197,13 +197,14 @@ if __name__ == "__main__":
     csv_path = logger.save_csv(which=("tcp","dtcp","q","dq"), suffix="swing")
     print(f"Saved: {csv_path}")
 
+    show = False
     # If you want plots, call your own helpers elsewhere, e.g.:
-    logger.plot("q",   pi_axis=True,  save=True, show=True)
-    logger.plot("dq",  pi_axis=False, save=True, show=False)
+    logger.plot("q",   pi_axis=True,  save=True, show=show)
+    logger.plot("dq",  pi_axis=False, save=True, show=show)
     # Pose time-series from FK:
-    logger.plot_tcp("tcp",  show=True,  ztool=0.0)                 # x,y,z,rx,ry,rz
+    logger.plot_tcp("tcp",  show=show,  ztool=0.0)                 # x,y,z,rx,ry,rz
     # Twist time-series from FK-differences:
-    logger.plot_tcp("dtcp", show=True,  ztool=0.0, smoothing=5)    # vx..wz
-    logger.plot_tcp_xy(save=True, show=True, fk=True)  # XY path with equal axes (square)
-    logger.plot_tcp_xyz(save=True, show=True, fk=True)        # 3D path (equal axis)
+    logger.plot_tcp("dtcp", show=show,  ztool=0.0, smoothing=5)    # vx..wz
+    logger.plot_tcp_xy(save=True, show=show, fk=True)  # XY path with equal axes (square)
+    logger.plot_tcp_xyz(save=True, show=show, fk=True)        # 3D path (equal axis)
     # and you can use swing_meta to annotate the ball/planes in your own plot code.
