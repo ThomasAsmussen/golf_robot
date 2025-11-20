@@ -1,6 +1,6 @@
-<mujoco model="golf_world_elevation">
+<mujoco model="golf_world">
   <compiler angle="degree"/>
-  <option timestep="0.00002" gravity="0 0 -9.81" integrator="RK4"/>
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="RK4"/>
 
   <default>
     <geom condim="6"/>
@@ -14,14 +14,6 @@
     <texture name ="checks" type="2d" builtin="checker" width="512" height="512" rgb1="1 1 1" rgb2="0 0 0" mark="cross" markrgb="1 0 0"/>
     <material name="ball_mat"  texture = "checks" rgba="1 1 1 1"/>
     <material name="club_mat"  rgba="0.9 0.9 0.9 1"/>
-
-    <!-- Elevation mound split into 5 convex STL parts (mm -> m scale) -->
-    <mesh name="elev_0" file="assets/golf_elevation_stl/golf_elevation_0.stl" scale="0.001 0.001 0.001"/>
-    <mesh name="elev_1" file="assets/golf_elevation_stl/golf_elevation_1.stl" scale="0.001 0.001 0.001"/>
-    <mesh name="elev_2" file="assets/golf_elevation_stl/golf_elevation_2.stl" scale="0.001 0.001 0.001"/>
-    <mesh name="elev_3" file="assets/golf_elevation_stl/golf_elevation_3.stl" scale="0.001 0.001 0.001"/>
-    <mesh name="elev_4" file="assets/golf_elevation_stl/golf_elevation_4.stl" scale="0.001 0.001 0.001"/>
-
 
     <!-- 27 convex wedges (OBJ). Scale x10 vs earlier (0.01) -->
     <mesh name="cup_w00" file="assets/golf_hole_obj/golf_hole_obj_collision_0.obj"  scale="0.01 0.01 0.01"/>
@@ -56,7 +48,7 @@
   <!-- Coefficient of restitution -->
   <contact>
   <pair geom1="ball_geom" geom2="club_head"
-        solref="0.004 0.25"
+        solref="0.004 0.0075"
         solimp="0.95 0.99 0.00108"/>
   </contact>
 
@@ -65,40 +57,27 @@
     <!-- Top slab (y in [ +0.053, +2 ]) -->
     <geom name="green_top" type="box"
           pos="0 1.0265 -0.02" size="3.0 0.9735 0.02"
-          material="green_mat_out" friction="1 0.005 0.00108"/>
+          material="green_mat_out" friction="1 0.005 0.008"/>
 
     <!-- Bottom slab (y in [ -2, -0.053 ]) -->
     <geom name="green_bottom" type="box"
           pos="0 -1.0265 -0.02" size="3.0 0.9735 0.02"
-          material="green_mat_out" friction="1 0.005 0.00108"/>
+          material="green_mat_out" friction="1 0.005 0.008"/>
 
     <!-- Left slab (x in [ -3, 1.947 ]) -->
     <geom name="green_left" type="box"
           pos="-0.5265 0 -0.02" size="2.4735 0.08 0.02"
-          material="green_mat" friction="1 0.005 0.00108"/>
+          material="green_mat" friction="1 0.005 0.008"/>
 
     <!-- Right slab (x in [ 2.053, 3 ]) -->
     <geom name="green_right" type="box"
           pos="2.5265 0 -0.02" size="0.4735 0.08 0.02"
-          material="green_mat" friction="1 0.005 0.00108"/>
+          material="green_mat" friction="1 0.005 0.008"/>
     
-    <!-- Elevation mesh -->
-    <body name="elevation" pos="1.60 0.15 0" quat="0.7071068 0 0 -0.7071068"> <!-- -90° about Z -->
-      <geom type="mesh" mesh="elev_0" name="elev_g0" material="green_mat"
-            friction="1 0.005 0.00108" contype="1" conaffinity="1"/>
-      <geom type="mesh" mesh="elev_1" name="elev_g1" material="green_mat"
-            friction="1 0.005 0.00108" contype="1" conaffinity="1"/>
-      <geom type="mesh" mesh="elev_2" name="elev_g2" material="green_mat"
-            friction="1 0.005 0.00108" contype="1" conaffinity="1"/>
-      <geom type="mesh" mesh="elev_3" name="elev_g3" material="green_mat"
-            friction="1 0.005 0.00108" contype="1" conaffinity="1"/>
-      <geom type="mesh" mesh="elev_4" name="elev_g4" material="green_mat"
-            friction="1 0.005 0.00108" contype="1" conaffinity="1"/>
-    </body>
 
     <!-- ==== CUP (27 convex OBJ wedges only; no bottom or extras) ==== -->
     <!-- If your OBJs are centered vertically with height H, change pos to (2 0 -H/2). -->
-    <body name="cup" pos="2 0 -0.010665">
+    <body name="cup" pos="2 0 -0.110665">
       <geom type="mesh" mesh="cup_w00" material="cup_mat" contype="1" conaffinity="1"
             friction="0.6 0.003 0.00108" solref="0.006 0.8" solimp="0.95 0.99 0.002"/>
       <geom type="mesh" mesh="cup_w01" material="cup_mat" contype="1" conaffinity="1"/>
@@ -139,7 +118,7 @@
       <geom name="ball_geom" type="sphere" size="0.02135"
             rgba="0.6 0.2 0.6 1" mass="0.04593" material="ball_mat"
             solref="0.005 1" solimp="0.95 0.99 0.001"
-            friction="0.6 0.0001 0.000108" condim="6"/>
+            friction="0.7 0.0001 0.000108" condim="6"/>
     </body>
 
     <!-- ==== CLUB ==== -->

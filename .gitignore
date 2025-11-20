@@ -4,6 +4,7 @@ docs/site/
 manual_test/
 
 # other local dev info
+log/
 .vscode/
 
 log/

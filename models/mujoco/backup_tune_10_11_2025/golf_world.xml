@@ -1,0 +1,78 @@
+<mujoco model="golf_world">
+  <compiler angle="degree"/>
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="RK4"/>
+
+  <!-- Defaults: enable 6D friction and make contacts crisp -->
+  <default>
+    <geom condim="6" solref="0.002 1" solimp="0.95 0.99 0.001" friction="0.49771 0.0001 0.00141354"/>
+  </default>
+
+  <asset>
+    <!-- Materials -->
+    <material name="green_mat"     rgba="0.2 0.55 0.2 1"/>
+    <material name="green_mat_out" rgba="0.5 0.5 0.5 1"/>
+    <material name="cup_mat"       rgba="0.3 0.3 0.3 1"/>
+    <texture  name ="checks" type="2d" builtin="checker" width="512" height="512"
+              rgb1="1 1 1" rgb2="0 0 0" mark="cross" markrgb="1 0 0"/>
+    <material name="ball_mat"  texture="checks" rgba="1 1 1 1"/>
+    <material name="club_mat"  rgba="0.9 0.9 0.9 1"/>
+  </asset>
+
+  <!-- Contacts -->
+  <contact>
+    <pair geom1="ball_geom" geom2="club_head" solref="0.01 0.13" solimp="0.6 1.05 0.001"/>
+  </contact>
+  
+  <worldbody>
+    <!-- ==== GROUND: 6x4 m area, 0.04 m thick, with a 0.106 m opening at (2, 0) ==== -->
+    <!-- Top slab (y in [ +0.053, +2 ]) -->
+    <geom name="green_top" type="box"
+          pos="0 1.0265 -0.02" size="3.0 0.9735 0.02"
+          material="green_mat"/>
+
+    <!-- Bottom slab (y in [ -2, -0.053 ]) -->
+    <geom name="green_bottom" type="box"
+          pos="0 -1.0265 -0.02" size="3.0 0.9735 0.02"
+          material="green_mat_out"/>
+
+    <!-- Left slab (x in [ -3, 1.947 ]) -->
+    <geom name="green_left" type="box"
+          pos="-0.5265 0 -0.02" size="2.4735 0.08 0.02"
+          material="green_mat"/>
+
+    <!-- Right slab (x in [ 2.053, 3 ]) -->
+    <geom name="green_right" type="box"
+          pos="2.5265 0 -0.02" size="50 0.08 0.02"
+          material="green_mat"/>
+    
+    <!-- ==== BALL ==== -->
+    <camera name="overview" pos="2.0 -3.0 1.5" quat="0.7 0.0 0.7 0.0" fovy="45"/>
+    <body name="ball" pos="0 0 0.02135">
+      <freejoint name="ball_free"/>
+      <geom name="ball_geom" type="sphere" size="0.02135"
+            rgba="0.6 0.2 0.6 1" mass="0.04593" material="ball_mat"
+            condim="6"/>
+    </body>
+
+    <!-- ==== CLUB ==== -->
+    <body name="club_mount" pos="0 0 0">
+      <joint name="mount_free" type="free" damping="20"/>
+      <geom name="mount_inert" type="sphere" size="0.10" mass="5.0"
+            rgba="0 0 0 0" contype="0" conaffinity="0"/>
+
+      <body name="club_offset" pos="-0.03 0.05 0.37865">
+        <body name="club_link" pos="0 0 0">
+          <joint name="club_hinge" type="hinge" axis="0 1 0" limited="true" range="-60 60" damping="0.1"/>
+          <geom name="club_shaft" type="capsule" fromto="0 0 0  0 0 -0.36" size="0.01" mass="1.0" material="club_mat"/>
+          <geom name="club_head"  type="box"    pos="0.0 -0.05 -0.36" size="0.02 0.05 0.03" mass="0.5" material="club_mat"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <!-- ==== ACTUATOR ==== -->
+  <actuator>
+    <velocity name="club_motor" joint="club_hinge"
+              kv="100" ctrlrange="-20 20" forcerange="-40 40"/>
+  </actuator>
+</mujoco>
