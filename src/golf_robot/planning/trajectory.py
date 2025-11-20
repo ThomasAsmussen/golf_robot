@@ -529,9 +529,10 @@ def generate_trajectory(impact_speed, impact_angle):
     impact_direction = np.array([np.cos(np.deg2rad(impact_angle)), np.sin(np.deg2rad(impact_angle)), 0.0])
     ball_center = fk_ur10(q0_hit)[-1][:3, 3] + np.array([0.02133, 0.0, 0.0])  # TCP position at zero angle + offset
     q_hit = impact_joint_config_from_direction(q0_hit, impact_direction, ball_center=ball_center)
-    q_hit = move_point_xyz(0.0, 0.0, 0.18, q_hit, q0_hit)[0]  # unwrap to near reference
+    q_hit = move_point_xyz(0.0, 0.0, 0.155, q_hit, q0_hit)[0]  # unwrap to near reference
     # waypoints = [q_start, q_hit, q_end]
-
+    print("Q_HIT:")
+    print(q_hit)
     v_dir_base   = normalize(impact_direction)  # unit vector of desired direction
     lin_velocity = v_dir_base * impact_speed    # desired TCP linear velocity at impact
     impact_idx   = 1                            # index of impact waypoint (second in a 3-waypoint plan)
