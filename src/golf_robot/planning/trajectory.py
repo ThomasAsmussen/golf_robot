@@ -3,7 +3,7 @@ Trajectory generation using quintic polynomials with automatic time-scaling to s
 """
 
 import numpy as np
-from config import DQ_MAX, DDQ_MAX, DT, Q_MIN, Q_MAX
+from config import Q_MIN, Q_MAX, DQ_MAX, DDQ_MAX, DT
 from utils import unwrap_to_seed_all, normalize
 from kinematics import numeric_jacobian, fk_ur10, rotation_z, pick_ik_solution, move_point_xyz
 import matplotlib
