@@ -1,6 +1,8 @@
 import numpy as np
 from ur10_logger import UR10Logger
 
+Z_PALLET = 0.145  # from config.py
+
 # --- small rotation helpers ---
 def _rvec_to_R(rvec):
     rvec = np.asarray(rvec, dtype=float)
@@ -68,7 +70,8 @@ def send_swing(
     face_roll_deg=0.0,     # roll about club X (open/close face)
     # motion
     vel=0.3, acc=6.0,
-    home=(-2.1694, -2.6840, -1.4999, 1.0404, 0.5964, -2.7892),
+    # home=(-2.1694, -2.6840, -1.4999, 1.0404, 0.5964, -2.7892),
+    home=(-2.1694,-2.47454648,-1.5647238,0.89577028,0.5964,-2.7892),
     settle_s=0.5
 ):
     """
@@ -173,9 +176,9 @@ if __name__ == "__main__":
 
     print("Sending swing...")
     swing_meta = send_swing(cmd, x_start=-0.997, x_end=-0.297,
-           y_ball=-0.600, z_ball=0.01, #-0.040 old
+           y_ball=-0.600, z_ball=0.01+Z_PALLET, #-0.040 old
            path_angle_deg=0, attack_angle_deg=0.2,
-           vel=1.0, acc=2.5)
+           vel=2.5, acc=4.5)
 
     # 3) Let the swing run and the logger collect a bit extra
     time.sleep(10.0)   # 8.0 adjust to cover your full motion
@@ -204,8 +207,8 @@ if __name__ == "__main__":
     # Pose time-series from FK:
     logger.plot_tcp("tcp",  show=show,  ztool=0.0)                 # x,y,z,rx,ry,rz
     # Twist time-series from FK-differences:
-    logger.plot_tcp("dtcp", show=True,  ztool=0.0, smoothing=5)    # vx..wz
-    logger.plot_tcp_xy(save=True, show=True, fk=True)  # XY path with equal axes (square)
-    logger.plot_tcp_xyz(save=True, show=True, fk=True)        # 3D path (equal axis)
-    logger.plot_tcp_speed(save=True, show=True)  # speed vs time
+    logger.plot_tcp("dtcp", show=show,  ztool=0.0, smoothing=5)    # vx..wz
+    logger.plot_tcp_xy(save=True, show=show, fk=True)  # XY path with equal axes (square)
+    logger.plot_tcp_xyz(save=True, show=show, fk=True)        # 3D path (equal axis)
+    logger.plot_tcp_speed(save=True, show=show)  # speed vs time
     # and you can use swing_meta to annotate the ball/planes in your own plot code.

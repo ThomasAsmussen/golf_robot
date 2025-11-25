@@ -1,11 +1,18 @@
-from kinematics import fk_ur10, pick_ik_solution
+from kinematics import fk_ur10, pick_ik_solution, move_point_xyz
 import numpy as np
-
+Z_PALLET = 0.155  # from config.py
+home=np.array([-2.1694, -2.6840, -1.4999, 1.0404, 0.5964, -2.7892])
 # Waypoints for movel:
 # q_start = np.array([np.deg2rad(-144.36), np.deg2rad(-167.85), np.deg2rad(-58.16),  np.deg2rad(45.97), np.deg2rad(52.32), np.deg2rad(28.72)])
 # q_hit   = np.array([np.deg2rad(-127.23), np.deg2rad(-153.93), np.deg2rad(-100.71), np.deg2rad(74.59), np.deg2rad(35.18), np.deg2rad(28.72)])
 # q_exit  = np.array([np.deg2rad(-94.89),  np.deg2rad(-152.06), np.deg2rad(-123.42), np.deg2rad(94.85), np.deg2rad(2.85),  np.deg2rad(28.72)])
 
+q_hit = move_point_xyz(0.0, 0.0, Z_PALLET, home, home)[0]
+
+print("Home: ")
+print(home)
+print("Picked IK solution for q_hit:")
+print(q_hit)
 # Good waypoints for speedj:
 q_start = np.array([np.deg2rad(-144.36), np.deg2rad(-162.82), np.deg2rad(-51.80),  np.deg2rad(66.92), np.deg2rad(42.60), np.deg2rad(6.51)])
 q_hit   = np.array([np.deg2rad(-127.23), np.deg2rad(-153.93), np.deg2rad(-100.71), np.deg2rad(74.59), np.deg2rad(35.18), np.deg2rad(28.72)])

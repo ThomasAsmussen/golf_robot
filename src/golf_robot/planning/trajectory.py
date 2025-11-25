@@ -3,7 +3,7 @@ Trajectory generation using quintic polynomials with automatic time-scaling to s
 """
 
 import numpy as np
-from config import Q_MIN, Q_MAX, DQ_MAX, DDQ_MAX, DT
+from config import Q_MIN, Q_MAX, DQ_MAX, DDQ_MAX, DT, Z_PALLET
 from utils import unwrap_to_seed_all, normalize
 from kinematics import numeric_jacobian, fk_ur10, rotation_z, pick_ik_solution, move_point_xyz
 import matplotlib
@@ -104,6 +104,7 @@ def auto_time_and_discretize(q0, dq0, ddq0, qf, dqf, ddqf, T_max=8.0,):
     # z_floor = -0.733
     # z_floor = -0.729
     z_floor = -0.729
+    z_floor += Z_PALLET
 
     feasible = False  # Feasibility flag
     problem = "None"  # Last problem encountered
@@ -504,14 +505,14 @@ def generate_trajectory(impact_speed, impact_angle):
     #             possible_start_points.append(move_point_xyz(-0.6 + 0.05*x, -0.1 + 0.05*y, 0.15 + 0.03*z, q0_hit, q0_start)[0])
     #             possible_end_points.append(move_point_xyz(0.4 + 0.05*x, -0.1 + 0.05*y, 0.15 + 0.03*z, q0_hit, q0_end)[0])
         
-    possible_start_points = [move_point_xyz(-0.4, 0.0, 0.25, q0_hit, q0_start)[0]
+    possible_start_points = [move_point_xyz(-0.4, 0.0, 0.25 + Z_PALLET, q0_hit, q0_start)[0]
                             #  move_point_xyz(-0.4, 0.2, 0.25, q0_hit, q0_start)[0],
                             #  move_point_xyz(-0.4, -0.2, 0.25, q0_hit, q0_start)[0],
                             #  move_point_xyz(-0.4, 0.0, 0.30, q0_hit, q0_start)[0],
                             #  move_point_xyz(-0.4, 0.0, 0.20, q0_hit, q0_start)[0]
     ]
 
-    possible_end_points = [move_point_xyz(0.5, 0.0, 0.25, q0_hit, q0_end)[0]
+    possible_end_points = [move_point_xyz(0.5, 0.0, 0.25 + Z_PALLET, q0_hit, q0_end)[0]
                         #    move_point_xyz(0.5, 0.1, 0.25, q0_hit, q0_end)[0],
                         #    move_point_xyz(0.5, -0.1, 0.25, q0_hit, q0_end)[0],
                         #    move_point_xyz(0.5, 0.0, 0.30, q0_hit, q0_end)[0],
@@ -529,7 +530,7 @@ def generate_trajectory(impact_speed, impact_angle):
     impact_direction = np.array([np.cos(np.deg2rad(impact_angle)), np.sin(np.deg2rad(impact_angle)), 0.0])
     ball_center = fk_ur10(q0_hit)[-1][:3, 3] + np.array([0.02133, 0.0, 0.0])  # TCP position at zero angle + offset
     q_hit = impact_joint_config_from_direction(q0_hit, impact_direction, ball_center=ball_center)
-    q_hit = move_point_xyz(0.0, 0.0, 0.155, q_hit, q0_hit)[0]  # unwrap to near reference
+    q_hit = move_point_xyz(0.0, 0.0, Z_PALLET, q_hit, q_hit)[0]  # unwrap to near reference
     # waypoints = [q_start, q_hit, q_end]
     print("Q_HIT:")
     print(q_hit)

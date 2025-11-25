@@ -14,6 +14,7 @@ X_CLUB_SHORT = 0.040
 Y_CLUB_SHORT = 0.755
 X_CLUB_LONG = -0.065
 Y_CLUB_LONG = 0.788
+Z_PALLET = 0.155
 CLUB_MID = np.array([0.5*(X_CLUB_LONG+X_CLUB_SHORT),
                      0.5*(Y_CLUB_LONG+Y_CLUB_SHORT),
                      Z_CLUB], dtype=float)
