@@ -7,6 +7,8 @@ manual_test/
 log/
 .vscode/
 
+MUJOCO_LOG.TXT/
+wandb/
 log/
 tuning_results/
 # Mac OS-specific storage files

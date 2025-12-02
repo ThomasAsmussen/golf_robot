@@ -1,0 +1,21 @@
+
+sim:
+  timestep: 0.0002
+  nsubsteps": 1
+  safe_substep: 5e-05
+  max_duration_sec: 5.0
+  render: False
+  stop_sim_at_still: True     
+  start_immediately: True 
+  csv_path: "log/mujoco_sim/out.csv"
+  csv_period: 0.01
+  do_print: False
+  print_period: 5
+
+
+club:
+  max_vel_deg_s: 500.0
+  start_angle_deg: 40.0   # moved from global into cfg
+
+ball:
+  start_pos: [0.0, 0.0, 0.02135]

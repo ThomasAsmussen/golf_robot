@@ -1,0 +1,20 @@
+training:
+  episodes: 40
+  actor_lr: 0.001
+  critic_lr: 0.001
+  noise_std: 0.2
+  batch_size: 64
+  grad_steps: 100
+  replay_buffer_capacity: 100000
+  use_wandb: True
+  eval_interval: 20
+  eval_episodes: 10
+
+model:
+  state_dim: 4
+  action_dim: 3
+  hidden_dim: 256
+  speed_low: 0.1
+  speed_high: 2.5
+  angle_low: -180.0
+  angle_high: 180.0

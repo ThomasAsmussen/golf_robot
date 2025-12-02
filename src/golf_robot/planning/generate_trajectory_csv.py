@@ -263,8 +263,8 @@ def plot_trajectory(t_plan, P_plan, tcp_vel_jac, speed_jac, impact_idx):
 
 def main():
     csv_out = CSV_OUTPUT_PATH
-    impact_speed = 1.9  # m/s
-    impact_angle = -5.9  # desired impact angle (degrees)
+    impact_speed = 1.7  # m/s
+    impact_angle = 3  # desired impact angle (degrees)
 
     results = generate_trajectory_csv(impact_speed, impact_angle, csv_out)  
 

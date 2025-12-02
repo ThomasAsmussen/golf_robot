@@ -1,7 +1,0 @@
-"""
-Deprecated: configuration moved into `run_sim.py`.
-
-This file used to hold simulation parameters but the project now embeds the
-important sim settings directly in `src/golf_robot/run_sim.py`. You can delete
-this file if you no longer need it, or keep it as a backup.
-"""

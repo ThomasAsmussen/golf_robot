@@ -528,6 +528,7 @@ def generate_trajectory(impact_speed, impact_angle):
 
     # Compute impact joint configuration from desired direction
     impact_direction = np.array([np.cos(np.deg2rad(impact_angle)), np.sin(np.deg2rad(impact_angle)), 0.0])
+    
     ball_center = fk_ur10(q0_hit)[-1][:3, 3] + np.array([0.02133, 0.0, 0.0])  # TCP position at zero angle + offset
     q_hit = impact_joint_config_from_direction(q0_hit, impact_direction, ball_center=ball_center)
     q_hit = move_point_xyz(0.0, 0.0, Z_PALLET, q_hit, q_hit)[0]  # unwrap to near reference

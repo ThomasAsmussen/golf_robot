@@ -685,3 +685,48 @@ WARNING: Nan, Inf or huge value in QACC at DOF 6. The simulation is unstable. Ti
 Thu Oct 23 15:47:22 2025
 WARNING: Nan, Inf or huge value in QVEL at DOF 6. The simulation is unstable. Time = 0.7540.
 
+Tue Nov 25 12:39:06 2025
+ERROR: could not create window
+
+Tue Nov 25 12:39:18 2025
+ERROR: could not create window
+
+Tue Nov 25 13:25:35 2025
+ERROR: could not create window
+
+Tue Nov 25 13:28:55 2025
+ERROR: could not create window
+
+Tue Nov 25 15:52:31 2025
+ERROR: could not create window
+
+Tue Nov 25 15:55:07 2025
+ERROR: could not create window
+
+Tue Nov 25 16:38:11 2025
+ERROR: could not create window
+
+Tue Nov 25 16:51:35 2025
+ERROR: could not create window
+
+Tue Nov 25 16:52:22 2025
+ERROR: could not create window
+
+Tue Nov 25 16:54:56 2025
+ERROR: could not create window
+
+Tue Nov 25 16:58:31 2025
+ERROR: could not create window
+
+Wed Nov 26 20:36:16 2025
+ERROR: could not create window
+
+Wed Nov 26 20:38:37 2025
+ERROR: could not create window
+
+Wed Nov 26 20:40:29 2025
+ERROR: could not create window
+
+Wed Nov 26 20:48:10 2025
+ERROR: could not create window
+

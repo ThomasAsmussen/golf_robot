@@ -15,6 +15,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <filesystem>
+#include <cmath>
 
 #include "../include/communication/ur_driver.h"
 #include "../include/communication/ur5.h"
@@ -30,8 +31,11 @@ static const int         REVERSE_PORT = 5007;
 static const double      ACCEL  = 5.0;
 static const double      DT     = 0.008;
 static const double      VCLAMP = 3.0;
-static const double      kp = 0.0;
-static const double      ki = 0.0;
+static const double      kp = 0.1;
+static const double      ki = 1.0;
+
+static const double MAX_ERROR_DEG = 1.0;
+static const double MAX_ERROR_RAD = MAX_ERROR_DEG * 3.14 / 180.0;
 
 // --- Minimal 2x2 per-joint KF (q, dq) ---
 struct KF2 {
@@ -295,6 +299,7 @@ int main(){
         }
     });
 
+    bool aborted_due_to_error = false;
     // --------- Fixed 8 ms command loop ---------
     for (size_t i = 0; i < N; ++i) {
         next_tick += std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(DT));
@@ -320,9 +325,16 @@ int main(){
     // Build command: FF + P on position error + I on position error
     const auto& v_ff = dq_rows[i];
     std::array<double,6> v_cmd = v_ff;
+    
+    bool large_error_this_step = false;
+
 
     for (int j=0;j<6;++j){
         const double e = q_rows[i][j] - q_hat[j];
+
+        if (std::fabs(e) > MAX_ERROR_RAD) {
+            large_error_this_step = true;
+        }
 
         // --- I-term update (integrate error over time between sends) ---
         // simple rectangle integration + optional leak
@@ -348,6 +360,20 @@ int main(){
         v_cmd[j] = u;
     }
 
+    if (large_error_this_step) {
+        std::cerr << "[ERROR] joint error exceeded "
+                 << MAX_ERROR_DEG << " deg at step " << i 
+                 << ". Stopping and returning to start.\n";
+        
+        mydriver.setSpeed(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ACCEL, 1);
+
+        mydriver.rt_interface_->addCommandToQueue("stopj(1.0)\n");
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+
+        aborted_due_to_error = true;
+        break;
+    }
 
         // Log KF prediction at send time
         std::array<double,13> prow{};
