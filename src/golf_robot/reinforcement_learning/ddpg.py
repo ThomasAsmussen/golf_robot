@@ -148,6 +148,9 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
 
     actor.train()
     critic.train()
+    log_dict = {}
+
+    last_avg_reward = None
 
     for episode in range(episodes):
         ball_start = np.array([0.0, 0.0])
@@ -215,16 +218,6 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
             print(f"  Hole Position: x={x:.4f}, y={y:.4f}")
             print(f"  Speed: {speed:.4f}, Angle: {angle_deg:.4f}")
 
-        if rl_cfg["training"]["use_wandb"]:
-            distance_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
-            log_dict = {"reward": reward, "distance_to_hole": distance_to_hole}
-            if critic_loss_value is not None:
-                log_dict["critic_loss"] = critic_loss_value
-            if actor_loss_value is not None:
-                log_dict["actor_loss"] = actor_loss_value
-
-            wandb.log(log_dict, step=episode)
-
         if (episode) % rl_cfg["training"]["eval_interval"] == 0:
             success_rate_eval, avg_reward_eval, avg_distance_to_hole_eval = evaluation_policy_short(
                 actor,
@@ -235,14 +228,41 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
                 num_episodes=rl_cfg["training"]["eval_episodes"],
             )
 
+            if last_avg_reward is not None:
+                improvement = avg_reward_eval - last_avg_reward
+
+                # Only react if change is significant (e.g. 0.02)
+                if avg_reward_eval > 0.5 and improvement > 0.02:
+                    noise_std *= 0.95  # slightly less exploration
+                elif avg_reward_eval < 0.5 and improvement < -0.02:
+                    noise_std *= 1.05  # slightly more exploration
+
+                # Clip noise to reasonable bounds
+                noise_std = float(np.clip(noise_std, 0.05, 0.6))
+
+            # Update for next eval
+            last_avg_reward = avg_reward_eval
+
             print(f"[EVAL] Success Rate: {success_rate_eval:.2f}, Avg Reward: {avg_reward_eval:.3f}")
 
             if rl_cfg["training"]["use_wandb"]:
-                wandb.log({
-                    "success_rate": success_rate_eval,
-                    "avg_reward": avg_reward_eval,
-                    "avg_distance_to_hole": avg_distance_to_hole_eval,
-                }, step=episode)
+                log_dict["success_rate"] = success_rate_eval
+                log_dict["avg_reward"] = avg_reward_eval
+                log_dict["avg_distance_to_hole"] = avg_distance_to_hole_eval
+                # wandb.log(log_dict, step=episode)
+
+        if rl_cfg["training"]["use_wandb"]:
+            distance_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
+            # log_dict = {"reward": reward, "distance_to_hole": distance_to_hole}
+            log_dict["reward"] = reward
+            log_dict["distance_to_hole"] = distance_to_hole
+            if critic_loss_value is not None:
+                log_dict["critic_loss"] = critic_loss_value
+            if actor_loss_value is not None:
+                log_dict["actor_loss"] = actor_loss_value
+
+            wandb.log(log_dict, step=episode)
+
 
     torch.save(actor.state_dict(), model_dir / "ddpg_actor.pth")
     torch.save(critic.state_dict(), model_dir / "ddpg_critic.pth")
@@ -351,8 +371,8 @@ def evaluate_policy_grid(model_path, rl_cfg, mujoco_cfg, project_root, r_min=0.5
     x_max = 1.5
     y_min = -1.5
     y_max = 1.5
-    num_x = 5
-    num_y = 5
+    num_x = 20
+    num_y = 20
     
     csv_path = project_root / mujoco_cfg["sim"]["csv_path"]
     ball_start = np.array([0.0, 0.0])
@@ -410,28 +430,42 @@ def evaluate_policy_grid(model_path, rl_cfg, mujoco_cfg, project_root, r_min=0.5
     return x_coords, y_coords, success_grid, reward_grid    
 
             
-def plot_reward_heatmap(x_coords, y_coords, reward_grid, log_to_wandb=False):
+def plot_reward_heatmap(x_coords, y_coords, reward_grid, log_to_wandb=False, project_path=None):
     fig, ax = plt.subplots()
 
-    im = ax.imshow(
-        reward_grid.T,
-        origin="lower",
-        extent=[x_coords[0], x_coords[-1], y_coords[0], y_coords[-1]],
+    # Create grid of (x, y) positions
+    X, Y = np.meshgrid(x_coords, y_coords, indexing="xy")
+
+    # Flatten for scatter; transpose to match your old imshow orientation
+    sc = ax.scatter(
+        X.ravel(),
+        Y.ravel(),
+        c=reward_grid.T.ravel(),  # .T to match the previous imshow(reward_grid.T)
         vmin=0,
         vmax=1,
-        aspect="equal",)
+        cmap="viridis",
+        marker="o",       # circles (default)
+        s=120,            # size of the circles, tweak as you like
+        edgecolors="none" # avoid edgecolor warnings
+    )
 
-    cbar = plt.colorbar(im, ax=ax)
+    cbar = plt.colorbar(sc, ax=ax)
     cbar.set_label("Success Rate")
 
     ax.set_xlabel("Hole X Position (m)")
     ax.set_ylabel("Hole Y Position (m)")
     ax.set_title("Policy Success Rate Heatmap")
+    ax.set_aspect("equal")
 
     if log_to_wandb:
         wandb.log({"reward_heatmap": wandb.Image(fig)})
-
-    plt.show()
+        plt.close(fig)
+    else:
+        # Save before show so it definitely writes to disk
+        if project_path is not None:
+            (project_path / "log/ddpg").mkdir(parents=True, exist_ok=True)
+            fig.savefig(project_path / "log/ddpg/reward_heatmap.png", bbox_inches="tight")
+        plt.show()
 
 
 def evaluation_policy_short(actor, device, mujoco_cfg, project_root, rl_cfg, num_episodes):
@@ -525,5 +559,5 @@ if __name__ == "__main__":
         shots_per_hole=1,
     )
     
-    plot_reward_heatmap(x_coords, y_coords, reward_grid, log_to_wandb=rl_cfg["training"]["use_wandb"])
+    plot_reward_heatmap(x_coords, y_coords, reward_grid, log_to_wandb=rl_cfg["training"]["use_wandb"], project_path=here)
     # run_sim(170, 1, [x, y], mujoco_cfg)
