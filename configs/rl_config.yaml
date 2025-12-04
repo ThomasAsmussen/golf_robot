@@ -4,7 +4,7 @@ training:
   critic_lr: 0.001
   noise_std: 0.2
   batch_size: 64
-  grad_steps: 100
+  grad_steps: 10
   replay_buffer_capacity: 100000
   use_wandb: True
   eval_interval: 20

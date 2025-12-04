@@ -241,8 +241,8 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
                 actor_loss.backward()
                 actor_optimizer.step()
 
-                soft_update(target_actor, actor, rl_cfg["training"]["target_update_rho"])
-                soft_update(target_critic, critic, rl_cfg["training"]["target_update_rho"])
+            soft_update(target_actor, actor, rl_cfg["training"]["target_update_rho"])
+            soft_update(target_critic, critic, rl_cfg["training"]["target_update_rho"])
             
             critic_loss_value = critic_loss.item()
             actor_loss_value = actor_loss.item()
