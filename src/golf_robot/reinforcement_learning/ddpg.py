@@ -198,9 +198,17 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
 
         speed, angle_deg = get_sim_input(a_noisy.cpu().numpy(), speed_low, speed_high)
 
-        run_sim(angle_deg, speed, [x, y], mujoco_cfg)
+        result = run_sim(angle_deg, speed, [x, y], mujoco_cfg)
 
-        ball_x, ball_y, in_hole = final_state_from_csv(csv_path)
+        if result is None:
+            print(f"Episode {episode + 1}: Simulation failed, trying again.")
+            result = run_sim(angle_deg, speed, [x, y], mujoco_cfg)
+            if result is None:
+                print(f"Episode {episode + 1}: Simulation failed again, skipping this episode. Bad action: speed={speed}, angle={angle_deg}")
+                continue
+        else:
+            ball_x, ball_y, in_hole = result
+        # ball_x, ball_y, in_hole = final_state_from_csv(csv_path)
 
         reward = compute_reward(
             ball_end_pos=np.array([ball_x, ball_y]),
@@ -358,9 +366,9 @@ def evaluate_policy_random(model_path, rl_cfg, mujoco_cfg, project_root, num_epi
 
         speed, angle_deg = get_sim_input(a_norm.cpu().numpy(), speed_low, speed_high)
 
-        run_sim(angle_deg, speed, [x, y], mujoco_cfg)
+        ball_x, ball_y, in_hole = run_sim(angle_deg, speed, [x, y], mujoco_cfg)
 
-        ball_x, ball_y, in_hole = final_state_from_csv(csv_path)
+        # ball_x, ball_y, in_hole = final_state_from_csv(csv_path)
 
         reward = compute_reward(ball_end_pos=np.array([ball_x, ball_y]), hole_pos=hole_pos, in_hole=in_hole)
 
@@ -440,9 +448,9 @@ def evaluate_policy_grid(model_path, rl_cfg, mujoco_cfg, project_root, r_min=0.5
 
                 speed, angle_deg = get_sim_input(a_norm, speed_low, speed_high)
 
-                run_sim(angle_deg, speed, [x, y], mujoco_cfg)
+                ball_x, ball_y, in_hole = run_sim(angle_deg, speed, [x, y], mujoco_cfg)
 
-                ball_x, ball_y, in_hole = final_state_from_csv(csv_path)
+                # ball_x, ball_y, in_hole = final_state_from_csv(csv_path)
 
                 reward = compute_reward(ball_end_pos=np.array([ball_x, ball_y]), hole_pos=hole_pos, in_hole=in_hole)
                 
@@ -528,9 +536,9 @@ def evaluation_policy_short(actor, device, mujoco_cfg, project_root, rl_cfg, num
 
             speed, angle_deg = get_sim_input(a_norm, speed_low, speed_high)
 
-            run_sim(angle_deg, speed, [x, y], mujoco_cfg)
+            ball_x, ball_y, in_hole = run_sim(angle_deg, speed, [x, y], mujoco_cfg)
 
-            ball_x, ball_y, in_hole = final_state_from_csv(csv_path)
+            # ball_x, ball_y, in_hole = final_state_from_csv(csv_path)
 
             reward = compute_reward(ball_end_pos=np.array([ball_x, ball_y]), hole_pos=hole_pos, in_hole=in_hole)
             rewards.append(reward)
@@ -555,7 +563,7 @@ if __name__ == "__main__":
     sim_dir = here.parent / "simulation"
     sys.path.append(str(sim_dir))
 
-    from run_sim import run_sim
+    from run_sim_rl import run_sim
 
     project_root = here.parents[2]
     mujoco_config_path = project_root / "configs" / "mujoco_config.yaml"
