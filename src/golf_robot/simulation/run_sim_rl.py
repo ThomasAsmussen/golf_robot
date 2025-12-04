@@ -301,7 +301,25 @@ def run_loop(model, data, cfg,
     last_move_t = None
     started = False
 
+    # ---- CSV setup ----------------------------------------------------
+    csv_path = cfg["sim"].get("csv_path", None)
+    csv_period = float(cfg["sim"]["csv_period"])
+    csv_file = None
     csv_writer = None
+    next_csv_t = 0.0
+    if csv_path:
+        try:
+            dir_ = os.path.dirname(csv_path)
+            if dir_:
+                os.makedirs(dir_, exist_ok=True)
+            csv_file = open(csv_path, "w", newline="")
+            csv_writer = csv.writer(csv_file)
+            csv_writer.writerow(["time", "ball_x", "ball_y", "ball_z", "in_hole"])
+        except Exception as e:
+            print(f"[warn] Could not open CSV '{csv_path}': {e}")
+            csv_file = None
+            csv_writer = None
+    # ------------------------------------------------------------------
 
     def key_callback(keycode):
         if keycode in (ord('r'), ord('R')):
@@ -401,6 +419,7 @@ def run_loop(model, data, cfg,
                         if do_print:
                             print(f"[{t:7.3f}s] Ball has been still for 0.05s, ending simulation.")
                         
+                        print(f"Returning state: {ball_p[0]}, {ball_p[1]}, {is_ball_in_hole(data, cfg, ids)}")
                         return ball_p[0], ball_p[1], is_ball_in_hole(data, cfg, ids)
                       
                 else:
@@ -411,18 +430,32 @@ def run_loop(model, data, cfg,
                     if do_print:
                         print(f"[{t:7.3f}s] Ball has fallen below z=-0.2m, ending simulation.")
                     
+                    print(f"Returning state: {ball_p[0]}, {ball_p[1]}, {is_ball_in_hole(data, cfg, ids)}")
                     return ball_p[0], ball_p[1], is_ball_in_hole(data, cfg, ids)
                    
                 
                 if is_ball_in_hole(data, cfg, ids):
                     if do_print:
                         print(f"[{t:7.3f}s] Ball is in the hole, ending simulation.")
+                    csv_writer.writerow([f"{t:.6f}", f"{ball_p[0]:.9f}", f"{ball_p[1]:.9f}", f"{ball_p[2]:.9f}", int(True)])
                     
                     return ball_p[0], ball_p[1], True
+               
+                
+
+
+            # ---- CSV logging at requested rate -------------------------
+            if csv_writer is not None and t >= next_csv_t:
+                bp = data.geom_xpos[ids["ball_gid"]]
+                csv_writer.writerow([f"{t:.6f}", f"{bp[0]:.9f}", f"{bp[1]:.9f}", f"{bp[2]:.9f}", int(is_ball_in_hole(data, cfg, ids))])
+                # optional flush for safety during long runs:
+                # csv_file.flush()
+                next_csv_t += csv_period
+            # ------------------------------------------------------------
+            
 
             v.sync()
 
-    print(f"Fucks up here")
 
 def debug_print_green_spans(model):
     names = ["green_top", "green_bottom", "green_left", "green_right"]
@@ -481,7 +514,6 @@ def run_sim(aim_yaw_deg, vx_des, hole_pos_xy, cfg):
              (base_pos_baked, base_quat_baked),
              ids, nstep, max_vel, float(vx_des))
 
-    
 # ---------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------

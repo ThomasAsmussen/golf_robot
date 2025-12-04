@@ -1,0 +1,26 @@
+program: src/golf_robot/reinforcement_learning/ddpg_hyper.py   # adjust to your path
+method: bayes    # or "random"
+
+metric:
+  name: avg_reward
+  goal: maximize
+
+parameters:
+  actor_lr:
+    values: [1e-4, 3e-4, 1e-3]
+
+  critic_lr:
+    values: [1e-4, 3e-4, 1e-3]
+
+  noise_std:
+    min: 0.05
+    max: 0.6
+
+  hidden_dim:
+    values: [64, 128, 256]
+
+command:
+  - ${env}
+  - python
+  - ${program}
+  - "--"          # if you later add CLI args, e.g. --some-flag
