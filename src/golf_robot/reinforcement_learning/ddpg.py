@@ -79,7 +79,7 @@ class ReplayBuffer:
 
 def soft_update(target, source, rho):
     for target_param, param in zip(target.parameters(), source.parameters()):
-        target_param.data.copy_(rho * target_param.data + (1.0 - rho) * param.data)
+        target_param.data.copy_(rho * param.data + (1.0 - rho) * target_param.data)
 
 
 def compute_reward(ball_end_pos, hole_pos, in_hole):
