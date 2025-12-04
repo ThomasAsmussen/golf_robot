@@ -165,7 +165,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
     if use_wandb:
         wandb.watch(actor, log="gradients", log_freq=100)
         wandb.watch(critic, log="gradients", log_freq=100)
-        run_name = wandb.run.name
+        run_name = wandb.run.name.replace("-", "_")
     else:
         run_name = "local_run"
 
@@ -225,10 +225,10 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
                     target_actions = target_actor(states_b)
                     target_q = target_critic(states_b, target_actions)
 
-                y = rewards_b + gamma * target_q
+                td_target = rewards_b + gamma * target_q
 
                 q_pred = critic(states_b, actions_b)
-                critic_loss = F.mse_loss(q_pred, y)
+                critic_loss = F.mse_loss(q_pred, td_target)
 
                 critic_optimizer.zero_grad()
                 critic_loss.backward()
@@ -585,7 +585,7 @@ if __name__ == "__main__":
     #     project_root=project_root,
     #     num_episodes=100,
     # )
-    run_name = wandb.run.name if rl_cfg["training"]["use_wandb"] else "local_run"
+    run_name = wandb.run.name.replace("-", "_") if rl_cfg["training"]["use_wandb"] else "local_run"
     
     x_coords, y_coords, success_grid, reward_grid = evaluate_policy_grid(
         model_path=project_root / "models" / "rl" / "ddpg" / f"ddpg_actor_{run_name}.pth",
