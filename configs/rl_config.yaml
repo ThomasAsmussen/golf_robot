@@ -1,5 +1,5 @@
 training:
-  episodes: 10000
+  episodes: 45
   actor_lr: 0.001
   critic_lr: 0.001
   noise_std: 0.2
@@ -9,6 +9,8 @@ training:
   use_wandb: True
   eval_interval: 20
   eval_episodes: 10
+  target_update_rho: 0.005
+  continue_training: False
 
 model:
   state_dim: 4

@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import wandb
+import copy
     
 
 HERE = os.path.dirname(__file__)
@@ -76,6 +77,11 @@ class ReplayBuffer:
         )
     
 
+def soft_update(target, source, rho):
+    for target_param, param in zip(target.parameters(), source.parameters()):
+        target_param.data.copy_(rho * target_param.data + (1.0 - rho) * param.data)
+
+
 def compute_reward(ball_end_pos, hole_pos, in_hole):
     if in_hole:
         return 1
@@ -112,8 +118,12 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
     hidden_dim  = rl_cfg["model"]["hidden_dim"]
     speed_low   = rl_cfg["model"]["speed_low"]
     speed_high  = rl_cfg["model"]["speed_high"]
-    angle_low     = rl_cfg["model"]["angle_low"]
-    angle_high    = rl_cfg["model"]["angle_high"]
+    angle_low   = rl_cfg["model"]["angle_low"]
+    angle_high  = rl_cfg["model"]["angle_high"]
+
+    use_wandb   = rl_cfg["training"]["use_wandb"]
+
+    gamma = 0.99
 
     csv_path = project_root / mujoco_cfg["sim"]["csv_path"]
 
@@ -122,15 +132,28 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
             model_path=project_root / "models" / "rl" / "ddpg" / "ddpg_actor.pth",
             rl_cfg=rl_cfg,
         )
-        critic, device = load_critic(
+        critic, _ = load_critic(
             model_path=project_root / "models" / "rl" / "ddpg" / "ddpg_critic.pth",
             rl_cfg=rl_cfg,
         )
+
+        target_actor, _ = load_actor(
+            model_path=project_root / "models" / "rl" / "ddpg" / "ddpg_target_actor.pth",
+            rl_cfg=rl_cfg,
+        )
+
+        critic, _ = load_critic(
+            model_path=project_root / "models" / "rl" / "ddpg" / "ddpg_target_critic.pth",
+            rl_cfg=rl_cfg,
+        )
+
 
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         actor = Actor(state_dim, action_dim, hidden_dim).to(device)
         critic = Critic(state_dim, action_dim, hidden_dim).to(device)
+        target_actor = copy.deepcopy(actor).to(device)
+        target_critic = copy.deepcopy(critic).to(device)
 
     print(f"Using device: {device}")
 
@@ -139,9 +162,12 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
 
     replay_buffer = ReplayBuffer(capacity=rl_cfg["training"]["replay_buffer_capacity"])
 
-    if rl_cfg["training"]["use_wandb"]:
+    if use_wandb:
         wandb.watch(actor, log="gradients", log_freq=100)
         wandb.watch(critic, log="gradients", log_freq=100)
+        run_name = wandb.run.name
+    else:
+        run_name = "local_run"
 
     log_dir = project_root / "log" / "ddpg"
     model_dir = project_root / "models" / "rl" / "ddpg"
@@ -195,8 +221,14 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
                 actions_b = actions_b.to(device)
                 rewards_b = rewards_b.to(device)
 
+                with torch.no_grad():
+                    target_actions = target_actor(states_b)
+                    target_q = target_critic(states_b, target_actions)
+
+                y = rewards_b + gamma * target_q
+
                 q_pred = critic(states_b, actions_b)
-                critic_loss = F.mse_loss(q_pred, rewards_b)
+                critic_loss = F.mse_loss(q_pred, y)
 
                 critic_optimizer.zero_grad()
                 critic_loss.backward()
@@ -208,6 +240,9 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
                 actor_optimizer.zero_grad()
                 actor_loss.backward()
                 actor_optimizer.step()
+
+                soft_update(target_actor, actor, rl_cfg["training"]["target_update_rho"])
+                soft_update(target_critic, critic, rl_cfg["training"]["target_update_rho"])
             
             critic_loss_value = critic_loss.item()
             actor_loss_value = actor_loss.item()
@@ -245,13 +280,13 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
 
             print(f"[EVAL] Success Rate: {success_rate_eval:.2f}, Avg Reward: {avg_reward_eval:.3f}")
 
-            if rl_cfg["training"]["use_wandb"]:
+            if use_wandb:
                 log_dict["success_rate"] = success_rate_eval
                 log_dict["avg_reward"] = avg_reward_eval
                 log_dict["avg_distance_to_hole"] = avg_distance_to_hole_eval
                 # wandb.log(log_dict, step=episode)
 
-        if rl_cfg["training"]["use_wandb"]:
+        if use_wandb:
             distance_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
             # log_dict = {"reward": reward, "distance_to_hole": distance_to_hole}
             log_dict["reward"] = reward
@@ -264,8 +299,10 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
             wandb.log(log_dict, step=episode)
 
 
-    torch.save(actor.state_dict(), model_dir / "ddpg_actor.pth")
-    torch.save(critic.state_dict(), model_dir / "ddpg_critic.pth")
+    torch.save(actor.state_dict(), model_dir / f"ddpg_actor_{run_name}.pth")
+    torch.save(critic.state_dict(), model_dir / f"ddpg_critic_{run_name}.pth")
+    torch.save(target_actor.state_dict(), model_dir / f"ddpg_target_actor_{run_name}.pth")
+    torch.save(target_critic.state_dict(), model_dir / f"ddpg_target_critic_{run_name}.pth")
     print("Training complete. Models saved.")
 
 
@@ -538,7 +575,7 @@ if __name__ == "__main__":
                 "mujoco_config": mujoco_cfg,
             },
         )
-    training(rl_cfg, mujoco_cfg, project_root, continue_training=True)
+    training(rl_cfg, mujoco_cfg, project_root, continue_training=rl_cfg["training"]["continue_training"])
 
 
     # evaluate_policy_random(
@@ -548,9 +585,10 @@ if __name__ == "__main__":
     #     project_root=project_root,
     #     num_episodes=100,
     # )
+    run_name = wandb.run.name if rl_cfg["training"]["use_wandb"] else "local_run"
     
     x_coords, y_coords, success_grid, reward_grid = evaluate_policy_grid(
-        model_path=project_root / "models" / "rl" / "ddpg" / "ddpg_actor.pth",
+        model_path=project_root / "models" / "rl" / "ddpg" / f"ddpg_actor_{run_name}.pth",
         rl_cfg=rl_cfg,
         mujoco_cfg=mujoco_cfg,
         project_root=project_root,
