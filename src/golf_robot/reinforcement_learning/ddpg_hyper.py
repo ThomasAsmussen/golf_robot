@@ -318,7 +318,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
         mujoco_cfg,
         project_root,
         rl_cfg,
-        10,
+        100,
     )[1]
 
     if use_wandb:
