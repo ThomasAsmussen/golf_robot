@@ -327,17 +327,19 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
 
             wandb.log(log_dict, step=episode)
 
-    final_avg_reward = evaluation_policy_short(
+    final_success_rate, final_avg_reward, final_avg_distance_to_hole = evaluation_policy_short(
         actor,
         device,
         mujoco_cfg,
         project_root,
         rl_cfg,
         100,
-    )[1]
+    )
 
     if use_wandb:
         wandb.log({"final_avg_reward": final_avg_reward})
+        wandb.log({"final_success_rate": final_success_rate})
+        wandb.log({"final_avg_distance_to_hole": final_avg_distance_to_hole})
 
     print("Sweep complete")
 
