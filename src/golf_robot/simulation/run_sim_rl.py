@@ -288,7 +288,7 @@ def run_loop(model, data, cfg,
         start_immediately: If True, reset and swing immediately on start
     
     """
-    return_state = True
+    trajectory = []
     act_id = ids['act_id']; hinge_jid = ids['hinge_jid']
     qadr = model.jnt_qposadr[hinge_jid]
     qadr_base, vadr_base = base_idx
@@ -379,6 +379,8 @@ def run_loop(model, data, cfg,
             ball_p = data.geom_xpos[ids["ball_gid"]]
             t = float(data.time)
 
+            trajectory.append( ( t, float(ball_p[0]), float(ball_p[1]) ) )
+
             if t >= next_print_t:
                 vx_now, _ = club_head_vx(model, data, ids)
                 q_deg = math.degrees(float(data.qpos[qadr]))
@@ -421,7 +423,7 @@ def run_loop(model, data, cfg,
                             print(f"[{t:7.3f}s] Ball has been still for 0.05s, ending simulation.")
                         
                         # print(f"Returning state: {ball_p[0]}, {ball_p[1]}, {is_ball_in_hole(data, cfg, ids)}")
-                        return ball_p[0], ball_p[1], is_ball_in_hole(data, cfg, ids)
+                        return ball_p[0], ball_p[1], is_ball_in_hole(data, cfg, ids), np.array(trajectory)
                       
                 else:
                     last_xy = xy.copy()
@@ -432,7 +434,7 @@ def run_loop(model, data, cfg,
                         print(f"[{t:7.3f}s] Ball has fallen below z=-0.2m, ending simulation.")
                     
                     # print(f"Returning state: {ball_p[0]}, {ball_p[1]}, {is_ball_in_hole(data, cfg, ids)}")
-                    return ball_p[0], ball_p[1], is_ball_in_hole(data, cfg, ids)
+                    return ball_p[0], ball_p[1], is_ball_in_hole(data, cfg, ids), np.array(trajectory)
                    
                 
                 if is_ball_in_hole(data, cfg, ids):
@@ -440,7 +442,7 @@ def run_loop(model, data, cfg,
                         print(f"[{t:7.3f}s] Ball is in the hole, ending simulation.")
                     csv_writer.writerow([f"{t:.6f}", f"{ball_p[0]:.9f}", f"{ball_p[1]:.9f}", f"{ball_p[2]:.9f}", int(True)])
                     
-                    return ball_p[0], ball_p[1], True
+                    return ball_p[0], ball_p[1], True, np.array(trajectory)
                
                 
 

@@ -82,7 +82,7 @@ def soft_update(target, source, rho):
         target_param.data.copy_(rho * param.data + (1.0 - rho) * target_param.data)
 
 
-def compute_reward(ball_end_pos, hole_pos, in_hole):
+def compute_reward_old(ball_end_pos, hole_pos, in_hole):
     if in_hole:
         return 1
     
@@ -95,6 +95,20 @@ def compute_reward(ball_end_pos, hole_pos, in_hole):
     reward = np.exp(-k * dist)
     return reward
     
+def compute_reward(ball_end_pos, hole_pos, in_hole, trajectory):
+    t = trajectory[:,0]
+    xy = trajectory[:,1:3]
+    dists = np.linalg.norm(xy - hole_pos, axis=1)
+    values = np.exp(-3.0 * dists)
+
+    integral= np.trapezoid(values, t)
+    T = t[-1] - t[0]
+    avg_value = integral / T if T > 0 else 0.0
+    if in_hole:
+        avg_value = 1
+
+    return avg_value
+
 
 def final_state_from_csv(csv_path):
     data = np.loadtxt(csv_path, delimiter=",", skiprows=1)
@@ -213,13 +227,14 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
             
                 
         else:
-            ball_x, ball_y, in_hole = result
+            ball_x, ball_y, in_hole, trajectory = result
         # ball_x, ball_y, in_hole = final_state_from_csv(csv_path)
 
         reward = compute_reward(
             ball_end_pos=np.array([ball_x, ball_y]),
             hole_pos=hole_pos,
             in_hole=in_hole,
+            trajectory=result[3],
         )
 
         s_train = s.detach().cpu()
@@ -379,12 +394,11 @@ def evaluate_policy_random(model_path, rl_cfg, mujoco_cfg, project_root, num_epi
 
         speed, angle_deg = get_sim_input(a_norm.cpu().numpy(), speed_low, speed_high)
 
-        ball_x, ball_y, in_hole = run_sim(angle_deg, speed, [x, y], mujoco_cfg)
+        ball_x, ball_y, in_hole, trajectory = run_sim(angle_deg, speed, [x, y], mujoco_cfg)
 
         # ball_x, ball_y, in_hole = final_state_from_csv(csv_path)
 
-        reward = compute_reward(ball_end_pos=np.array([ball_x, ball_y]), hole_pos=hole_pos, in_hole=in_hole)
-
+        reward = compute_reward(ball_end_pos=np.array([ball_x, ball_y]), hole_pos=hole_pos, in_hole=in_hole, trajectory=trajectory)
         rewards.append(reward)
 
         succeses += int(in_hole == 1)
@@ -461,11 +475,11 @@ def evaluate_policy_grid(model_path, rl_cfg, mujoco_cfg, project_root, r_min=0.5
 
                 speed, angle_deg = get_sim_input(a_norm, speed_low, speed_high)
 
-                ball_x, ball_y, in_hole = run_sim(angle_deg, speed, [x, y], mujoco_cfg)
+                ball_x, ball_y, in_hole, trajectory = run_sim(angle_deg, speed, [x, y], mujoco_cfg)
 
                 # ball_x, ball_y, in_hole = final_state_from_csv(csv_path)
 
-                reward = compute_reward(ball_end_pos=np.array([ball_x, ball_y]), hole_pos=hole_pos, in_hole=in_hole)
+                reward = compute_reward(ball_end_pos=np.array([ball_x, ball_y]), hole_pos=hole_pos, in_hole=in_hole, trajectory=trajectory)
                 
                 print(f"Hole ({x:.2f}, {y:.2f}), Speed: {speed:.2f}, Angle: {angle_deg:.2f} => Ball ({ball_x:.2f}, {ball_y:.2f}), In Hole: {in_hole}, Reward: {reward:.4f}")
                 rewards.append(reward)
@@ -549,11 +563,11 @@ def evaluation_policy_short(actor, device, mujoco_cfg, project_root, rl_cfg, num
 
             speed, angle_deg = get_sim_input(a_norm, speed_low, speed_high)
 
-            ball_x, ball_y, in_hole = run_sim(angle_deg, speed, [x, y], mujoco_cfg)
+            ball_x, ball_y, in_hole, trajectory = run_sim(angle_deg, speed, [x, y], mujoco_cfg)
 
             # ball_x, ball_y, in_hole = final_state_from_csv(csv_path)
 
-            reward = compute_reward(ball_end_pos=np.array([ball_x, ball_y]), hole_pos=hole_pos, in_hole=in_hole)
+            reward = compute_reward(ball_end_pos=np.array([ball_x, ball_y]), hole_pos=hole_pos, in_hole=in_hole, trajectory=trajectory)
             rewards.append(reward)
             succeses += int(in_hole == 1)
             distance_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
