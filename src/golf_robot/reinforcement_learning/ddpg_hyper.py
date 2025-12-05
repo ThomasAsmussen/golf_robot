@@ -264,8 +264,8 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
         if (episode + 1) % 1 == 0:
             print("========================================")
             print(f"Episode {episode + 1}/{episodes}, Reward: {reward:.4f}")
-            print(f"  Hole Position: x={x:.4f}, y={y:.4f}")
-            print(f"  Speed: {speed:.4f}, Angle: {angle_deg:.4f}")
+            # print(f"  Hole Position: x={x:.4f}, y={y:.4f}")
+            # print(f"  Speed: {speed:.4f}, Angle: {angle_deg:.4f}")
 
         if (episode) % rl_cfg["training"]["eval_interval"] == 0:
             success_rate_eval, avg_reward_eval, avg_distance_to_hole_eval = evaluation_policy_short(
@@ -311,6 +311,18 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
                 log_dict["actor_loss"] = actor_loss_value
 
             wandb.log(log_dict, step=episode)
+
+    final_avg_reward = evaluation_policy_short(
+        actor,
+        device,
+        mujoco_cfg,
+        project_root,
+        rl_cfg,
+        10,
+    )[1]
+
+    if use_wandb:
+        wandb.log({"final_avg_reward": final_avg_reward})
 
     print("Sweep complete")
 
@@ -600,11 +612,12 @@ if __name__ == "__main__":
         rl_cfg["training"]["critic_lr"]  = cfg.critic_lr
         rl_cfg["training"]["noise_std"]  = cfg.noise_std
         rl_cfg["model"]["hidden_dim"]    = cfg.hidden_dim
+    import uuid
+    tmp_name = f"golf_world_tmp_{os.getpid()}_{uuid.uuid4().hex}.xml"
+
+    mujoco_cfg["sim"]["xml_path"] = project_root / "models" / "mujoco" / tmp_name
 
     training(rl_cfg, mujoco_cfg, project_root, continue_training=rl_cfg["training"]["continue_training"])
-
-    training(rl_cfg, mujoco_cfg, project_root, continue_training=rl_cfg["training"]["continue_training"])
-
 
     # evaluate_policy_random(
     #     model_path=project_root / "models" / "rl" / "ddpg" / "ddpg_actor.pth",
@@ -627,3 +640,5 @@ if __name__ == "__main__":
     
     # plot_reward_heatmap(x_coords, y_coords, reward_grid, log_to_wandb=rl_cfg["training"]["use_wandb"], project_path=here)
     # run_sim(170, 1, [x, y], mujoco_cfg)
+
+    os.remove(mujoco_cfg["sim"]["xml_path"])

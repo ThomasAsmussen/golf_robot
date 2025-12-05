@@ -1,5 +1,6 @@
 import os
 import math
+import uuid
 import numpy as np
 import mujoco
 from mujoco import viewer
@@ -419,7 +420,7 @@ def run_loop(model, data, cfg,
                         if do_print:
                             print(f"[{t:7.3f}s] Ball has been still for 0.05s, ending simulation.")
                         
-                        print(f"Returning state: {ball_p[0]}, {ball_p[1]}, {is_ball_in_hole(data, cfg, ids)}")
+                        # print(f"Returning state: {ball_p[0]}, {ball_p[1]}, {is_ball_in_hole(data, cfg, ids)}")
                         return ball_p[0], ball_p[1], is_ball_in_hole(data, cfg, ids)
                       
                 else:
@@ -430,7 +431,7 @@ def run_loop(model, data, cfg,
                     if do_print:
                         print(f"[{t:7.3f}s] Ball has fallen below z=-0.2m, ending simulation.")
                     
-                    print(f"Returning state: {ball_p[0]}, {ball_p[1]}, {is_ball_in_hole(data, cfg, ids)}")
+                    # print(f"Returning state: {ball_p[0]}, {ball_p[1]}, {is_ball_in_hole(data, cfg, ids)}")
                     return ball_p[0], ball_p[1], is_ball_in_hole(data, cfg, ids)
                    
                 
@@ -484,8 +485,12 @@ def run_sim(aim_yaw_deg, vx_des, hole_pos_xy, cfg):
     model = mujoco.MjModel.from_xml_path(XML_PATH)
     move_hole(model, hole_xy=hole_pos_xy)
     move_ground_cutout(model, hole_xy=hole_pos_xy)
-    mujoco.mj_saveLastXML(XML_PATH_NEW, model)
-    model = mujoco.MjModel.from_xml_path(XML_PATH_NEW)
+
+    new_xml_path = str(cfg["sim"]["xml_path"])
+    # print(f"Saving modified XML to: {new_xml_path}")
+    mujoco.mj_saveLastXML(new_xml_path, model)
+    model = mujoco.MjModel.from_xml_path(new_xml_path)
+
     set_model_options_from_cfg(model, cfg)
     data = mujoco.MjData(model)
     cfg_nsub = int(cfg["sim"].get("nsubsteps", 1))

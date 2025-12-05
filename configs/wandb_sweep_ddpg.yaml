@@ -2,7 +2,7 @@ program: src/golf_robot/reinforcement_learning/ddpg_hyper.py   # adjust to your 
 method: bayes    # or "random"
 
 metric:
-  name: avg_reward
+  name: final_avg_reward
   goal: maximize
 
 parameters:
