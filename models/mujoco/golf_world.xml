@@ -20,6 +20,7 @@
               rgb1="1 1 1" rgb2="0 0 0" mark="cross" markrgb="1 0 0"/>
     <material name="ball_mat"  texture="checks" rgba="1 1 1 1"/>
     <material name="club_mat"  rgba="0.9 0.9 0.9 1"/>
+    <material name="disc_mat"  rgba="0.8 0.1 0.1 1"/>
 
     <!-- 27 convex wedges (OBJ). Scale x10 vs earlier (0.01) -->
     <mesh name="cup_w00" file="assets/golf_hole_obj/golf_hole_obj_collision_0.obj"  scale="0.01 0.01 0.01"/>
@@ -50,6 +51,7 @@
     <mesh name="cup_w25" file="assets/golf_hole_obj/golf_hole_obj_collision_25.obj" scale="0.01 0.01 0.01"/>
     <mesh name="cup_w26" file="assets/golf_hole_obj/golf_hole_obj_collision_26.obj" scale="0.01 0.01 0.01"/>
 
+    <mesh name="disc_obs" file="assets/disc_obstacle.obj" scale="0.01 0.01 0.01"/>
   </asset>
 
   <!-- Contacts -->
@@ -116,6 +118,10 @@
 
       <!-- Keep the site for logic/debug -->
       <site name="hole_center" pos="0 0 0" size="0.055" rgba="0 0 0 0.2" type="sphere"/>
+    </body>
+
+    <body name="disc" pos="4 0 0">
+      <geom type="mesh" mesh="disc_obs" size="0.1" material="disc_mat" contype="1" conaffinity="1"/>
     </body>
 
     
