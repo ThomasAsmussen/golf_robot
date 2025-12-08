@@ -1,5 +1,5 @@
 training:
-  episodes: 2000
+  episodes: 4000
   actor_lr: 0.001
   critic_lr: 0.001
   noise_std: 0.2
@@ -13,12 +13,13 @@ training:
   continue_training: False
   error_hard_stop: True
   integration_reward: True
+  do_prints: False
 
 model:
-  state_dim: 4
-  action_dim: 3
+  state_dim: 14
+  action_dim: 2
   hidden_dim: 256
   speed_low: 0.1
   speed_high: 2.5
-  angle_low: -180.0
-  angle_high: 180.0
+  angle_low: -20.0
+  angle_high: 20.0

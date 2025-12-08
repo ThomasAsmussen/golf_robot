@@ -51,7 +51,7 @@
     <mesh name="cup_w25" file="assets/golf_hole_obj/golf_hole_obj_collision_25.obj" scale="0.01 0.01 0.01"/>
     <mesh name="cup_w26" file="assets/golf_hole_obj/golf_hole_obj_collision_26.obj" scale="0.01 0.01 0.01"/>
 
-    <mesh name="disc_obs" file="assets/disc_obstacle.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="disc_obs" file="assets/disc_obstacle.stl" scale="0.001 0.001 0.001"/>
   </asset>
 
   <!-- Contacts -->
@@ -120,9 +120,27 @@
       <site name="hole_center" pos="0 0 0" size="0.055" rgba="0 0 0 0.2" type="sphere"/>
     </body>
 
-    <body name="disc" pos="4 0 0">
+    <body name="disc0" pos="0 0 -10">
       <geom type="mesh" mesh="disc_obs" size="0.1" material="disc_mat" contype="1" conaffinity="1"/>
     </body>
+    
+    <body name="disc1" pos="0 0 -10">
+      <geom type="mesh" mesh="disc_obs" size="0.1" material="disc_mat" contype="1" conaffinity="1"/>
+    </body>
+
+    <body name="disc2" pos="0 0 -10">
+      <geom type="mesh" mesh="disc_obs" size="0.1" material="disc_mat" contype="1" conaffinity="1"/>
+    </body>
+
+    <body name="disc3" pos="0 0 -10">
+      <geom type="mesh" mesh="disc_obs" size="0.1" material="disc_mat" contype="1" conaffinity="1"/>
+    </body>
+
+    <body name="disc4" pos="0 0 -10">
+      <geom type="mesh" mesh="disc_obs" size="0.1" material="disc_mat" contype="1" conaffinity="1"/>
+    </body>
+
+
 
     
     <!-- ==== BALL ==== -->

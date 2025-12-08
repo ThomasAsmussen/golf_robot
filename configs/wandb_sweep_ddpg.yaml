@@ -1,5 +1,5 @@
-program: src/golf_robot/reinforcement_learning/ddpg_hyper.py   # adjust to your path
-method: bayes    # or "random"
+program: src/golf_robot/reinforcement_learning/ddpg_hyper.py  # <-- adjust if filename differs
+method: bayes   # or "random" if you prefer
 
 metric:
   name: final_avg_reward
@@ -7,20 +7,28 @@ metric:
 
 parameters:
   actor_lr:
-    values: [1e-4, 3e-4, 1e-3]
+    distribution: log_uniform
+    min: 1e-5
+    max: 3e-4
 
   critic_lr:
-    values: [1e-4, 3e-4, 1e-3]
+    distribution: log_uniform
+    min: 3e-5
+    max: 1e-3
 
   noise_std:
-    min: 0.05
-    max: 0.6
+    distribution: uniform
+    min: 0.1
+    max: 0.4
 
   hidden_dim:
     values: [64, 128, 256]
 
-command:
-  - ${env}
-  - python
-  - ${program}
-  - "--"          # if you later add CLI args, e.g. --some-flag
+  batch_size:
+    values: [64, 128]
+
+  grad_steps:
+    values: [1, 2, 4]
+
+  target_update_rho:
+    values: [0.005, 0.01, 0.02]

@@ -119,6 +119,63 @@ def final_state_from_csv(csv_path):
     return final_x, final_y, in_hole
 
 
+def generate_disc_positions(max_num_discs, x_min, x_max, y_min, y_max, hole_xy):
+    hole_x, hole_y = hole_xy
+    num_discs = np.random.randint(0, max_num_discs + 1)
+    disc_positions = []
+    min_dist_from_objects = 0.25 
+
+    x_lo = x_min + min_dist_from_objects
+    x_hi = x_max - min_dist_from_objects
+    y_lo = y_min + min_dist_from_objects
+    y_hi = y_max - min_dist_from_objects
+
+    max_tries_per_disc = 100
+
+    for _ in range(num_discs):
+        placed = False
+        for _ in range(max_tries_per_disc):
+            x = np.random.uniform(x_lo, x_hi)
+            y = np.random.uniform(y_lo, y_hi)
+
+            if np.hypot(x - hole_x, y - hole_y) < min_dist_from_objects:
+                continue
+            too_close = False
+
+            for (dx, dy) in disc_positions:
+                if np.hypot(x - dx, y - dy) < min_dist_from_objects:
+                    too_close = True
+                    break
+
+            if too_close:
+                continue
+
+            disc_positions.append((x, y))
+            placed = True
+            break
+        if not placed:
+            raise RuntimeError("Could not place all discs without overlap.")
+    
+    disc_positions.sort(key=lambda p: np.hypot(p[0] - hole_x, p[1] - hole_y))
+    return disc_positions
+
+
+def encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, max_num_discs):
+    default_value = 10.0
+
+    disc_coords = []
+
+    for i in range(max_num_discs):
+        if i < len(disc_positions):
+            x, y = disc_positions[i]
+        else:
+            x, y = default_value, default_value
+        disc_coords.extend([x, y])
+
+    return np.concatenate([ball_start_obs, hole_pos_obs, np.array(disc_coords)])
+
+
+
 def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
     episodes    = rl_cfg["training"]["episodes"]
     batch_size  = rl_cfg["training"]["batch_size"]
@@ -134,6 +191,10 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
     speed_high  = rl_cfg["model"]["speed_high"]
     angle_low   = rl_cfg["model"]["angle_low"]
     angle_high  = rl_cfg["model"]["angle_high"]
+
+    max_num_discs = 5
+
+    # state_dim += 2 * max_num_discs  # add disc positions to state
 
     use_wandb   = rl_cfg["training"]["use_wandb"]
 
@@ -193,11 +254,20 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
     last_avg_reward = None
 
     for episode in range(episodes):
-        ball_start = np.array([0.0, 0.0])
-        x, y = random_hole_in_donut(0.5, 1.5)
+        ball_start = np.random.uniform(-0.5, 0.5, size=(2,))
+        ball_start_obs = ball_start + np.random.normal(0, 0.00005, size=(2,))
+        mujoco_cfg["ball"]["start_pos"] = [ball_start[0], ball_start[1], 0.02135]
+        mujoco_cfg["ball"]["obs_start_pos"] = [ball_start_obs[0], ball_start_obs[1], 0.02135]
+        # ball_start = np.array([0.0, 0.0])
+        x, y = random_hole_in_rectangle(x_min=3.0, x_max=5.0, y_min=-0.5, y_max=0.5)
         hole_pos = np.array([x, y])
-        s = torch.tensor(np.concatenate([ball_start, hole_pos]), dtype=torch.float32).to(device)
+        hole_pos_obs = hole_pos + np.random.normal(0, 0.01, size=(2,))
+        
+        disc_positions = generate_disc_positions(max_num_discs, x-2.0, x, -0.5, 0.5, hole_xy=hole_pos)
 
+        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, max_num_discs)
+        # print(disc_positions)
+        s = torch.tensor(state_vec, dtype=torch.float32).to(device)
         critic_loss_value = None
         actor_loss_value = None
 
@@ -208,15 +278,23 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
                 std=noise_std * torch.ones_like(a_norm),
             )
 
+        
         a_noisy = torch.clamp(a_norm + noise, -1.0, 1.0)
 
-        speed, angle_deg = get_sim_input(a_noisy.cpu().numpy(), speed_low, speed_high)
+        speed, angle_deg = get_sim_input(a_noisy.cpu().numpy(), speed_low, speed_high, angle_low, angle_high)
 
-        result = run_sim(angle_deg, speed, [x, y], mujoco_cfg)
+        speed_noise = np.random.normal(0, 0.05)
+        angle_deg_noise = np.random.normal(0, 0.1)
+
+        speed = np.clip(speed + speed_noise, speed_low, speed_high)
+        angle_deg = np.clip(angle_deg + angle_deg_noise, angle_low, angle_high)
+
+        # print(disc_positions)
+        result = run_sim(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
 
         if result is None:
-            print(f"Episode {episode + 1}: Simulation failed, trying again.")
-            result = run_sim(angle_deg, speed, [x, y], mujoco_cfg)
+            # print(disc_positions)
+            result = run_sim(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
             if result is None:
                 print(f"Episode {episode + 1}: Simulation failed again. Bad action: speed={speed}, angle={angle_deg}")
                 print(f"  Hole Position: x={x:.4f}, y={y:.4f}")
@@ -234,7 +312,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
             ball_end_pos=np.array([ball_x, ball_y]),
             hole_pos=hole_pos,
             in_hole=in_hole,
-            trajectory=result[3],
+            trajectory=trajectory
         )
 
         s_train = s.detach().cpu()
@@ -276,7 +354,8 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
             critic_loss_value = critic_loss.item()
             actor_loss_value = actor_loss.item()
 
-        if (episode + 1) % 1 == 0:
+        if (episode + 1) % 1 == 0 and rl_cfg["training"]["do_prints"]:
+
             print("========================================")
             print(f"Episode {episode + 1}/{episodes}, Reward: {reward:.4f}")
             # print(f"  Hole Position: x={x:.4f}, y={y:.4f}")
@@ -307,7 +386,8 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
             # Update for next eval
             last_avg_reward = avg_reward_eval
 
-            print(f"[EVAL] Success Rate: {success_rate_eval:.2f}, Avg Reward: {avg_reward_eval:.3f}")
+
+            print(f"[EVAL] Success Rate after {episode + 1} episodes: {success_rate_eval:.2f}, Avg Reward: {avg_reward_eval:.3f}")
 
             if use_wandb:
                 log_dict["success_rate"] = success_rate_eval
@@ -386,17 +466,20 @@ def evaluate_policy_random(model_path, rl_cfg, mujoco_cfg, project_root, num_epi
     rewards = []
 
     for episode in range(num_episodes):
-        x, y = random_hole_in_donut(r_min, r_max)
+        x, y = random_hole_in_rectangle(x_min=3.0, x_max=5.0, y_min=-0.5, y_max=0.5)
         hole_pos = np.array([x, y])
 
-        state = torch.tensor(np.concatenate([ball_start, hole_pos]), dtype=torch.float32).to(device)
+        disc_positions = generate_disc_positions(5, -3.0, 3.0, -2.0, 2.0, hole_xy=hole_pos)
+        state_vec = encode_state_with_discs(ball_start, hole_pos, disc_positions, max_num_discs=5)
+        state = torch.tensor(state_vec, dtype=torch.float32).to(device)
+        
 
         with torch.no_grad():
             a_norm = actor(state.unsqueeze(0)).squeeze(0)
 
-        speed, angle_deg = get_sim_input(a_norm.cpu().numpy(), speed_low, speed_high)
+        speed, angle_deg = get_sim_input(a_norm.cpu().numpy(), speed_low, speed_high, angle_low, angle_high)
 
-        ball_x, ball_y, in_hole, trajectory = run_sim(angle_deg, speed, [x, y], mujoco_cfg)
+        ball_x, ball_y, in_hole, trajectory = run_sim(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
 
         # ball_x, ball_y, in_hole = final_state_from_csv(csv_path)
 
@@ -415,21 +498,13 @@ def evaluate_policy_random(model_path, rl_cfg, mujoco_cfg, project_root, num_epi
     print(f"Success Rate: {succes_rate:.2f}, Average Reward: {avg_reward:.4f}")
 
 
-def get_sim_input(a_norm, speed_low, speed_high):
-    speed_norm, cos_theta, sin_theta = a_norm
-    norm = np.hypot(sin_theta, cos_theta)
-    if norm < 1e-6:
-        cos_theta = 1.0
-        sin_theta = 0.0
-    else:
-        cos_theta /= norm
-        sin_theta /= norm
-    
-    angle_rad = np.arctan2(sin_theta, cos_theta)
-    angle_deg = np.degrees(angle_rad)
+def get_sim_input(a_norm, speed_low, speed_high, angle_low, angle_high):
+    speed_norm, angle_norm = a_norm
 
-    speed = squash_to_range(speed_norm, speed_low, speed_high)
+    speed = squash_to_range(speed_norm,  speed_low,  speed_high)
+    angle_deg = squash_to_range(angle_norm, angle_low, angle_high)
     return speed, angle_deg
+
 
 
 def evaluate_policy_grid(model_path, rl_cfg, mujoco_cfg, project_root, r_min=0.5, r_max=1.5, shots_per_hole=1):
@@ -470,14 +545,16 @@ def evaluate_policy_grid(model_path, rl_cfg, mujoco_cfg, project_root, r_min=0.5
             rewards = []
 
             for _ in range(shots_per_hole):
-                state = torch.tensor(np.concatenate([ball_start, hole_pos]), dtype=torch.float32, device=device).unsqueeze(0)
+                disc_positions = generate_disc_positions(5, -3.0, 3.0, -2.0, 2.0, hole_xy=hole_pos)
+                state_vec = encode_state_with_discs(ball_start, hole_pos, disc_positions, max_num_discs=5)
+                state = torch.tensor(state_vec, dtype=torch.float32, device=device).unsqueeze(0)
 
                 with torch.no_grad():
                     a_norm = actor(state).squeeze(0).cpu().numpy()
 
-                speed, angle_deg = get_sim_input(a_norm, speed_low, speed_high)
+                speed, angle_deg = get_sim_input(a_norm, speed_low, speed_high, angle_low, angle_high)
 
-                ball_x, ball_y, in_hole, trajectory = run_sim(angle_deg, speed, [x, y], mujoco_cfg)
+                ball_x, ball_y, in_hole, trajectory = run_sim(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
 
                 # ball_x, ball_y, in_hole = final_state_from_csv(csv_path)
 
@@ -546,6 +623,8 @@ def evaluation_policy_short(actor, device, mujoco_cfg, project_root, rl_cfg, num
     csv_path  = project_root / mujoco_cfg["sim"]["csv_path"]
     speed_low = rl_cfg["model"]["speed_low"]
     speed_high = rl_cfg["model"]["speed_high"]
+    angle_low = rl_cfg["model"]["angle_low"]
+    angle_high = rl_cfg["model"]["angle_high"]
 
     ball_start = np.array([0.0, 0.0])
 
@@ -556,16 +635,17 @@ def evaluation_policy_short(actor, device, mujoco_cfg, project_root, rl_cfg, num
     distances_to_hole = []
     with torch.no_grad():
         for _ in range(num_episodes):
-            x, y = random_hole_in_donut(0.5, 1.5)
+            x, y = random_hole_in_rectangle(x_min=3.0, x_max=5.0, y_min=-0.5, y_max=0.5)
             hole_pos = np.array([x, y])
-
-            state = torch.tensor(np.concatenate([ball_start, hole_pos]), dtype=torch.float32, device=device).unsqueeze(0)
+            disc_positions = generate_disc_positions(5, -3.0, 3.0, -2.0, 2.0, hole_xy=hole_pos)
+            state_vec = encode_state_with_discs(ball_start, hole_pos, disc_positions, max_num_discs=5)
+            state = torch.tensor(state_vec, dtype=torch.float32, device=device).unsqueeze(0)
 
             a_norm = actor(state).squeeze(0).cpu().numpy()
 
-            speed, angle_deg = get_sim_input(a_norm, speed_low, speed_high)
+            speed, angle_deg = get_sim_input(a_norm, speed_low, speed_high, angle_low, angle_high)
 
-            ball_x, ball_y, in_hole, trajectory = run_sim(angle_deg, speed, [x, y], mujoco_cfg)
+            ball_x, ball_y, in_hole, trajectory = run_sim(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
 
             # ball_x, ball_y, in_hole = final_state_from_csv(csv_path)
 
@@ -586,6 +666,10 @@ def random_hole_in_donut(r_min, r_max):
     r = np.sqrt(np.random.uniform(r_min**2, r_max**2))
     return r * np.cos(theta), r * np.sin(theta)
 
+def random_hole_in_rectangle(x_min=3.0, x_max=5.0, y_min=-0.5, y_max=0.5):
+    x = np.random.uniform(x_min, x_max)
+    y = np.random.uniform(y_min, y_max)
+    return x, y
 
 if __name__ == "__main__":
     here = Path(__file__).resolve().parent
@@ -605,12 +689,15 @@ if __name__ == "__main__":
         rl_cfg = yaml.safe_load(f)
 
     if rl_cfg["training"]["use_wandb"]:
-        # Define which hyperparams sweeps can override
+        # Define which hyperparams sweeps can override (with defaults from YAML)
         sweep_config = {
-            "actor_lr":   rl_cfg["training"]["actor_lr"],
-            "critic_lr":  rl_cfg["training"]["critic_lr"],
-            "noise_std":  rl_cfg["training"]["noise_std"],
-            "hidden_dim": rl_cfg["model"]["hidden_dim"],
+            "actor_lr":          rl_cfg["training"]["actor_lr"],
+            "critic_lr":         rl_cfg["training"]["critic_lr"],
+            "noise_std":         rl_cfg["training"]["noise_std"],
+            "hidden_dim":        rl_cfg["model"]["hidden_dim"],
+            "batch_size":        rl_cfg["training"]["batch_size"],
+            "grad_steps":        rl_cfg["training"]["grad_steps"],
+            "target_update_rho": rl_cfg["training"]["target_update_rho"],
         }
 
         wandb.init(
@@ -624,10 +711,14 @@ if __name__ == "__main__":
 
         # Read back from wandb.config so sweeps can override
         cfg = wandb.config
-        rl_cfg["training"]["actor_lr"]   = cfg.actor_lr
-        rl_cfg["training"]["critic_lr"]  = cfg.critic_lr
-        rl_cfg["training"]["noise_std"]  = cfg.noise_std
-        rl_cfg["model"]["hidden_dim"]    = cfg.hidden_dim
+        rl_cfg["training"]["actor_lr"]          = cfg.actor_lr
+        rl_cfg["training"]["critic_lr"]         = cfg.critic_lr
+        rl_cfg["training"]["noise_std"]         = cfg.noise_std
+        rl_cfg["model"]["hidden_dim"]           = cfg.hidden_dim
+        rl_cfg["training"]["batch_size"]        = cfg.batch_size
+        rl_cfg["training"]["grad_steps"]        = cfg.grad_steps
+        rl_cfg["training"]["target_update_rho"] = cfg.target_update_rho
+
     import uuid
     tmp_name = f"golf_world_tmp_{os.getpid()}_{uuid.uuid4().hex}.xml"
 
