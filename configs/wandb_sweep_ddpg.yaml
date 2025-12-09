@@ -7,14 +7,15 @@ metric:
 
 parameters:
   actor_lr:
-    distribution: log_uniform
+    distribution: log_uniform_values
     min: 1e-5
     max: 3e-4
 
   critic_lr:
-    distribution: log_uniform
+    distribution: log_uniform_values
     min: 3e-5
     max: 1e-3
+
 
   noise_std:
     distribution: uniform

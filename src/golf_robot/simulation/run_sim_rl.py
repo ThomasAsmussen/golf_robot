@@ -523,6 +523,8 @@ def run_loop(model, data, cfg,
 
             v.sync()
     print("Viewer closed, ending simulation.")
+    print(f"Returning state: {ball_p[0]}, {ball_p[1]}, {is_ball_in_hole(data, cfg, ids)}")
+    print(f"Failing simulation return without ball stillness detection for: vx_des={vx_des}, aim_yaw_rad={aim_yaw_rad}")
 
 def debug_print_green_spans(model):
     names = ["green_top", "green_bottom", "green_left", "green_right"]
@@ -642,7 +644,7 @@ def main():
     cfg["sim"]["csv_period"] = args.csv_period
     aim_yaw = 90
     vx_des =  1
-    hole_pos_xy = [-2.49, -1.12]
+    hole_pos_xy = [7, 0]
     disc_positions = generate_disc_positions(5, -3.0, 3.0, -2.0, 2.0, hole_pos_xy)
     cfg["ball"]["start_pos"] = [0, 0, 0.02135]
     cfg["ball"]["obs_start_pos"] = [0, 0, 0.02135]
