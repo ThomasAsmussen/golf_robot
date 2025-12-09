@@ -95,7 +95,7 @@ def compute_reward_old(ball_end_pos, hole_pos, in_hole):
     reward = np.exp(-k * dist)
     return reward
     
-def compute_reward(ball_end_pos, hole_pos, in_hole, trajectory):
+def compute_reward_int(ball_end_pos, hole_pos, in_hole, trajectory):
     if in_hole:
         return 1.0
     
@@ -110,8 +110,25 @@ def compute_reward(ball_end_pos, hole_pos, in_hole, trajectory):
 
     min_dist = np.min(dists)
     min_dist_reward = np.exp(-5.0 * min_dist)
-    
+
     return 0.5 * min_dist_reward + 0.5 * avg_value
+
+
+def compute_reward(ball_end_pos, hole_pos, in_hole, trajectory):
+    if in_hole:
+        return 1.0
+    
+    t = trajectory[:,0]
+    xy = trajectory[:,1:3]
+    dists = np.linalg.norm(xy - hole_pos, axis=1)
+
+    min_dist = np.min(dists)
+    min_dist_reward = np.exp(-5.0 * min_dist)
+    
+    final_dist = dists[-1]
+    final_dist_reward = np.exp(-0.5 * final_dist)
+
+    return 0.2 * min_dist_reward + 0.8 * final_dist_reward
 
 
 def final_state_from_csv(csv_path):
@@ -362,6 +379,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
 
             print("========================================")
             print(f"Episode {episode + 1}/{episodes}, Reward: {reward:.4f}")
+            print(f"  Distance to Hole: {np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos):.4f}, In Hole: {in_hole}")
             # print(f"  Hole Position: x={x:.4f}, y={y:.4f}")
             # print(f"  Speed: {speed:.4f}, Angle: {angle_deg:.4f}")
 
