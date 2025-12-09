@@ -525,6 +525,7 @@ def run_loop(model, data, cfg,
     print("Viewer closed, ending simulation.")
     print(f"Returning state: {ball_p[0]}, {ball_p[1]}, {is_ball_in_hole(data, cfg, ids)}")
     print(f"Failing simulation return without ball stillness detection for: vx_des={vx_des}, aim_yaw_rad={aim_yaw_rad}")
+    print(f"Mujoco cfg: cfg={cfg}")
 
 def debug_print_green_spans(model):
     names = ["green_top", "green_bottom", "green_left", "green_right"]
@@ -565,7 +566,7 @@ def run_sim(aim_yaw_deg, vx_des, hole_pos_xy, cfg, disc_positions=None):
     real_ball_xy = real_start_pos[:2]
     obs_start_pos = cfg["ball"]["obs_start_pos"]
     obs_ball_xy = obs_start_pos[:2]
-
+    cfg["disc_positions"] = disc_positions
     set_model_options_from_cfg(model, cfg)
     data = mujoco.MjData(model)
     cfg_nsub = int(cfg["sim"].get("nsubsteps", 1))
@@ -642,9 +643,9 @@ def main():
         cfg["sim"]["render"] = bool(render)
 
     cfg["sim"]["csv_period"] = args.csv_period
-    aim_yaw = 90
-    vx_des =  1
-    hole_pos_xy = [7, 0]
+    aim_yaw = -9.201117515563965
+    vx_des =  2.4319865703582764
+    hole_pos_xy = [5, 0]
     disc_positions = generate_disc_positions(5, -3.0, 3.0, -2.0, 2.0, hole_pos_xy)
     cfg["ball"]["start_pos"] = [0, 0, 0.02135]
     cfg["ball"]["obs_start_pos"] = [0, 0, 0.02135]
