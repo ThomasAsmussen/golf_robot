@@ -96,6 +96,9 @@ def compute_reward_old(ball_end_pos, hole_pos, in_hole):
     return reward
     
 def compute_reward(ball_end_pos, hole_pos, in_hole, trajectory):
+    if in_hole:
+        return 1.0
+    
     t = trajectory[:,0]
     xy = trajectory[:,1:3]
     dists = np.linalg.norm(xy - hole_pos, axis=1)
@@ -104,10 +107,11 @@ def compute_reward(ball_end_pos, hole_pos, in_hole, trajectory):
     integral= np.trapezoid(values, t)
     T = t[-1] - t[0]
     avg_value = integral / T if T > 0 else 0.0
-    if in_hole:
-        avg_value = 1
 
-    return avg_value
+    min_dist = np.min(dists)
+    min_dist_reward = np.exp(-5.0 * min_dist)
+    
+    return 0.5 * min_dist_reward + 0.5 * avg_value
 
 
 def final_state_from_csv(csv_path):
@@ -217,7 +221,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
             rl_cfg=rl_cfg,
         )
 
-        critic, _ = load_critic(
+        target_critic, _ = load_critic(
             model_path=project_root / "models" / "rl" / "ddpg" / "ddpg_target_critic.pth",
             rl_cfg=rl_cfg,
         )
@@ -302,10 +306,9 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
                     raise RuntimeError("Simulation failed twice — aborting training.")
                 else:
                     continue
-            
-                
-        else:
-            ball_x, ball_y, in_hole, trajectory = result
+                 
+        
+        ball_x, ball_y, in_hole, trajectory = result
         # ball_x, ball_y, in_hole = final_state_from_csv(csv_path)
 
         reward = compute_reward(
@@ -332,7 +335,8 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
                     target_actions = target_actor(states_b)
                     target_q = target_critic(states_b, target_actions)
 
-                td_target = rewards_b + gamma * target_q
+                # td_target = rewards_b + gamma * target_q
+                td_target = rewards_b
 
                 q_pred = critic(states_b, actions_b)
                 critic_loss = F.mse_loss(q_pred, td_target)
@@ -461,7 +465,7 @@ def evaluate_policy_random(model_path, rl_cfg, mujoco_cfg, project_root, num_epi
     csv_path = project_root / mujoco_cfg["sim"]["csv_path"]
 
     ball_start = np.array([0.0, 0.0])
-
+    max_num_discs = 5
     succeses = 0
     rewards = []
 
@@ -469,7 +473,7 @@ def evaluate_policy_random(model_path, rl_cfg, mujoco_cfg, project_root, num_epi
         x, y = random_hole_in_rectangle(x_min=3.0, x_max=5.0, y_min=-0.5, y_max=0.5)
         hole_pos = np.array([x, y])
 
-        disc_positions = generate_disc_positions(5, -3.0, 3.0, -2.0, 2.0, hole_xy=hole_pos)
+        disc_positions = generate_disc_positions(max_num_discs, x-2.0, x, -0.5, 0.5, hole_xy=hole_pos)
         state_vec = encode_state_with_discs(ball_start, hole_pos, disc_positions, max_num_discs=5)
         state = torch.tensor(state_vec, dtype=torch.float32).to(device)
         
@@ -532,6 +536,7 @@ def evaluate_policy_grid(model_path, rl_cfg, mujoco_cfg, project_root, r_min=0.5
     success_grid = np.full((num_x, num_y), np.nan)
     reward_grid = np.full((num_x, num_y), np.nan)
 
+    max_num_discs = 5
     for iy, y in enumerate(y_coords):
         for ix, x in enumerate(x_coords):
             r = np.sqrt(x**2 + y**2)
@@ -545,7 +550,7 @@ def evaluate_policy_grid(model_path, rl_cfg, mujoco_cfg, project_root, r_min=0.5
             rewards = []
 
             for _ in range(shots_per_hole):
-                disc_positions = generate_disc_positions(5, -3.0, 3.0, -2.0, 2.0, hole_xy=hole_pos)
+                disc_positions = generate_disc_positions(max_num_discs, x-2.0, x, -0.5, 0.5, hole_xy=hole_pos)
                 state_vec = encode_state_with_discs(ball_start, hole_pos, disc_positions, max_num_discs=5)
                 state = torch.tensor(state_vec, dtype=torch.float32, device=device).unsqueeze(0)
 
@@ -631,13 +636,14 @@ def evaluation_policy_short(actor, device, mujoco_cfg, project_root, rl_cfg, num
     succeses = 0
     rewards  = []
 
+    max_num_discs = 5
     actor.eval()
     distances_to_hole = []
     with torch.no_grad():
         for _ in range(num_episodes):
             x, y = random_hole_in_rectangle(x_min=3.0, x_max=5.0, y_min=-0.5, y_max=0.5)
             hole_pos = np.array([x, y])
-            disc_positions = generate_disc_positions(5, -3.0, 3.0, -2.0, 2.0, hole_xy=hole_pos)
+            disc_positions = generate_disc_positions(max_num_discs, x-2.0, x, -0.5, 0.5, hole_xy=hole_pos)
             state_vec = encode_state_with_discs(ball_start, hole_pos, disc_positions, max_num_discs=5)
             state = torch.tensor(state_vec, dtype=torch.float32, device=device).unsqueeze(0)
 
