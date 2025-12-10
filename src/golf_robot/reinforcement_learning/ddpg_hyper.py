@@ -272,7 +272,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
     critic.train()
     log_dict = {}
 
-    last_avg_reward = None
+    # last_avg_reward = None
 
     for episode in range(episodes):
         ball_start = np.random.uniform(-0.5, 0.5, size=(2,))
@@ -393,20 +393,20 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
                 num_episodes=rl_cfg["training"]["eval_episodes"],
             )
 
-            if last_avg_reward is not None:
-                improvement = avg_reward_eval - last_avg_reward
+            # if last_avg_reward is not None:
+            #     improvement = avg_reward_eval - last_avg_reward
 
                 # Only react if change is significant (e.g. 0.02)
-                if avg_reward_eval > 0.5 and improvement > 0.02:
-                    noise_std *= 0.95  # slightly less exploration
-                elif avg_reward_eval < 0.5 and improvement < -0.02:
-                    noise_std *= 1.05  # slightly more exploration
+                # if avg_reward_eval > 0.5 and improvement > 0.02:
+                #     noise_std *= 0.95  # slightly less exploration
+                # elif avg_reward_eval < 0.5 and improvement < -0.02:
+                #     noise_std *= 1.05  # slightly more exploration
 
                 # Clip noise to reasonable bounds
-                noise_std = float(np.clip(noise_std, 0.05, 0.6))
+                # noise_std = float(np.clip(noise_std, 0.05, 0.6))
 
             # Update for next eval
-            last_avg_reward = avg_reward_eval
+            # last_avg_reward = avg_reward_eval
 
 
             print(f"[EVAL] Success Rate after {episode + 1} episodes: {success_rate_eval:.2f}, Avg Reward: {avg_reward_eval:.3f}")
