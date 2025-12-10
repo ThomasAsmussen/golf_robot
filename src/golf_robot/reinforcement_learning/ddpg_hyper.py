@@ -444,6 +444,11 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
         wandb.log({"final_avg_distance_to_hole": final_avg_distance_to_hole})
 
     print("Sweep complete")
+    torch.save(actor.state_dict(), model_dir / f"ddpg_actor_{run_name}.pth")
+    torch.save(critic.state_dict(), model_dir / f"ddpg_critic_{run_name}.pth")
+    torch.save(target_actor.state_dict(), model_dir / f"ddpg_target_actor_{run_name}.pth")
+    torch.save(target_critic.state_dict(), model_dir / f"ddpg_target_critic_{run_name}.pth")
+    print("Training complete. Models saved.")
 
 
 def load_actor(model_path, rl_cfg):
