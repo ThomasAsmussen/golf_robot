@@ -301,13 +301,13 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
     for episode in range(episodes):
 
         ball_start = np.random.uniform(-0.5, 0.5, size=(2,))
-        ball_start_obs = ball_start + np.random.normal(0, 0.00005, size=(2,))
+        ball_start_obs = ball_start + np.random.normal(0, 0.0, size=(2,))
         mujoco_cfg["ball"]["start_pos"] = [ball_start[0], ball_start[1], 0.02135]
         mujoco_cfg["ball"]["obs_start_pos"] = [ball_start_obs[0], ball_start_obs[1], 0.02135]
         # ball_start = np.array([0.0, 0.0])
         x, y = random_hole_in_rectangle(x_min=3.0, x_max=5.0, y_min=-0.5, y_max=0.5)
         hole_pos = np.array([x, y])
-        hole_pos_obs = hole_pos + np.random.normal(0, 0.01, size=(2,))
+        hole_pos_obs = hole_pos + np.random.normal(0, 0.00, size=(2,))
         
         # Curriculum: gradually increase number of discs with training
         # N = 500
