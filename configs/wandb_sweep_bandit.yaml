@@ -1,0 +1,25 @@
+program: src/golf_robot/reinforcement_learning/contextual_bandit.py  # <-- adjust if filename differs
+method: bayes   # or "random" if you prefer
+
+metric:
+  name: final_success_rate
+  goal: maximize
+
+parameters:
+  actor_lr:
+    values: [1e-4, 3e-4, 1e-3, 3e-3]
+
+  critic_lr:
+    values: [3e-4, 1e-3, 3e-3, 1e-2]
+
+  noise_std:
+    values: [0.05, 0.1, 0.2, 0.3, 0.5]
+
+  hidden_dim:
+    values: [64, 128, 256]
+
+  batch_size:
+    values: [64, 128, 256]
+
+  grad_steps:
+    values: [1, 4, 8, 16]
