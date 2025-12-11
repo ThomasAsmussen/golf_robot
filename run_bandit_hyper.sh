@@ -1,6 +1,6 @@
 #!/bin/bash
 #BSUB -q hpc          # or a CPU queue if you don't use GPU
-#BSUB -J ddpg_sweep
+#BSUB -J bandit_sweep
 #BSUB -n 2
 #BSUB -R "span[hosts=1]"
 #BSUB -R "rusage[mem=2GB]"
