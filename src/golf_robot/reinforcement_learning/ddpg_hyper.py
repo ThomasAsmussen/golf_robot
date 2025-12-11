@@ -310,8 +310,9 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
         hole_pos_obs = hole_pos + np.random.normal(0, 0.01, size=(2,))
         
         # Curriculum: gradually increase number of discs with training
-        N = 500
-        max_num_discs = min(episode // N, 5)
+        # N = 500
+        # max_num_discs = min(episode // N, 5)
+        max_num_discs = 0
 
         disc_positions = generate_disc_positions(max_num_discs, x-2.0, x, -0.5, 0.5, hole_xy=hole_pos)
 
