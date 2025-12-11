@@ -14,9 +14,10 @@ training:
   error_hard_stop: True
   integration_reward: True
   do_prints: False
+  model_name: "fresh_sweep_26.pth"
 
 model:
-  state_dim: 14
+  state_dim: 19
   action_dim: 2
   hidden_dim: 256
   speed_low: 0.1

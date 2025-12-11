@@ -116,19 +116,19 @@ def compute_reward_int(ball_end_pos, hole_pos, in_hole, trajectory):
 
 def compute_reward(ball_end_pos, hole_pos, in_hole, trajectory):
     if in_hole:
-        return 1.0
+        return 3.0
     
-    t = trajectory[:,0]
-    xy = trajectory[:,1:3]
-    dists = np.linalg.norm(xy - hole_pos, axis=1)
+    # t = trajectory[:,0]
+    # xy = trajectory[:,1:3]
+    # dists = np.linalg.norm(xy - hole_pos, axis=1)
 
-    min_dist = np.min(dists)
-    min_dist_reward = np.exp(-5.0 * min_dist)
+    # min_dist = np.min(dists)
+    # min_dist_reward = np.exp(-5.0 * min_dist)
     
-    final_dist = dists[-1]
+    final_dist = np.linalg.norm(ball_end_pos - hole_pos)
     final_dist_reward = np.exp(-0.5 * final_dist)
 
-    return 0.2 * min_dist_reward + 0.8 * final_dist_reward
+    return final_dist_reward
 
 
 def final_state_from_csv(csv_path):
@@ -182,19 +182,40 @@ def generate_disc_positions(max_num_discs, x_min, x_max, y_min, y_max, hole_xy):
 
 
 def encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, max_num_discs):
-    default_value = 10.0
+    default_value = 0.0
 
     disc_coords = []
 
     for i in range(max_num_discs):
         if i < len(disc_positions):
             x, y = disc_positions[i]
+            disc_placed = 1
         else:
             x, y = default_value, default_value
-        disc_coords.extend([x, y])
+            disc_placed = 0
+        disc_coords.extend([x, y, disc_placed])
 
     return np.concatenate([ball_start_obs, hole_pos_obs, np.array(disc_coords)])
 
+class Normalizer:
+    def __init__(self, size, eps=1e-8):
+        self.size = size
+        self.mean = np.zeros(size)
+        self.var = np.ones(size)
+        self.count = eps
+
+    def update(self, x):
+        x = np.asarray(x)
+        self.count += 1
+        delta = x - self.mean
+        self.mean += delta / self.count
+        self.var += delta * (x - self.mean)
+
+    def std(self):
+        return np.sqrt(self.var / self.count)
+    
+    def normalize(self, x):
+        return (x - self.mean) / (self.std() + 1e-6)
 
 
 def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
@@ -213,8 +234,10 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
     angle_low   = rl_cfg["model"]["angle_low"]
     angle_high  = rl_cfg["model"]["angle_high"]
 
-    max_num_discs = 5
+    normalizer = Normalizer(size=state_dim)
 
+    noise_std_start = noise_std
+    noise_std_end = 0.05
     # state_dim += 2 * max_num_discs  # add disc positions to state
 
     use_wandb   = rl_cfg["training"]["use_wandb"]
@@ -223,26 +246,27 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
 
     csv_path = project_root / mujoco_cfg["sim"]["csv_path"]
 
+    model_name = rl_cfg["training"].get("model_name", None)
+
     if continue_training:
         actor, device = load_actor(
-            model_path=project_root / "models" / "rl" / "ddpg" / "ddpg_actor.pth",
+            model_path=project_root / "models" / "rl" / "ddpg" / f"ddpg_actor_{model_name}",
             rl_cfg=rl_cfg,
         )
         critic, _ = load_critic(
-            model_path=project_root / "models" / "rl" / "ddpg" / "ddpg_critic.pth",
+            model_path=project_root / "models" / "rl" / "ddpg" / f"ddpg_critic_{model_name}",
             rl_cfg=rl_cfg,
         )
 
         target_actor, _ = load_actor(
-            model_path=project_root / "models" / "rl" / "ddpg" / "ddpg_target_actor.pth",
+            model_path=project_root / "models" / "rl" / "ddpg" / f"ddpg_target_actor_{model_name}",
             rl_cfg=rl_cfg,
         )
 
         target_critic, _ = load_critic(
-            model_path=project_root / "models" / "rl" / "ddpg" / "ddpg_target_critic.pth",
+            model_path=project_root / "models" / "rl" / "ddpg" / f"ddpg_target_critic_{model_name}",
             rl_cfg=rl_cfg,
         )
-
 
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -275,6 +299,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
     # last_avg_reward = None
 
     for episode in range(episodes):
+
         ball_start = np.random.uniform(-0.5, 0.5, size=(2,))
         ball_start_obs = ball_start + np.random.normal(0, 0.00005, size=(2,))
         mujoco_cfg["ball"]["start_pos"] = [ball_start[0], ball_start[1], 0.02135]
@@ -284,11 +309,19 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
         hole_pos = np.array([x, y])
         hole_pos_obs = hole_pos + np.random.normal(0, 0.01, size=(2,))
         
+        # Curriculum: gradually increase number of discs with training
+        N = 500
+        max_num_discs = min(episode // N, 5)
+
         disc_positions = generate_disc_positions(max_num_discs, x-2.0, x, -0.5, 0.5, hole_xy=hole_pos)
 
-        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, max_num_discs)
+        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 5)
+
+        normalizer.update(state_vec)
+        state_norm = normalizer.normalize(state_vec)
         # print(disc_positions)
-        s = torch.tensor(state_vec, dtype=torch.float32).to(device)
+
+        s = torch.tensor(state_norm, dtype=torch.float32).to(device)
         critic_loss_value = None
         actor_loss_value = None
 
@@ -305,7 +338,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
         speed, angle_deg = get_sim_input(a_noisy.cpu().numpy(), speed_low, speed_high, angle_low, angle_high)
 
         speed_noise = np.random.normal(0, 0.05)
-        angle_deg_noise = np.random.normal(0, 0.1)
+        angle_deg_noise = np.random.normal(0, 0.01)
 
         speed = np.clip(speed + speed_noise, speed_low, speed_high)
         angle_deg = np.clip(angle_deg + angle_deg_noise, angle_low, angle_high)
@@ -391,7 +424,12 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
                 project_root,
                 rl_cfg,
                 num_episodes=rl_cfg["training"]["eval_episodes"],
+                normalizer=normalizer,
+                max_num_discs=max_num_discs
             )
+            # Linearly decay noise std over training
+            frac = episode / episodes
+            noise_std = noise_std_start + frac * (noise_std_end - noise_std_start)
 
             # if last_avg_reward is not None:
             #     improvement = avg_reward_eval - last_avg_reward
@@ -436,6 +474,8 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
         project_root,
         rl_cfg,
         100,
+        normalizer=normalizer,
+        max_num_discs=max_num_discs
     )
 
     if use_wandb:
@@ -477,7 +517,7 @@ def load_critic(model_path, rl_cfg):
     return critic, device
 
 
-def evaluate_policy_random(model_path, rl_cfg, mujoco_cfg, project_root, num_episodes, r_min=0.5, r_max=1.5):
+def evaluate_policy_random(model_path, rl_cfg, mujoco_cfg, project_root, num_episodes, r_min=0.5, r_max=1.5, max_num_discs=5):
     actor, device = load_actor(model_path, rl_cfg)
 
     speed_low   = rl_cfg["model"]["speed_low"]
@@ -488,7 +528,6 @@ def evaluate_policy_random(model_path, rl_cfg, mujoco_cfg, project_root, num_epi
     csv_path = project_root / mujoco_cfg["sim"]["csv_path"]
 
     ball_start = np.array([0.0, 0.0])
-    max_num_discs = 5
     succeses = 0
     rewards = []
 
@@ -534,7 +573,7 @@ def get_sim_input(a_norm, speed_low, speed_high, angle_low, angle_high):
 
 
 
-def evaluate_policy_grid(model_path, rl_cfg, mujoco_cfg, project_root, r_min=0.5, r_max=1.5, shots_per_hole=1):
+def evaluate_policy_grid(model_path, rl_cfg, mujoco_cfg, project_root, r_min=0.5, r_max=1.5, shots_per_hole=1, max_num_discs=5):
     
     actor, device = load_actor(model_path, rl_cfg)
 
@@ -559,7 +598,6 @@ def evaluate_policy_grid(model_path, rl_cfg, mujoco_cfg, project_root, r_min=0.5
     success_grid = np.full((num_x, num_y), np.nan)
     reward_grid = np.full((num_x, num_y), np.nan)
 
-    max_num_discs = 5
     for iy, y in enumerate(y_coords):
         for ix, x in enumerate(x_coords):
             r = np.sqrt(x**2 + y**2)
@@ -647,7 +685,7 @@ def plot_reward_heatmap(x_coords, y_coords, reward_grid, log_to_wandb=False, pro
         plt.show()
 
 
-def evaluation_policy_short(actor, device, mujoco_cfg, project_root, rl_cfg, num_episodes):
+def evaluation_policy_short(actor, device, mujoco_cfg, project_root, rl_cfg, num_episodes, normalizer=None, max_num_discs=5):
     csv_path  = project_root / mujoco_cfg["sim"]["csv_path"]
     speed_low = rl_cfg["model"]["speed_low"]
     speed_high = rl_cfg["model"]["speed_high"]
@@ -659,7 +697,6 @@ def evaluation_policy_short(actor, device, mujoco_cfg, project_root, rl_cfg, num
     succeses = 0
     rewards  = []
 
-    max_num_discs = 5
     actor.eval()
     distances_to_hole = []
     with torch.no_grad():
@@ -668,6 +705,9 @@ def evaluation_policy_short(actor, device, mujoco_cfg, project_root, rl_cfg, num
             hole_pos = np.array([x, y])
             disc_positions = generate_disc_positions(max_num_discs, x-2.0, x, -0.5, 0.5, hole_xy=hole_pos)
             state_vec = encode_state_with_discs(ball_start, hole_pos, disc_positions, max_num_discs=5)
+            if normalizer is not None:
+                state_vec = normalizer.normalize(state_vec)
+            
             state = torch.tensor(state_vec, dtype=torch.float32, device=device).unsqueeze(0)
 
             a_norm = actor(state).squeeze(0).cpu().numpy()

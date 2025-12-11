@@ -2,7 +2,7 @@ program: src/golf_robot/reinforcement_learning/ddpg_hyper.py  # <-- adjust if fi
 method: bayes   # or "random" if you prefer
 
 metric:
-  name: final_avg_reward
+  name: final_success_rate
   goal: maximize
 
 parameters:
