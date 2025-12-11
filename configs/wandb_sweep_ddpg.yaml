@@ -1,4 +1,4 @@
-program: src/golf_robot/reinforcement_learning/ddpg_hyper.py  # <-- adjust if filename differs
+program: src/golf_robot/reinforcement_learning/ddpg_hyper_clean.py  # <-- adjust if filename differs
 method: bayes   # or "random" if you prefer
 
 metric:
@@ -16,14 +16,13 @@ parameters:
     min: 3e-5
     max: 1e-3
 
-
   noise_std:
     distribution: uniform
     min: 0.1
     max: 0.4
 
   hidden_dim:
-    values: [64, 128, 256]
+    values: [128, 256]
 
   batch_size:
     values: [64, 128]
