@@ -48,12 +48,12 @@
   </asset>
 
   <worldbody>
-    <geom name="green_plus_y" size="4 0.9735 0.02" pos="3 1.0265 -0.02" type="box" material="green_mat"/>
-    <geom name="green_neg_y" size="4 0.9735 0.02" pos="3 -1.0265 -0.02" type="box" material="green_mat"/>
-    <geom name="green_plus_x" size="0.9735 0.053 0.02" pos="6.0265 0 -0.02" type="box" material="green_mat"/>
-    <geom name="green_neg_x" size="2.9735 0.053 0.02" pos="1.9735 0 -0.02" type="box" material="green_mat"/>
+    <geom name="green_plus_y" size="3 0.793599 0.02" pos="0 1.2064 -0.02" type="box" material="green_mat"/>
+    <geom name="green_neg_y" size="3 1.1534 0.02" pos="0 -0.846599 -0.02" type="box" material="green_mat"/>
+    <geom name="green_plus_x" size="-0.997723 0.053 0.02" pos="3.99772 0.359802 -0.02" type="box" material="green_mat"/>
+    <geom name="green_neg_x" size="3.94472 0.053 0.02" pos="0.944723 0.359802 -0.02" type="box" material="green_mat"/>
     <camera name="overview" pos="2 -3 1.5" quat="0.707107 0 0.707107 0"/>
-    <body name="cup" pos="5 0 -0.110665">
+    <body name="cup" pos="4.94245 0.359802 -0.110665">
       <geom type="mesh" material="cup_mat" mesh="cup_w00"/>
       <geom type="mesh" material="cup_mat" mesh="cup_w01"/>
       <geom type="mesh" material="cup_mat" mesh="cup_w02"/>
@@ -83,16 +83,16 @@
       <geom type="mesh" material="cup_mat" mesh="cup_w26"/>
       <site name="hole_center" pos="0 0 0" size="0.055" rgba="0 0 0 0.2"/>
     </body>
-    <body name="disc0" pos="1.49564 -0.290964 0">
+    <body name="disc0" pos="4.15362 0.157555 0">
       <geom type="mesh" material="disc_mat" mesh="disc_obs"/>
     </body>
-    <body name="disc1" pos="-0.208271 -0.566574 0">
+    <body name="disc1" pos="3.5091 -0.0170734 0">
       <geom type="mesh" material="disc_mat" mesh="disc_obs"/>
     </body>
-    <body name="disc2" pos="-1.16869 -0.705322 0">
+    <body name="disc2" pos="0 0 -10">
       <geom type="mesh" material="disc_mat" mesh="disc_obs"/>
     </body>
-    <body name="disc3" pos="-2.16584 -0.695476 0">
+    <body name="disc3" pos="0 0 -10">
       <geom type="mesh" material="disc_mat" mesh="disc_obs"/>
     </body>
     <body name="disc4" pos="0 0 -10">

@@ -643,12 +643,13 @@ def main():
         cfg["sim"]["render"] = bool(render)
 
     cfg["sim"]["csv_period"] = args.csv_period
-    aim_yaw = -9.201117515563965
-    vx_des =  2.4319865703582764
+    aim_yaw = 10.258417129516602
+    vx_des =  2.3321681022644043
     hole_pos_xy = [5, 0]
-    disc_positions = generate_disc_positions(5, -3.0, 3.0, -2.0, 2.0, hole_pos_xy)
-    cfg["ball"]["start_pos"] = [0, 0, 0.02135]
-    cfg["ball"]["obs_start_pos"] = [0, 0, 0.02135]
+    # disc_positions = generate_disc_positions(5, -3.0, 3.0, -2.0, 2.0, hole_pos_xy)
+    disc_positions = [(1.4956361419452078, -0.29096378977334414), (-0.20827146563258125, -0.5665742751926417), (-1.1686851660689785, -0.7053216711723784), (-2.1658353815296345, -0.6954762744879543)]
+    cfg["ball"]["start_pos"] = [np.float64(-0.10126499661175004), np.float64(-0.48780616912307617), 0.02135]
+    cfg["ball"]["obs_start_pos"] = [np.float64(-0.1013574481871513), np.float64(-0.4878724069881774), 0.02135]
     run_sim(
         aim_yaw_deg=aim_yaw,
         vx_des=vx_des,

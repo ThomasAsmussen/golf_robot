@@ -6,13 +6,12 @@ training:
   batch_size: 64
   grad_steps: 10
   replay_buffer_capacity: 100000
-  use_wandb: False
+  use_wandb: true
   eval_interval: 50
   eval_episodes: 20
   target_update_rho: 0.005
   continue_training: False
   error_hard_stop: True
-  integration_reward: True
   do_prints: False
   model_name: "fresh_sweep_26.pth"
 

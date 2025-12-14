@@ -204,8 +204,14 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
             print(f"Episode {episode + 1}: Simulation failed, trying again.")
             result = run_sim(angle_deg, speed, [x, y], mujoco_cfg)
             if result is None:
-                print(f"Episode {episode + 1}: Simulation failed again, skipping this episode. Bad action: speed={speed}, angle={angle_deg}")
-                continue
+                print(f"Episode {episode + 1}: Simulation failed again. Bad action: speed={speed}, angle={angle_deg}")
+                print(f"  Hole Position: x={x:.4f}, y={y:.4f}")
+                if rl_cfg["training"]["error_hard_stop"] and not mujoco_cfg["sim"]["render"]:
+                    raise RuntimeError("Simulation failed twice — aborting training.")
+                else:
+                    continue
+            
+                
         else:
             ball_x, ball_y, in_hole = result
         # ball_x, ball_y, in_hole = final_state_from_csv(csv_path)

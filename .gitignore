@@ -11,6 +11,7 @@ MUJOCO_LOG.TXT/
 wandb/
 log/
 tuning_results/
+models/rl/
 # Mac OS-specific storage files
 .DS_Store
 

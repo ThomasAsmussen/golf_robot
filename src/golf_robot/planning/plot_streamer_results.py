@@ -20,6 +20,7 @@ import matplotlib
 # backend so automated runs (CI / headless) won't block.
 # SHOW_PLOTS = True
 SHOW_PLOTS = True
+ONLY_KF = True
 if SHOW_PLOTS:
     # Try a sequence of common interactive backends; fall back to default
     for bk in ('TkAgg', 'Qt5Agg', 'GTK3Agg', 'WXAgg'):

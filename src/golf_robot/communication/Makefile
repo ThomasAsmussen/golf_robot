@@ -11,9 +11,11 @@ COMMON_SRCS = \
     src/robot_state_RT.cpp \
     src/do_output.cpp \
     src/ufwdkin_c.c \
-    src/ujac_c.c
+    src/ujac_c.c \
+# 	src/kf_tuning.cpp
 
 TRAJ_SRCS  = src/traj_streamer.cpp
+# TRAJ_SRCS  = src/kf_tuning.cpp
 TRAJ2_SRCS = src/traj_streamer_2.cpp
 TEST_SRCS  = src/test.cpp
 
@@ -25,6 +27,7 @@ TEST_OBJS   = $(TEST_SRCS:.cpp=.o)
 
 DRY_TARGET  = traj_streamer_dry
 TRAJ_TARGET = traj_streamer
+# TRAJ_TARGET = kf_tuning
 TRAJ2_TARGET = traj_streamer2
 TEST_TARGET = test_runner
 

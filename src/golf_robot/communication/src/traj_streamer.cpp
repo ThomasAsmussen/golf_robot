@@ -31,40 +31,110 @@ static const int         REVERSE_PORT = 5007;
 static const double      ACCEL  = 5.0;
 static const double      DT     = 0.008;
 static const double      VCLAMP = 3.0;
-static const double      kp = 0.1;
-static const double      ki = 1.0;
+static const double      kp = 0;
+static const double      kd = 0;
+static const double      ki = 0;
 
-static const double MAX_ERROR_DEG = 1.0;
+static const double MAX_ERROR_DEG = 50.0;
 static const double MAX_ERROR_RAD = MAX_ERROR_DEG * 3.14 / 180.0;
 
 // --- Minimal 2x2 per-joint KF (q, dq) ---
+// struct KF2 {
+//     double q=0.0, dq=0.0;
+//     double P00=1e-4, P01=0.0, P10=0.0, P11=1.0;
+//     void predict(double dt, double sigma_a){
+//         if (dt <= 0) return;
+//         const double g0=0.5*dt*dt, g1=dt, s2=sigma_a*sigma_a;
+//         // x = F x
+//         q  += dt*dq;
+//         // P = FPF^T + Q
+//         const double nP00 = P00 + dt*(P01+P10) + dt*dt*P11 + s2*g0*g0;
+//         const double nP01 = P01 + dt*P11 + s2*g0*g1;
+//         const double nP10 = P10 + dt*P11 + s2*g0*g1;
+//         const double nP11 = P11 + s2*g1*g1;
+//         P00=nP00; P01=nP01; P10=nP10; P11=nP11;
+//     }
+//     void update_pos(double z, double R){
+//         const double S = P00 + R;
+//         const double K0 = P00 / S;
+//         const double K1 = P10 / S;
+//         const double r  = z - q;
+//         q  += K0 * r;
+//         dq += K1 * r;
+//         const double nP00 = (1.0 - K0)*P00;
+//         const double nP01 = (1.0 - K0)*P01;
+//         const double nP10 = P10 - K1*P00;
+//         const double nP11 = P11 - K1*P01;
+//         P00=nP00; P01=nP01; P10=nP10; P11=nP11;
+//     }
+// };
+
 struct KF2 {
-    double q=0.0, dq=0.0;
-    double P00=1e-4, P01=0.0, P10=0.0, P11=1.0;
-    void predict(double dt, double sigma_a){
+    double q = 0.0, dq = 0.0;
+    double P00 = 1e-4, P01 = 0.0, P10 = 0.0, P11 = 1.0;
+
+    void predict(double dt, double sigma_a) {
         if (dt <= 0) return;
-        const double g0=0.5*dt*dt, g1=dt, s2=sigma_a*sigma_a;
+        const double g0 = 0.5 * dt * dt;
+        const double g1 = dt;
+        const double s2 = sigma_a * sigma_a;
+
         // x = F x
-        q  += dt*dq;
-        // P = FPF^T + Q
+        q  += dt * dq;
+
+        // P = F P F^T + Q (white acceleration model)
         const double nP00 = P00 + dt*(P01+P10) + dt*dt*P11 + s2*g0*g0;
         const double nP01 = P01 + dt*P11 + s2*g0*g1;
         const double nP10 = P10 + dt*P11 + s2*g0*g1;
         const double nP11 = P11 + s2*g1*g1;
-        P00=nP00; P01=nP01; P10=nP10; P11=nP11;
+        P00 = nP00; P01 = nP01; P10 = nP10; P11 = nP11;
     }
-    void update_pos(double z, double R){
-        const double S = P00 + R;
-        const double K0 = P00 / S;
-        const double K1 = P10 / S;
-        const double r  = z - q;
-        q  += K0 * r;
-        dq += K1 * r;
-        const double nP00 = (1.0 - K0)*P00;
-        const double nP01 = (1.0 - K0)*P01;
-        const double nP10 = P10 - K1*P00;
-        const double nP11 = P11 - K1*P01;
-        P00=nP00; P01=nP01; P10=nP10; P11=nP11;
+
+    // measurement: z = [q_meas, dq_meas]; R = diag(Rq, Rdq)
+    void update_q_dq(double zq, double zdq, double Rq, double Rdq) {
+        // S = P + R
+        double S00 = P00 + Rq;
+        double S01 = P01;
+        double S10 = P10;
+        double S11 = P11 + Rdq;
+
+        // inv(S) for 2x2
+        double det = S00 * S11 - S01 * S10;
+        if (std::fabs(det) < 1e-12) {
+            // fallback: only position update if S is near singular
+            return;
+        }
+        double invS00 =  S11 / det;
+        double invS01 = -S01 / det;
+        double invS10 = -S10 / det;
+        double invS11 =  S00 / det;
+
+        // K = P * S^{-1}
+        double K00 = P00 * invS00 + P01 * invS10;
+        double K01 = P00 * invS01 + P01 * invS11;
+        double K10 = P10 * invS00 + P11 * invS10;
+        double K11 = P10 * invS01 + P11 * invS11;
+
+        // innovation r = z - x
+        double rq  = zq  - q;
+        double rdq = zdq - dq;
+
+        // update state
+        q  += K00 * rq + K01 * rdq;
+        dq += K10 * rq + K11 * rdq;
+
+        // update covariance: P = (I - K) P
+        double I00 = 1.0 - K00;
+        double I01 =    - K01;
+        double I10 =    - K10;
+        double I11 = 1.0 - K11;
+
+        double nP00 = I00*P00 + I01*P10;
+        double nP01 = I00*P01 + I01*P11;
+        double nP10 = I10*P00 + I11*P10;
+        double nP11 = I10*P01 + I11*P11;
+
+        P00 = nP00; P01 = nP01; P10 = nP10; P11 = nP11;
     }
 };
 
@@ -210,19 +280,38 @@ int main(){
     using clock = std::chrono::steady_clock;
 
     const bool   USE_KF   = true;      // toggle here
-    const double SIGMA_A  = 3.0;       // rad/s^2   (process accel noise)
+    const double SIGMA_A  = 2.0;       // rad/s^2   (process accel noise)
     const double SIGMA_Q  = 1e-3;      // rad       (meas noise std for q)
+    const double SIGMA_DQ = 1e-1;      // rad       (meas noise std for q)
 
     std::array<KF2,6> kf;
     for (int j=0;j<6;++j) { kf[j].q = q_rows.front()[j]; kf[j].dq = 0.0; }
 
     // controller params (you can tune)
     std::array<double,6> Kp_pos  = {kp, kp, kp, kp, kp, kp};
+    std::array<double,6> Kd_vel  = {kd, kd, kd, kd, kd, kd};
+    // std::array<double,6> Kp_pos = {
+    //     0,  // joint 0
+    //     0,  // joint 1
+    //     0,  // joint 2
+    //     0,  // joint 3
+    //     0,  // joint 4
+    //     0   // joint 5
+    // };
+
+    // std::array<double,6> Kd_vel = {
+    //     0.045,  // joint 0
+    //     0.042,  // joint 1
+    //     0.037,  // joint 2
+    //     0.119,  // joint 3
+    //     0.036,  // joint 4
+    //     0.027   // joint 5
+    // };
     std::array<double,6> VCLAMPs = {VCLAMP, VCLAMP, VCLAMP, VCLAMP, VCLAMP, VCLAMP};
     // --- I-term params and state ---
     std::array<double,6> Ki_pos  = {ki, ki, ki, ki, ki, ki};   // rad/s per rad  (tune >0 to enable)
-    std::array<double,6> I_CLAMP = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0};   // clamp on integral state (rad)
-    double I_LEAK = 0.0;                                         // 0 = no leak; e.g. 0.01 for slow bleed
+    std::array<double,6> I_CLAMP = {0.1, 0.1, 0.1, 0.1, 0.1, 0.1};   // clamp on integral state (rad)
+    double I_LEAK = 0.02;                                         // 0 = no leak; e.g. 0.01 for slow bleed
 
     std::array<double,6> I = {0,0,0,0,0,0};  // integral state per joint (integrates position error)
 
@@ -275,10 +364,15 @@ int main(){
             if (USE_KF) {
                 std::lock_guard<std::mutex> g(kf_mtx);
                 const double dt_meas = std::chrono::duration<double>(t_meas - kf_time).count();
-                for (int j=0;j<6;++j) kf[j].predict(dt_meas, SIGMA_A);
-                kf_time = t_meas;
+                if (dt_meas > 0) {
+                    for (int j=0;j<6;++j)
+                        kf[j].predict(dt_meas, SIGMA_A);
+                    kf_time = t_meas;
+                }
+
                 for (int j=0;j<6;++j)
-                    if (j < (int)q_meas.size()) kf[j].update_pos(q_meas[j], SIGMA_Q*SIGMA_Q);
+                    if (j < (int)q_meas.size()) 
+                        kf[j].update_q_dq(q_meas[j], dq_meas[j], SIGMA_Q*SIGMA_Q, SIGMA_DQ*SIGMA_DQ);
             }
 
             // store last measurement (for logging)
@@ -309,10 +403,19 @@ int main(){
         {
             std::lock_guard<std::mutex> g(kf_mtx);
             if (USE_KF) {
-                const double dt_to_cmd = std::chrono::duration<double>(next_tick - kf_time).count();
-                for (int j=0;j<6;++j) kf[j].predict(dt_to_cmd, SIGMA_A);
-                kf_time = next_tick;
-                for (int j=0;j<6;++j){ q_hat[j] = kf[j].q; dq_hat[j] = kf[j].dq; }
+                const double dt_pred = std::chrono::duration<double>(next_tick - kf_time).count();
+
+                double dt_used = dt_pred;
+                if (dt_used < 0) dt_used = 0.0; // should not happen
+
+                for (int j = 0; j < 6; ++j) {
+                    KF2 kf_copy = kf[j]; // copy to avoid modifying during predict
+                    if (dt_used > 0) 
+                        kf_copy.predict(dt_used, SIGMA_A);
+                    q_hat[j] = kf_copy.q;
+                    dq_hat[j] = kf_copy.dq;
+                }
+
             } else {
                 // fallback: use last measurement (or desired) as estimate
                 for (int j=0;j<6;++j){
@@ -330,22 +433,27 @@ int main(){
 
 
     for (int j=0;j<6;++j){
-        const double e = q_rows[i][j] - q_hat[j];
+        const double e_q = q_rows[i][j] - q_hat[j];
+        const double e_dq = v_ff[j] - dq_hat[j];
 
-        if (std::fabs(e) > MAX_ERROR_RAD) {
+        if (std::fabs(e_q) > MAX_ERROR_RAD) {
             large_error_this_step = true;
         }
 
+
         // --- I-term update (integrate error over time between sends) ---
         // simple rectangle integration + optional leak
-        I[j] = (1.0 - I_LEAK) * I[j] + e * DT;
+        // I[j] = (1.0 - I_LEAK) * I[j] + e_q * DT;
 
         // anti-windup clamp on the integrator state itself
-        if (I[j] >  I_CLAMP[j]) I[j] =  I_CLAMP[j];
-        if (I[j] < -I_CLAMP[j]) I[j] = -I_CLAMP[j];
+        // if (I[j] >  I_CLAMP[j]) I[j] =  I_CLAMP[j];
+        // if (I[j] < -I_CLAMP[j]) I[j] = -I_CLAMP[j];
 
         // control law: v = v_ff + P*(e)/DT + Ki*I
-        double u = v_ff[j] + (Kp_pos[j] * e) / DT + Ki_pos[j] * I[j];
+        // double u = v_ff[j] + (Kp_pos[j] * e_q) / DT + Ki_pos[j] * I[j];
+
+        double u = v_ff[j] + Kp_pos[j] * e_q + Kd_vel[j] * e_dq;
+        // double u = v_ff[j];
 
         // output clamp (velocity clamp)
         if (u >  VCLAMPs[j]) u =  VCLAMPs[j];
