@@ -295,8 +295,8 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
         # -------------------------------------------------
         # Sample a context (ball start + hole + discs)
         # -------------------------------------------------
-        ball_start = np.random.uniform(-0.5, 0.5, size=(2,))
-        # ball_start = np.array([0, 0])  # FIXED START FOR DEBUGGING
+        # ball_start = np.random.uniform(-0.5, 0.5, size=(2,))
+        ball_start = np.array([0, 0])  # FIXED START FOR DEBUGGING
         ball_start_obs = ball_start + np.random.normal(0, BALL_OBS_NOISE_STD, size=(2,))
         mujoco_cfg["ball"]["start_pos"]     = [ball_start[0],     ball_start[1],     0.02135]
         mujoco_cfg["ball"]["obs_start_pos"] = [ball_start_obs[0], ball_start_obs[1], 0.02135]
