@@ -301,7 +301,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
         mujoco_cfg["ball"]["start_pos"]     = [ball_start[0],     ball_start[1],     0.02135]
         mujoco_cfg["ball"]["obs_start_pos"] = [ball_start_obs[0], ball_start_obs[1], 0.02135]
 
-        x, y = random_hole_in_rectangle(x_min=3.0, x_max=5.0, y_min=-0.5, y_max=0.5)
+        x, y = random_hole_in_rectangle(x_min=1.0, x_max=3.0, y_min=-0.2, y_max=0.2)
         hole_pos = np.array([x, y])
         hole_pos_obs = hole_pos + np.random.normal(0, HOLE_OBS_NOISE_STD, size=(2,))
 
@@ -552,7 +552,7 @@ def evaluation_policy_short(
             ball_start = np.array([0, 0])  # FIXED START FOR DEBUGGING
             ball_start_obs = ball_start + np.random.normal(0, BALL_OBS_NOISE_STD, size=(2,))
 
-            x, y     = random_hole_in_rectangle(x_min=3.0, x_max=5.0, y_min=-0.5, y_max=0.5)
+            x, y = random_hole_in_rectangle(x_min=1.0, x_max=3.0, y_min=-0.2, y_max=0.2)
             hole_pos = np.array([x, y])
             hole_pos_obs = hole_pos + np.random.normal(0, HOLE_OBS_NOISE_STD, size=(2,))
 
