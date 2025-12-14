@@ -289,7 +289,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
     log_dict = {}
 
     # For now we don't actually place discs, but the state format reserves 5.
-    max_num_discs = 3
+    max_num_discs = 4
 
     for episode in range(episodes):
         # -------------------------------------------------
@@ -544,7 +544,7 @@ def evaluation_policy_short(
     successes          = 0
     rewards            = []
     distances_to_hole  = []
-    max_num_discs = 3
+    max_num_discs = 4
     actor.eval()
     with torch.no_grad():
         for _ in range(num_episodes):
