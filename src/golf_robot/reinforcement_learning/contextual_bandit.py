@@ -309,8 +309,8 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
             max_num_discs, x - 2.0, x, -0.5, 0.5, hole_xy=hole_pos
         ) # No discs for now
 
-        # state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 5)
-        state_vec = np.concatenate([ball_start_obs, hole_pos_obs])  # No discs for now
+        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 5)
+        # state_vec = np.concatenate([ball_start_obs, hole_pos_obs])  # No discs for now
         normalizer.update(state_vec)
         state_norm = normalizer.normalize(state_vec)
 
@@ -565,11 +565,11 @@ def evaluation_policy_short(
                 max_num_discs, x - 2.0, x, -0.5, 0.5, hole_xy=hole_pos
             )
 
-            # state_vec = encode_state_with_discs(
-            #     ball_start_obs, hole_pos_obs, disc_positions, max_num_discs=5
-            # )
+            state_vec = encode_state_with_discs(
+                ball_start_obs, hole_pos_obs, disc_positions, max_num_discs=5
+            )
 
-            state_vec = np.concatenate([ball_start_obs, hole_pos_obs])  # No discs for now
+            # state_vec = np.concatenate([ball_start_obs, hole_pos_obs])  # No discs for now
 
             if normalizer is not None:
                 state_vec = normalizer.normalize(state_vec)
