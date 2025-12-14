@@ -7,19 +7,19 @@ metric:
 
 parameters:
   actor_lr:
-    values: [1e-4, 3e-4, 1e-3, 3e-3]
+    values: [1e-4, 2e-3]
 
   critic_lr:
-    values: [3e-4, 1e-3, 3e-3, 1e-2]
+    values: [1e-3, 2e-3]
 
   noise_std:
-    values: [0.05, 0.1, 0.2, 0.3, 0.5]
+    values: [0.25, 0.3]
 
   hidden_dim:
-    values: [64, 128, 256]
+    values: [128, 256]
 
   batch_size:
-    values: [64, 128, 256]
+    values: [128, 256]
 
   grad_steps:
-    values: [1, 4, 8, 16]
+    values: [1, 2]
