@@ -550,8 +550,12 @@ def evaluation_policy_short(
         for _ in range(num_episodes):
             # New random context each eval episode
             ball_start     = np.random.uniform(-0.5, 0.5, size=(2,))
+
             # ball_start = np.array([0, 0])  # FIXED START FOR DEBUGGING
             ball_start_obs = ball_start + np.random.normal(0, BALL_OBS_NOISE_STD, size=(2,))
+
+            mujoco_cfg["ball"]["start_pos"]     = [ball_start[0],     ball_start[1],     0.02135]
+            mujoco_cfg["ball"]["obs_start_pos"] = [ball_start_obs[0], ball_start_obs[1], 0.02135]
 
             x, y = random_hole_in_rectangle(x_min=1.0, x_max=3.0, y_min=-0.2, y_max=0.2)
             hole_pos = np.array([x, y])
