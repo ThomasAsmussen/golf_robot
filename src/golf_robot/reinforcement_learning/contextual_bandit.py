@@ -289,7 +289,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
     log_dict = {}
 
     # For now we don't actually place discs, but the state format reserves 5.
-    max_num_discs = 0
+    max_num_discs = 2
 
     for episode in range(episodes):
         # -------------------------------------------------
@@ -301,7 +301,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
         mujoco_cfg["ball"]["start_pos"]     = [ball_start[0],     ball_start[1],     0.02135]
         mujoco_cfg["ball"]["obs_start_pos"] = [ball_start_obs[0], ball_start_obs[1], 0.02135]
 
-        x, y = random_hole_in_rectangle(x_min=1.0, x_max=3.0, y_min=-0.2, y_max=0.2)
+        x, y = random_hole_in_rectangle(x_min=3.0, x_max=5.0, y_min=-0.5, y_max=0.5)
         hole_pos = np.array([x, y])
         hole_pos_obs = hole_pos + np.random.normal(0, HOLE_OBS_NOISE_STD, size=(2,))
 
@@ -413,7 +413,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
             print(f"  Distance to Hole: {dist_to_hole:.4f}, In Hole: {in_hole}")
 
         # Periodic evaluation of greedy policy (no exploration noise)
-        if (episode) % rl_cfg["training"]["eval_interval"] == 25:
+        if (episode) % rl_cfg["training"]["eval_interval"] == 24:
             (
                 success_rate_eval,
                 avg_reward_eval,
@@ -544,7 +544,7 @@ def evaluation_policy_short(
     successes          = 0
     rewards            = []
     distances_to_hole  = []
-    max_num_discs = 0
+    max_num_discs = 2
     actor.eval()
     with torch.no_grad():
         for _ in range(num_episodes):
@@ -557,7 +557,7 @@ def evaluation_policy_short(
             mujoco_cfg["ball"]["start_pos"]     = [ball_start[0],     ball_start[1],     0.02135]
             mujoco_cfg["ball"]["obs_start_pos"] = [ball_start_obs[0], ball_start_obs[1], 0.02135]
 
-            x, y = random_hole_in_rectangle(x_min=1.0, x_max=3.0, y_min=-0.2, y_max=0.2)
+            x, y = random_hole_in_rectangle(x_min=3.0, x_max=5.0, y_min=-0.5, y_max=0.5)
             hole_pos = np.array([x, y])
             hole_pos_obs = hole_pos + np.random.normal(0, HOLE_OBS_NOISE_STD, size=(2,))
 
