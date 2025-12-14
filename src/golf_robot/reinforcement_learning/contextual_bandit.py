@@ -289,12 +289,14 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
     log_dict = {}
 
     # For now we don't actually place discs, but the state format reserves 5.
-    max_num_discs = 5
+    
 
     for episode in range(episodes):
         # -------------------------------------------------
         # Sample a context (ball start + hole + discs)
         # -------------------------------------------------
+        max_num_discs = np.min([5, episode // 3000])  # Increase discs over time
+        # print(f"Episode {episode + 1}: max_num_discs = {max_num_discs}")
         ball_start = np.random.uniform(-0.5, 0.5, size=(2,))
         # ball_start = np.array([0, 0])  # FIXED START FOR DEBUGGING
         ball_start_obs = ball_start + np.random.normal(0, BALL_OBS_NOISE_STD, size=(2,))
@@ -544,7 +546,7 @@ def evaluation_policy_short(
     successes          = 0
     rewards            = []
     distances_to_hole  = []
-    max_num_discs = 5
+    # max_num_discs = 5
     actor.eval()
     with torch.no_grad():
         for _ in range(num_episodes):
