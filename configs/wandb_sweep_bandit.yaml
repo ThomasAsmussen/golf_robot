@@ -1,5 +1,5 @@
 program: src/golf_robot/reinforcement_learning/contextual_bandit.py  # <-- adjust if filename differs
-method: grid   # or "random" if you prefer
+method: bayes   # or "random" if you prefer
 
 metric:
   name: final_success_rate
