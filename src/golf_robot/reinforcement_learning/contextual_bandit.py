@@ -16,6 +16,14 @@ SPEED_NOISE_STD      = 0.0
 ANGLE_NOISE_STD      = 0.0
 BALL_OBS_NOISE_STD   = 0.0
 HOLE_OBS_NOISE_STD   = 0.0
+MIN_HOLE_X           = 3.0
+MAX_HOLE_X           = 5.0
+MIN_HOLE_Y           = -0.5
+MAX_HOLE_Y           = 0.5
+MIN_BALL_X           = -0.5
+MAX_BALL_X           = 0.5
+MIN_BALL_Y           = -0.5
+MAX_BALL_Y           = 0.5
 
 
 # ---------------------------------------------------------
@@ -97,21 +105,89 @@ class ReplayBuffer:
             torch.tensor(rewards, dtype=torch.float32).unsqueeze(-1),
         )
 
+    def clear(self):
+        self.ptr = 0
+        self.full = False
+        self.data = []
 
+
+def sample_mixed(recent_buf, all_buf, recent_ratio, batch_size):
+    n_recent_avail = len(recent_buf.data)
+    n_all_avail    = len(all_buf.data)
+
+    if n_all_avail == 0:
+        raise RuntimeError("All-buffer is empty; cannot sample.")
+
+    # target split
+    num_recent = int(round(batch_size * recent_ratio))
+    num_all    = batch_size - num_recent
+
+    # clamp to availability (and fall back to all_buf)
+    num_recent = min(num_recent, n_recent_avail)
+    num_all    = batch_size - num_recent  # fill remainder from all_buf
+
+    states_a, actions_a, rewards_a = all_buf.sample(num_all)
+
+    if num_recent > 0:
+        states_r, actions_r, rewards_r = recent_buf.sample(num_recent)
+        states  = torch.cat([states_r,  states_a],  dim=0)
+        actions = torch.cat([actions_r, actions_a], dim=0)
+        rewards = torch.cat([rewards_r, rewards_a], dim=0)
+    else:
+        states, actions, rewards = states_a, actions_a, rewards_a
+
+    return states, actions, rewards
+
+
+
+def scale(x, lo, hi):
+    """Scale x in [lo, hi] to [-1, 1]."""
+    return 2.0 * (x - lo) / (hi - lo) - 1.0
+
+def scale_state_vec(state_vec):
+    """
+    Scale state vector components to [-1, 1].
+    Assumes state vector layout:
+    [ ball_x, ball_y,
+      hole_x, hole_y,
+      disc1_x, disc1_y, disc1_present,
+      ...
+      discN_x, discN_y, discN_present ]
+    """
+    ball_x, ball_y = state_vec[0], state_vec[1]
+    hole_x, hole_y = state_vec[2], state_vec[3]
+
+    ball_x_scaled = scale(ball_x, MIN_BALL_X, MAX_BALL_X)
+    ball_y_scaled = scale(ball_y, MIN_BALL_Y, MAX_BALL_Y)
+    hole_x_scaled = scale(hole_x, MIN_HOLE_X, MAX_HOLE_X)
+    hole_y_scaled = scale(hole_y, MIN_HOLE_Y, MAX_HOLE_Y)
+
+    disc_data = state_vec[4:]
+    disc_scaled = []
+    for i in range(0, len(disc_data), 3):
+        disc_x, disc_y, disc_present = disc_data[i], disc_data[i+1], disc_data[i+2]
+        if disc_present == 0:
+            disc_x_scaled, disc_y_scaled = -1.0, -1.0  # Default position for absent discs
+        else:
+            disc_x_scaled = scale(disc_x, MIN_HOLE_X - 2.0, MAX_HOLE_X)
+            disc_y_scaled = scale(disc_y, MIN_HOLE_Y, MAX_HOLE_Y)
+        disc_scaled.extend([disc_x_scaled, disc_y_scaled, disc_present])
+
+    return np.array([ball_x_scaled, ball_y_scaled, hole_x_scaled, hole_y_scaled] + disc_scaled)
 # ---------------------------------------------------------
 # Reward and state encoding
 # ---------------------------------------------------------
-def compute_reward(ball_end_pos, hole_pos, in_hole, trajectory):
+def compute_reward(ball_end_pos, hole_pos, in_hole, trajectory, in_hole_reward=3.0, distance_scale=0.5):
     """
     Single-step reward.
     - If in_hole: large positive reward.
     - Else: distance-based shaping.
     """
     if in_hole:
-        return 3.0
+        return in_hole_reward
 
     final_dist = np.linalg.norm(ball_end_pos - hole_pos)
-    final_dist_reward = np.exp(-0.5 * final_dist)
+    final_dist_reward = np.exp(-distance_scale * final_dist)
     return final_dist_reward
 
 
@@ -180,36 +256,10 @@ def encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, max_nu
         else:
             x, y = default_value, default_value
             disc_placed = 0
+
         disc_coords.extend([x, y, disc_placed])
 
     return np.concatenate([ball_start_obs, hole_pos_obs, np.array(disc_coords)])
-
-
-# ---------------------------------------------------------
-# Normalizer
-# ---------------------------------------------------------
-class Normalizer:
-    """
-    Online normalization of state features.
-    """
-    def __init__(self, size, eps=1e-8):
-        self.size = size
-        self.mean = np.zeros(size)
-        self.var = np.ones(size)
-        self.count = eps
-
-    def update(self, x):
-        x = np.asarray(x)
-        self.count += 1
-        delta = x - self.mean
-        self.mean += delta / self.count
-        self.var += delta * (x - self.mean)
-
-    def std(self):
-        return np.sqrt(self.var / self.count)
-
-    def normalize(self, x):
-        return (x - self.mean) / (self.std() + 1e-6)
 
 
 # ---------------------------------------------------------
@@ -241,7 +291,8 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
     angle_low  = rl_cfg["model"]["angle_low"]
     angle_high = rl_cfg["model"]["angle_high"]
 
-    normalizer = Normalizer(size=state_dim)
+    in_hole_reward = rl_cfg["reward"]["in_hole_reward"]
+    distance_scale = rl_cfg["reward"]["distance_scale"]
 
     # Linear schedule for exploration noise (policy noise)
     noise_std_start = noise_std
@@ -272,7 +323,8 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
     actor_optimizer  = torch.optim.Adam(actor.parameters(),  lr=actor_lr)
     critic_optimizer = torch.optim.Adam(critic.parameters(), lr=critic_lr)
 
-    replay_buffer = ReplayBuffer(capacity=rl_cfg["training"]["replay_buffer_capacity"])
+    replay_buffer_big = ReplayBuffer(capacity=rl_cfg["training"]["replay_buffer_capacity"])
+    replay_buffer_recent = ReplayBuffer(1000)  # Smaller buffer for recent experiences
 
     if use_wandb:
         wandb.watch(actor,  log="gradients", log_freq=100)
@@ -287,15 +339,29 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
     actor.train()
     critic.train()
     log_dict = {}
-
+    last_success_rate = 0.0
+    last_last_success_rate = 0.0
     # For now we don't actually place discs, but the state format reserves 5.
     
+    max_num_discs = 0
+    stage_start_episode = 0
+    noise_std_stage_start = noise_std
 
     for episode in range(episodes):
         # -------------------------------------------------
         # Sample a context (ball start + hole + discs)
         # -------------------------------------------------
-        max_num_discs = np.min([5, episode // 3000])  # Increase discs over time
+        if last_success_rate > 0.7 and last_last_success_rate > 0.7:
+            max_num_discs = min(5, max_num_discs + 1)
+            last_success_rate = 0.0
+            last_last_success_rate = 0.0
+            noise_std = 0.2
+            noise_std_stage_start = noise_std
+            stage_start_episode = episode
+            replay_buffer_recent.clear()
+        
+ 
+        # max_num_discs = np.min([5, episode // 3000])  # Increase discs over time
         # print(f"Episode {episode + 1}: max_num_discs = {max_num_discs}")
         ball_start = np.random.uniform(-0.5, 0.5, size=(2,))
         # ball_start = np.array([0, 0])  # FIXED START FOR DEBUGGING
@@ -303,22 +369,22 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
         mujoco_cfg["ball"]["start_pos"]     = [ball_start[0],     ball_start[1],     0.02135]
         mujoco_cfg["ball"]["obs_start_pos"] = [ball_start_obs[0], ball_start_obs[1], 0.02135]
 
-        x, y = random_hole_in_rectangle(x_min=3.0, x_max=5.0, y_min=-0.5, y_max=0.5)
+        x, y = random_hole_in_rectangle(x_min=MIN_HOLE_X, x_max=MAX_HOLE_X, y_min=MIN_HOLE_Y, y_max=MAX_HOLE_Y)
         hole_pos = np.array([x, y])
         hole_pos_obs = hole_pos + np.random.normal(0, HOLE_OBS_NOISE_STD, size=(2,))
 
         disc_positions = generate_disc_positions(
-            max_num_discs, x - 2.0, x, -0.5, 0.5, hole_xy=hole_pos
+            max_num_discs, x - 2.0, x, MIN_HOLE_Y, MAX_HOLE_Y, hole_xy=hole_pos
         ) # No discs for now
 
         state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 5)
         # state_vec = np.concatenate([ball_start_obs, hole_pos_obs])  # No discs for now
-        normalizer.update(state_vec)
-        state_norm = normalizer.normalize(state_vec)
+
+        state_norm = scale_state_vec(state_vec)
 
         s = torch.tensor(state_norm, dtype=torch.float32).to(device)
-        critic_loss_value = None
-        actor_loss_value = None
+        # critic_loss_value = None
+        # actor_loss_value = None
 
         # -------------------------------------------------
         # Policy: a = π(s) + exploration_noise
@@ -366,19 +432,28 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
             hole_pos=hole_pos,
             in_hole=in_hole,
             trajectory=trajectory,
+            distance_scale=distance_scale,
+            in_hole_reward=in_hole_reward,
         )
 
         # Store (s,a,r) in buffer (contextual bandit)
         s_train = s.detach().cpu()
         a_train = a_noisy.detach().cpu()
-        replay_buffer.add(s_train, a_train, reward)
+        replay_buffer_big.add(s_train, a_train, reward)
+        replay_buffer_recent.add(s_train, a_train, reward)
+
 
         # -------------------------------------------------
         # TD-style supervised update: Q(s,a) -> r
         # -------------------------------------------------
-        if len(replay_buffer.data) >= batch_size:
+        if len(replay_buffer_big.data) >= batch_size:
             for _ in range(grad_steps):
-                states_b, actions_b, rewards_b = replay_buffer.sample(batch_size)
+                states_b, actions_b, rewards_b = sample_mixed(
+                    replay_buffer_recent,
+                    replay_buffer_big,
+                    recent_ratio=0.7,
+                    batch_size=batch_size,
+                )
 
                 states_b  = states_b.to(device)
                 actions_b = actions_b.to(device)
@@ -424,17 +499,20 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
                 actor,
                 device,
                 mujoco_cfg,
-                project_root,
                 rl_cfg,
                 num_episodes=rl_cfg["training"]["eval_episodes"],
-                normalizer=normalizer,
                 max_num_discs=max_num_discs,
             )
 
             # Linearly decay policy exploration noise
-            frac = episode / max(1, episodes)
-            noise_std = noise_std_start + frac * (noise_std_end - noise_std_start)
-
+            stage_len = max(1, episode - stage_start_episode)
+            horizon = 4000
+            frac = min(1.0, stage_len / horizon)
+            noise_std = noise_std_stage_start + frac * (noise_std_end - noise_std_stage_start)
+            # frac = episode / max(1, episodes)
+            # noise_std = noise_std_start + frac * (noise_std_end - noise_std_start)
+            last_last_success_rate = last_success_rate
+            last_success_rate = success_rate_eval
             print(
                 f"[EVAL] Success Rate after {episode + 1} episodes: "
                 f"{success_rate_eval:.2f}, Avg Reward: {avg_reward_eval:.3f}"
@@ -450,10 +528,11 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
             distance_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
             log_dict["reward"]            = reward
             log_dict["distance_to_hole"]  = distance_to_hole
-            if critic_loss_value is not None:
-                log_dict["critic_loss"] = critic_loss_value
-            if actor_loss_value is not None:
-                log_dict["actor_loss"]  = actor_loss_value
+            log_dict["max_num_discs"]     = max_num_discs
+            # if critic_loss_value is not None:
+            #     log_dict["critic_loss"] = critic_loss_value
+            # if actor_loss_value is not None:
+            #     log_dict["actor_loss"]  = actor_loss_value
 
             wandb.log(log_dict, step=episode)
 
@@ -468,10 +547,8 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
         actor,
         device,
         mujoco_cfg,
-        project_root,
         rl_cfg,
         100,
-        normalizer=normalizer,
         max_num_discs=max_num_discs,
     )
 
@@ -532,10 +609,8 @@ def evaluation_policy_short(
     actor,
     device,
     mujoco_cfg,
-    project_root,
     rl_cfg,
     num_episodes,
-    normalizer=None,
     max_num_discs=5,
 ):
     speed_low  = rl_cfg["model"]["speed_low"]
@@ -559,12 +634,12 @@ def evaluation_policy_short(
             mujoco_cfg["ball"]["start_pos"]     = [ball_start[0],     ball_start[1],     0.02135]
             mujoco_cfg["ball"]["obs_start_pos"] = [ball_start_obs[0], ball_start_obs[1], 0.02135]
 
-            x, y = random_hole_in_rectangle(x_min=3.0, x_max=5.0, y_min=-0.5, y_max=0.5)
+            x, y = random_hole_in_rectangle(x_min=MIN_HOLE_X, x_max=MAX_HOLE_X, y_min=MIN_HOLE_Y, y_max=MAX_HOLE_Y)
             hole_pos = np.array([x, y])
             hole_pos_obs = hole_pos + np.random.normal(0, HOLE_OBS_NOISE_STD, size=(2,))
 
             disc_positions = generate_disc_positions(
-                max_num_discs, x - 2.0, x, -0.5, 0.5, hole_xy=hole_pos
+                max_num_discs, x - 2.0, x, MIN_HOLE_Y, MAX_HOLE_Y, hole_xy=hole_pos
             )
 
             state_vec = encode_state_with_discs(
@@ -573,8 +648,7 @@ def evaluation_policy_short(
 
             # state_vec = np.concatenate([ball_start_obs, hole_pos_obs])  # No discs for now
 
-            if normalizer is not None:
-                state_vec = normalizer.normalize(state_vec)
+            state_vec = scale_state_vec(state_vec)
 
             state = torch.tensor(
                 state_vec, dtype=torch.float32, device=device
@@ -600,6 +674,8 @@ def evaluation_policy_short(
                 hole_pos=hole_pos,
                 in_hole=in_hole,
                 trajectory=trajectory,
+                distance_scale=rl_cfg["reward"]["distance_scale"],
+                in_hole_reward=rl_cfg["reward"]["in_hole_reward"],
             )
 
             rewards.append(reward)
@@ -663,12 +739,8 @@ if __name__ == "__main__":
         )
 
         cfg = wandb.config
-        rl_cfg["training"]["actor_lr"]   = cfg.actor_lr
-        rl_cfg["training"]["critic_lr"]  = cfg.critic_lr
-        rl_cfg["training"]["noise_std"]  = cfg.noise_std
-        rl_cfg["model"]["hidden_dim"]    = cfg.hidden_dim
-        rl_cfg["training"]["batch_size"] = cfg.batch_size
-        rl_cfg["training"]["grad_steps"] = cfg.grad_steps
+        rl_cfg["reward"]["distance_scale"] = cfg.distance_scale
+        rl_cfg["reward"]["in_hole_reward"]   = cfg.in_hole_reward
 
     # Temporary XML path
     tmp_name     = f"golf_world_tmp_{os.getpid()}_{uuid.uuid4().hex}.xml"
