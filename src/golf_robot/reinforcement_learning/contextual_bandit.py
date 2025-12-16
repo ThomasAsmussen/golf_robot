@@ -12,10 +12,10 @@ import uuid
 # ---------------------------------------------------------
 # Global noise parameters (environment / measurement noise)
 # ---------------------------------------------------------
-SPEED_NOISE_STD      = 0.0
-ANGLE_NOISE_STD      = 0.0
-BALL_OBS_NOISE_STD   = 0.0
-HOLE_OBS_NOISE_STD   = 0.0
+SPEED_NOISE_STD      = 0.1
+ANGLE_NOISE_STD      = 0.1
+BALL_OBS_NOISE_STD   = 0.002
+HOLE_OBS_NOISE_STD   = 0.002
 MIN_HOLE_X           = 3.0
 MAX_HOLE_X           = 5.0
 MIN_HOLE_Y           = -0.5
@@ -351,7 +351,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
         # -------------------------------------------------
         # Sample a context (ball start + hole + discs)
         # -------------------------------------------------
-        if last_success_rate > 0.8 and last_last_success_rate > 0.8:
+        if last_success_rate > 0.8 and last_last_success_rate > 0.8 and False:
             max_num_discs = min(1, max_num_discs + 1)
             last_success_rate = 0.0
             last_last_success_rate = 0.0
@@ -744,8 +744,8 @@ if __name__ == "__main__":
         )
 
         cfg = wandb.config
-        rl_cfg["reward"]["distance_scale"]   = cfg.distance_scale
-        rl_cfg["reward"]["in_hole_reward"]   = cfg.in_hole_reward
+        rl_cfg["reward"]["distance_scale"]   = cfg.get("distance_scale", rl_cfg["reward"]["distance_scale"])
+        rl_cfg["reward"]["in_hole_reward"]   = cfg.get("in_hole_reward", rl_cfg["reward"]["in_hole_reward"])
 
     # Temporary XML path
     tmp_name     = f"golf_world_tmp_{os.getpid()}_{uuid.uuid4().hex}.xml"
