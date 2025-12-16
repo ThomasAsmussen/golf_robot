@@ -12,10 +12,10 @@ import uuid
 # ---------------------------------------------------------
 # Global noise parameters (environment / measurement noise)
 # ---------------------------------------------------------
-SPEED_NOISE_STD      = 0.1
-ANGLE_NOISE_STD      = 0.1
-BALL_OBS_NOISE_STD   = 0.002
-HOLE_OBS_NOISE_STD   = 0.002
+SPEED_NOISE_STD      = 0.0
+ANGLE_NOISE_STD      = 0.0
+BALL_OBS_NOISE_STD   = 0.0
+HOLE_OBS_NOISE_STD   = 0.0
 MIN_HOLE_X           = 3.0
 MAX_HOLE_X           = 5.0
 MIN_HOLE_Y           = -0.5
@@ -351,8 +351,8 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
         # -------------------------------------------------
         # Sample a context (ball start + hole + discs)
         # -------------------------------------------------
-        if last_success_rate > 0.7 and last_last_success_rate > 0.7:
-            max_num_discs = min(3, max_num_discs + 1)
+        if last_success_rate > 0.8 and last_last_success_rate > 0.8:
+            max_num_discs = min(1, max_num_discs + 1)
             last_success_rate = 0.0
             last_last_success_rate = 0.0
             noise_std = 0.2
@@ -510,7 +510,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
             if max_num_discs >= 3:
                 horizon = 6000
             else:
-                horizon = 4000
+                horizon = 10000
 
             frac = min(1.0, stage_len / horizon)
             noise_std = noise_std_stage_start + frac * (noise_std_end - noise_std_stage_start)
