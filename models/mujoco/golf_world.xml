@@ -5,7 +5,7 @@
   <!-- Defaults: enable 6D friction and make contacts crisp -->
   <default>
     <geom condim="6" solref="0.002 1" solimp="0.95 0.99 0.001"
-          friction="0.20 0.001 0.0014"/> <!-- 0.6 0.001 0.0048 slide, spin, roll -->
+          friction="0.30831 1.83703e-05 0.00081743"/> <!-- 0.6 0.001 0.0048 slide, spin, roll -->
   </default>
 
 
@@ -58,8 +58,8 @@
   <contact>
     <!-- Ball–club impact: set restitution ~0.62 via damp_ratio ≈ 0.1504 -->
     <pair geom1="ball_geom" geom2="club_head"
-          solref="0.02 0.26"  
-          solimp="0.7 0.95 0.01"/>
+          solref="0.014271934393272637 0.4087097102776629"  
+          solimp="0.7837685139716153 1.11639 0.00107829"/>
   </contact>
 
   
@@ -171,6 +171,6 @@
   <!-- ==== ACTUATOR ==== -->
   <actuator>
     <velocity name="club_motor" joint="club_hinge"
-              kv="100" ctrlrange="-20 20" forcerange="-40 40"/>
+              kv="20" ctrlrange="-20 20" forcerange="-40 40"/>
   </actuator>
 </mujoco>

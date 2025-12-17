@@ -17,7 +17,7 @@ ANGLE_NOISE_STD      = 0.1
 BALL_OBS_NOISE_STD   = 0.002
 HOLE_OBS_NOISE_STD   = 0.002
 MIN_HOLE_X           = 3.0
-MAX_HOLE_X           = 5.0
+MAX_HOLE_X           = 4.0
 MIN_HOLE_Y           = -0.5
 MAX_HOLE_Y           = 0.5
 MIN_BALL_X           = -0.5
@@ -510,7 +510,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
             if max_num_discs >= 3:
                 horizon = 6000
             else:
-                horizon = 10000
+                horizon = 20000
 
             frac = min(1.0, stage_len / horizon)
             noise_std = noise_std_stage_start + frac * (noise_std_end - noise_std_stage_start)
