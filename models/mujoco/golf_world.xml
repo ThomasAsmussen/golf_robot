@@ -5,7 +5,7 @@
   <!-- Defaults: enable 6D friction and make contacts crisp -->
   <default>
     <geom condim="6" solref="0.002 1" solimp="0.95 0.99 0.001"
-          friction="0.20 0.001 0.0014"/> <!-- 0.6 0.001 0.0048 slide, spin, roll -->
+          friction="0.30831 1.83703e-05 0.00081743"/> <!-- 0.6 0.001 0.0048 slide, spin, roll -->
   </default>
 
 
@@ -13,12 +13,14 @@
     <!-- Materials -->
     <material name="green_mat"     rgba="0.2 0.55 0.2 1"/>
     <material name="green_mat_out" rgba="0.5 0.5 0.5 1"/>
+    <material name="green_mat_out1" rgba="0.0 0.5 0.5 1"/>
+    <material name="green_mat_out2" rgba="0.5 0.0 0.5 1"/>
     <material name="cup_mat"       rgba="0.3 0.3 0.3 1"/>
     <texture  name ="checks" type="2d" builtin="checker" width="512" height="512"
               rgb1="1 1 1" rgb2="0 0 0" mark="cross" markrgb="1 0 0"/>
     <material name="ball_mat"  texture="checks" rgba="1 1 1 1"/>
     <material name="club_mat"  rgba="0.9 0.9 0.9 1"/>
-    <material name="disc_mat"  rgba="0.8 0.1 0.1 1"/>
+    <material name="disc_mat"  rgba="0.9 0.1 0.9 1"/>
 
     <!-- 27 convex wedges (OBJ). Scale x10 vs earlier (0.01) -->
     <mesh name="cup_w00" file="assets/golf_hole_obj/golf_hole_obj_collision_0.obj"  scale="0.01 0.01 0.01"/>
@@ -49,39 +51,39 @@
     <mesh name="cup_w25" file="assets/golf_hole_obj/golf_hole_obj_collision_25.obj" scale="0.01 0.01 0.01"/>
     <mesh name="cup_w26" file="assets/golf_hole_obj/golf_hole_obj_collision_26.obj" scale="0.01 0.01 0.01"/>
 
-    <mesh name="disc_obs" file="assets/disc_obstacle.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="disc_obs" file="assets/disc_obstacle.stl" scale="0.001 0.001 0.001"/>
   </asset>
 
   <!-- Contacts -->
   <contact>
     <!-- Ball–club impact: set restitution ~0.62 via damp_ratio ≈ 0.1504 -->
     <pair geom1="ball_geom" geom2="club_head"
-          solref="0.02 0.26"  
-          solimp="0.7 0.95 0.01"/>
+          solref="0.014271934393272637 0.4087097102776629"  
+          solimp="0.7837685139716153 1.11639 0.00107829"/>
   </contact>
 
   
   <worldbody>
     <!-- ==== GROUND: 6x4 m area, 0.04 m thick, with a 0.106 m opening at (2, 0) ==== -->
     <!-- Top slab (y in [ +0.053, +2 ]) -->
-    <geom name="green_top" type="box"
-          pos="0 1.0265 -0.02" size="3.0 0.9735 0.02"
-          material="green_mat_out"/>
+    <geom name="green_plus_y" type="box"
+          pos="0 0 -0.02" size="0.5 0.5 0.02"
+          material="green_mat"/>
 
     <!-- Bottom slab (y in [ -2, -0.053 ]) -->
-    <geom name="green_bottom" type="box"
-          pos="0 -1.0265 -0.02" size="3.0 0.9735 0.02"
-          material="green_mat_out"/>
+    <geom name="green_neg_y" type="box"
+          pos="2 0 -0.02" size="0.5 0.5 0.02"
+          material="green_mat"/>
 
     <!-- Left slab (x in [ -3, 1.947 ]) material="green_mat" -->
-    <geom name="green_left" type="box"
-          pos="-0.5265 0 -0.02" size="2.4735 0.08 0.02"
+    <geom name="green_plus_x" type="box"
+          pos="0 1 -0.02" size="2 0.5 0.02"
           material="green_mat"/>
 
     <!-- Right slab (x in [ 2.053, 3 ]) -->
-    <geom name="green_right" type="box"
-          pos="2.5265 0 -0.02" size="0.4735 0.08 0.02"
-          material="green_mat_out"/>
+    <geom name="green_neg_x" type="box"
+          pos="0 -1 -0.02" size="2 0.5 0.02"
+          material="green_mat"/>
 
     <!-- ==== CUP (27 convex OBJ wedges; no bottom) -0.110665 ==== -->
     <body name="cup" pos="2 0 -0.110665">
@@ -118,14 +120,32 @@
       <site name="hole_center" pos="0 0 0" size="0.055" rgba="0 0 0 0.2" type="sphere"/>
     </body>
 
-    <body name="disc" pos="4 0 0">
+    <body name="disc0" pos="0 0 -10">
       <geom type="mesh" mesh="disc_obs" size="0.1" material="disc_mat" contype="1" conaffinity="1"/>
     </body>
+    
+    <body name="disc1" pos="0 0 -10">
+      <geom type="mesh" mesh="disc_obs" size="0.1" material="disc_mat" contype="1" conaffinity="1"/>
+    </body>
+
+    <body name="disc2" pos="0 0 -10">
+      <geom type="mesh" mesh="disc_obs" size="0.1" material="disc_mat" contype="1" conaffinity="1"/>
+    </body>
+
+    <body name="disc3" pos="0 0 -10">
+      <geom type="mesh" mesh="disc_obs" size="0.1" material="disc_mat" contype="1" conaffinity="1"/>
+    </body>
+
+    <body name="disc4" pos="0 0 -10">
+      <geom type="mesh" mesh="disc_obs" size="0.1" material="disc_mat" contype="1" conaffinity="1"/>
+    </body>
+
+
 
     
     <!-- ==== BALL ==== -->
     <camera name="overview" pos="2.0 -3.0 1.5" quat="0.7 0.0 0.7 0.0" fovy="45"/>
-    <body name="ball" pos="0 0 0.02135">
+    <body name="ball" pos="0 0 0.021355">
       <freejoint name="ball_free"/>
       <geom name="ball_geom" type="sphere" size="0.02135"
             rgba="0.6 0.2 0.6 1" mass="0.04593" material="ball_mat"
@@ -151,6 +171,6 @@
   <!-- ==== ACTUATOR ==== -->
   <actuator>
     <velocity name="club_motor" joint="club_hinge"
-              kv="100" ctrlrange="-20 20" forcerange="-40 40"/>
+              kv="20" ctrlrange="-20 20" forcerange="-40 40"/>
   </actuator>
 </mujoco>

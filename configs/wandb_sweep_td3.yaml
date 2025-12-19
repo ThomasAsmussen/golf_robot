@@ -1,0 +1,39 @@
+program: src/golf_robot/reinforcement_learning/td3.py
+method: bayes     # or "random" if you want pure random search
+
+metric:
+  name: final_success_rate
+  goal: maximize
+
+parameters:
+
+  actor_lr:
+    values: [1e-4, 3e-4, 1e-3]
+
+  critic_lr:
+    values: [3e-4, 1e-3, 3e-3]
+
+  hidden_dim:
+    values: [128, 256, 512]
+
+  batch_size:
+    values: [64, 128, 256]
+
+  grad_steps:
+    values: [1, 2, 4, 8]    # TD3 typically uses fewer updates per env step
+
+  noise_std:
+    values: [0.1, 0.2, 0.3]   # Exploration noise σ
+
+  policy_noise:
+    values: [0.1, 0.2, 0.3]   # TD3 target policy smoothing noise
+
+  noise_clip:
+    values: [0.2, 0.3, 0.5]   # Clipping for target policy smoothing
+
+  tau:
+    values: [0.005, 0.01, 0.02]   # Soft update parameter
+
+  policy_delay:
+    values: [1, 2, 3]   # Delay between actor updates
+

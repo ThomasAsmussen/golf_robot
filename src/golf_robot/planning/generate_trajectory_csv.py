@@ -20,7 +20,7 @@ SHOW_PLOTS = False
 CSV_OUTPUT_PATH = 'log/trajectory_sim.csv'
 
 
-def generate_trajectory_csv(impact_speed, impact_direction, path):
+def generate_trajectory_csv(impact_speed, impact_direction, ball_x_offset, ball_y_offset, path):
     """
     Generate a trajectory via the planner and save it to CSV.
     
@@ -32,7 +32,7 @@ def generate_trajectory_csv(impact_speed, impact_direction, path):
     outputs:
     - results: dict from generate_trajectory() containing planned trajectory data or None on failure
     """
-    results = generate_trajectory(impact_speed, impact_direction)
+    results = generate_trajectory(impact_speed, impact_direction, ball_x_offset=ball_x_offset, ball_y_offset=ball_y_offset)
 
     if results is None:
         print("[ERROR] Trajectory generation failed")
@@ -261,12 +261,136 @@ def plot_trajectory(t_plan, P_plan, tcp_vel_jac, speed_jac, impact_idx):
         plt.show()
 
 
+def make_angle_reachability_heatmap(
+    impact_speed=2.0,
+    angle_min_deg=-20.0,
+    angle_max_deg=20.0,
+    angle_step_deg=1.0,
+    radius=0.20,
+    grid_step=0.02,
+    show_plot=True
+):
+    """
+    Compute and plot a heatmap that indicates whether the robot can hit the ball
+    with `impact_speed` m/s for *all* angles in [angle_min_deg, angle_max_deg]
+    at each ball placement within `radius` of the start point (0,0).
+
+    - True (1): for this (x,y) offset, every angle in the range yields a valid
+      trajectory with impact speed >= impact_speed (within a small tolerance).
+    - False (0): at least one angle fails (no trajectory / planner failure
+      / too slow / NaNs).
+    """
+
+    # Define grid of ball offsets around (0,0)
+    xs = np.arange(-radius, radius + 1e-12, grid_step)
+    ys = np.arange(-radius, radius + 1e-12, grid_step)
+    Nx, Ny = len(xs), len(ys)
+
+    # Boolean heatmap: True = feasible for all angles, False = otherwise
+    heat_bool = np.zeros((Nx, Ny), dtype=bool)
+
+    # Precompute angle list
+    angles_deg = np.arange(angle_min_deg, angle_max_deg + 1e-9, angle_step_deg)
+
+    # Small tolerance for speed check
+    speed_tol = 0.05  # m/s
+
+    for ix, x_off in enumerate(xs):
+        for iy, y_off in enumerate(ys):
+            # Keep only points within circular radius
+            if x_off**2 + y_off**2 > radius**2:
+                continue  # remains False
+
+            all_ok = True
+
+            for ang in angles_deg:
+                # Call planner directly; it may print warnings/errors if infeasible
+                results = generate_trajectory(
+                    impact_speed,
+                    ang,  # impact angle in degrees (same as in main())
+                    ball_x_offset=x_off,
+                    ball_y_offset=y_off,
+                )
+
+                # Any kind of failure or missing data => this angle is not OK
+                if not results:
+                    all_ok = False
+                    break
+
+                impact_idx = results.get("impact_sample_idx", None)
+                Q_all      = results.get("Q_plan", None)
+                dQ_all     = results.get("dQ_plan", None)
+
+                # If any of these are missing, treat as failure
+                if (
+                    impact_idx is None
+                    or Q_all is None
+                    or dQ_all is None
+                    or impact_idx < 0
+                    or impact_idx >= len(Q_all)
+                    or len(Q_all) != len(dQ_all)
+                    or len(Q_all) == 0
+                ):
+                    all_ok = False
+                    break
+
+                q_imp  = Q_all[impact_idx]
+                dq_imp = dQ_all[impact_idx]
+
+                # Safety: check finiteness
+                if (
+                    not np.isfinite(np.asarray(q_imp)).all()
+                    or not np.isfinite(np.asarray(dq_imp)).all()
+                ):
+                    all_ok = False
+                    break
+
+                # Compute actual TCP speed at impact using Jacobian
+                J = numeric_jacobian(q_imp)
+                v_tcp = J[:3, :] @ dq_imp
+                speed = float(np.linalg.norm(v_tcp))
+
+                if (not np.isfinite(speed)) or (speed < impact_speed - speed_tol):
+                    all_ok = False
+                    break
+
+            heat_bool[ix, iy] = all_ok
+
+    # Plot heatmap
+    if show_plot:
+        plt.figure(figsize=(6, 5))
+        heat_float = heat_bool.astype(float)  # 1 = feasible, 0 = not
+        extent = [xs[0], xs[-1], ys[0], ys[-1]]
+        im = plt.imshow(
+            heat_float.T,
+            origin="lower",
+            extent=extent,
+            aspect="equal"
+        )
+        plt.colorbar(im, label="Feasible for ALL angles? (1=True, 0=False)")
+        plt.title(
+            f"Reachability heatmap\n"
+            f"{impact_speed:.1f} m/s, angles [{angle_min_deg:.0f}, {angle_max_deg:.0f}]°"
+        )
+        plt.xlabel("Ball X offset [m]")
+        plt.ylabel("Ball Y offset [m]")
+        plt.scatter([0.0], [0.0], marker="x", color="red", label="Start point")
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
+    return xs, ys, heat_bool
+
+
+
 def main():
     csv_out = CSV_OUTPUT_PATH
-    impact_speed = 1.9  # m/s
-    impact_angle = -5.9  # desired impact angle (degrees)
+    impact_speed = 1.6  # m/s
+    impact_angle = 0.0  # desired impact angle (degrees)
+    ball_x_offset = 0.0  # desired ball x offset
+    ball_y_offset = 0.0  # desired ball y offset
 
-    results = generate_trajectory_csv(impact_speed, impact_angle, csv_out)  
+    results = generate_trajectory_csv(impact_speed, impact_angle, ball_x_offset, ball_y_offset, csv_out)  
 
     if results is None:
         return 1
@@ -293,6 +417,15 @@ def main():
         speed = np.linalg.norm(tcp_vel_jac, axis=1)
         plot_trajectory(t_plan, P_plan, tcp_vel_jac, speed, impact_idx)
 
+    # xs, ys, heat = make_angle_reachability_heatmap(
+    #     impact_speed=1.6,
+    #     angle_min_deg=-5.0,
+    #     angle_max_deg=5.0,
+    #     angle_step_deg=2.0,
+    #     radius=0.20,
+    #     grid_step=0.05,
+    #     show_plot=True,
+    # )
     return 0
 
 

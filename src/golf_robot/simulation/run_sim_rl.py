@@ -1,5 +1,6 @@
 import os
 import math
+import uuid
 import numpy as np
 import mujoco
 from mujoco import viewer
@@ -8,7 +9,7 @@ import csv
 import yaml
 from pathlib import Path
 import argparse
-import random
+
 
 #python run_sim.py --aim-yaw 0.0 --vx 1.0 --sim-timestep 0.001 --csv "C:\Users\marti\OneDrive - Danmarks Tekniske Universitet\DTU\Mini-golf robot Master\Physics Comparison using Detection\log_0\ball_log.csv"        
 # ---------------------------------------------------------------------
@@ -51,7 +52,7 @@ def move_hole(model, hole_xy):
     model.body_pos[cup_bid] = cup_pos
 
 
-def move_ground_cutout(model, hole_xy, x_min=-3.0, x_max=3.0, y_min=-2.0, y_max=2.0, hole_half=0.053):
+def move_ground_cutout(model, hole_xy, x_min=-1.0, x_max=7.0, y_min=-2.0, y_max=2.0, hole_half=0.053):
     hx, hy = hole_xy
 
     g_plus_y    = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "green_plus_y")
@@ -127,10 +128,12 @@ def move_discs(model, disc_xy_list):
         model.body_pos[disc_bid] = np.array([x, y, 0.0], float)
 
 
-def generate_disc_positions(num_discs, x_min, x_max, y_min, y_max, hole_xy):
+def generate_disc_positions(max_num_discs, x_min, x_max, y_min, y_max, hole_xy):
     hole_x, hole_y = hole_xy
+    num_discs = np.random.randint(0, max_num_discs + 1)
+    # print(f"Generating {num_discs} disc positions.")
     disc_positions = []
-    min_dist_from_objects = 0.15 
+    min_dist_from_objects = 0.25 
 
     x_lo = x_min + min_dist_from_objects
     x_hi = x_max - min_dist_from_objects
@@ -267,36 +270,51 @@ def club_head_vx(model, data, ids):
 # ---------------------------------------------------------------------
 # Command mapping
 # ---------------------------------------------------------------------
-def command_impact_speed(data, ids, v_des=1.0):
+def command_impact_speed(data, ids, aim_yaw_rad, v_des=1.0):
+    """
+    Map desired club head speed along the 2D aim direction to hinge velocity.
+    aim_yaw_rad: aim yaw angle in radians (world-frame)
+    v_des: desired linear speed along aim direction (m/s)
+    """
+    jid = ids["hinge_jid"]
+    gid = ids["club_head_gid"]
+    ball_gid = ids["ball_gid"]
 
-    dx = head_ball_dx(data, ids)
-
-    jid = ids["hinge_jid"]; gid = ids["club_head_gid"]
-    if gid == -1 or jid == -1:
+    if gid == -1 or jid == -1 or ball_gid == -1:
         return 0.0
-    
-    # Relative vector from hinge anchor to club head in world frame
+
+    # Vector from hinge anchor to club head
     r = np.array(data.geom_xpos[gid]) - np.array(data.xanchor[jid])
 
     # Hinge axis in world frame
     axis = np.array(data.xaxis[jid])
 
-    # Linear velocity of club head for \dot{q} = 1 rad/s
-    Jv = np.cross(axis, r)
-    Jv_norm = np.linalg.norm(Jv)
-    if Jv_norm < 1e-8:
+    # Linear velocity for qd = 1 rad/s: v = axis × r
+    Jv = np.cross(axis, r)  # 3D
+
+    # 2D aim direction in world frame
+    d = np.array([math.cos(aim_yaw_rad), math.sin(aim_yaw_rad), 0.0], float)
+
+    # Component of Jv along aim direction
+    comp = float(np.dot(Jv, d))
+    if abs(comp) < 1e-8:
+        # Geometry degenerate, no way to create velocity along d
         return 0.0
-    
+
     speed_des = abs(v_des)
-    qd_mag = speed_des / Jv_norm # desired magnitude of \dot{q}
 
-    den_x = Jv[0]
-    sgn_dx = np.sign(dx if dx != 0.0 else 1e-12)
-    sgn_den = np.sign(den_x if den_x != 0.0 else 1e-12)
-    
-    sgn_qd = -sgn_dx * sgn_den
+    # magnitude of qdot needed
+    qd_mag = speed_des / abs(comp)
 
-    return sgn_qd * qd_mag
+    # We want v_parallel = sign(v_des)*speed_des
+    # But v_parallel = qdot * comp  =>  sign(qdot) = sign(v_des) / sign(comp)
+    sign_v = math.copysign(1.0, v_des if v_des != 0.0 else 1.0)
+    sign_comp = math.copysign(1.0, comp)
+    sign_qd = sign_v / sign_comp
+
+    qd_cmd = sign_qd * qd_mag
+    return qd_cmd
+
 
 # ---------------------------------------------------------------------
 # Viewer wrapper
@@ -319,7 +337,7 @@ class NullViewer:
 # ---------------------------------------------------------------------
 def run_loop(model, data, cfg,
              base_idx, base_pose,
-             ids, nstep, max_vel, vx_des):
+             ids, nstep, max_vel, vx_des, aim_yaw_rad):
     """
     Run the main simulation loop with viewer or headless.
     inputs:
@@ -334,7 +352,7 @@ def run_loop(model, data, cfg,
         start_immediately: If True, reset and swing immediately on start
     
     """
-    return_state = True
+    trajectory = []
     act_id = ids['act_id']; hinge_jid = ids['hinge_jid']
     qadr = model.jnt_qposadr[hinge_jid]
     qadr_base, vadr_base = base_idx
@@ -387,6 +405,11 @@ def run_loop(model, data, cfg,
 
     # try:
     with viewer_ctx as v:
+        if cfg["sim"].get("render", True):
+            v.cam.lookat[:] = np.array([2.5, 0.0, 0.0])   # choose center point in world coords
+            v.cam.azimuth = 0.0
+            v.cam.elevation = -90.0                       # look straight down
+            v.cam.distance = 7.0                          # adjust zoom
         while v.is_running():
             while pending_actions:
                 act = pending_actions.pop(0)
@@ -407,7 +430,7 @@ def run_loop(model, data, cfg,
             data.qpos[qadr_base+3:qadr_base+7] = base_quat_baked
             data.qvel[vadr_base:vadr_base+6] = 0.0
 
-            qd_cmd = command_impact_speed(data, ids, v_des=vx_des)
+            qd_cmd = command_impact_speed(data, ids, aim_yaw_rad=aim_yaw_rad, v_des=vx_des)
             lo, hi = model.actuator_ctrlrange[act_id]
             qd_cmd = float(np.clip(qd_cmd, -max_vel, max_vel))
             qd_cmd = float(np.clip(qd_cmd, lo, hi))
@@ -424,6 +447,8 @@ def run_loop(model, data, cfg,
             # telemetry ---------------------------------------------------
             ball_p = data.geom_xpos[ids["ball_gid"]]
             t = float(data.time)
+
+            trajectory.append( ( t, float(ball_p[0]), float(ball_p[1]) ) )
 
             if t >= next_print_t:
                 vx_now, _ = club_head_vx(model, data, ids)
@@ -466,8 +491,8 @@ def run_loop(model, data, cfg,
                         if do_print:
                             print(f"[{t:7.3f}s] Ball has been still for 0.05s, ending simulation.")
                         
-                        print(f"Returning state: {ball_p[0]}, {ball_p[1]}, {is_ball_in_hole(data, cfg, ids)}")
-                        return ball_p[0], ball_p[1], is_ball_in_hole(data, cfg, ids)
+                        # print(f"Returning state: {ball_p[0]}, {ball_p[1]}, {is_ball_in_hole(data, cfg, ids)}")
+                        return ball_p[0], ball_p[1], is_ball_in_hole(data, cfg, ids), np.array(trajectory)
                       
                 else:
                     last_xy = xy.copy()
@@ -477,8 +502,8 @@ def run_loop(model, data, cfg,
                     if do_print:
                         print(f"[{t:7.3f}s] Ball has fallen below z=-0.2m, ending simulation.")
                     
-                    print(f"Returning state: {ball_p[0]}, {ball_p[1]}, {is_ball_in_hole(data, cfg, ids)}")
-                    return ball_p[0], ball_p[1], is_ball_in_hole(data, cfg, ids)
+                    # print(f"Returning state: {ball_p[0]}, {ball_p[1]}, {is_ball_in_hole(data, cfg, ids)}")
+                    return ball_p[0], ball_p[1], is_ball_in_hole(data, cfg, ids), np.array(trajectory)
                    
                 
                 if is_ball_in_hole(data, cfg, ids):
@@ -486,7 +511,7 @@ def run_loop(model, data, cfg,
                         print(f"[{t:7.3f}s] Ball is in the hole, ending simulation.")
                     csv_writer.writerow([f"{t:.6f}", f"{ball_p[0]:.9f}", f"{ball_p[1]:.9f}", f"{ball_p[2]:.9f}", int(True)])
                     
-                    return ball_p[0], ball_p[1], True
+                    return ball_p[0], ball_p[1], True, np.array(trajectory)
                
                 
 
@@ -502,16 +527,10 @@ def run_loop(model, data, cfg,
             
 
             v.sync()
-    # finally:
-    #     if csv_file is not None:
-    #         try:
-    #             csv_file.flush()
-    #             csv_file.close()
-    #             if do_print:
-    #                 print(f"[info] CSV saved to {csv_path}")
-    #         except Exception as e:
-    #             print(f"[warn] Could not close CSV '{csv_path}': {e}")
-
+    print("Viewer closed, ending simulation.")
+    print(f"Returning state: {ball_p[0]}, {ball_p[1]}, {is_ball_in_hole(data, cfg, ids)}")
+    print(f"Failing simulation return without ball stillness detection for: vx_des={vx_des}, aim_yaw_rad={aim_yaw_rad}")
+    print(f"Mujoco cfg: cfg={cfg}")
 
 def debug_print_green_spans(model):
     names = ["green_top", "green_bottom", "green_left", "green_right"]
@@ -528,7 +547,7 @@ def debug_print_green_spans(model):
 # ---------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------
-def run_sim(aim_yaw_deg, vx_des, hole_pos_xy, cfg, disc_positions):
+def run_sim(aim_yaw_deg, vx_des, hole_pos_xy, cfg, disc_positions=None):
     """
     Run the golf robot MuJoCo simulation with given parameters.
     inputs:
@@ -537,13 +556,22 @@ def run_sim(aim_yaw_deg, vx_des, hole_pos_xy, cfg, disc_positions):
         cfg: Configuration dictionary
         start: If True, reset and swing immediately on start
     """
+    # print(disc_positions)
     model = mujoco.MjModel.from_xml_path(XML_PATH)
     move_hole(model, hole_xy=hole_pos_xy)
     move_ground_cutout(model, hole_xy=hole_pos_xy)
-
     move_discs(model, disc_positions)
-    mujoco.mj_saveLastXML(XML_PATH_NEW, model)
-    model = mujoco.MjModel.from_xml_path(XML_PATH_NEW)
+
+    new_xml_path = str(cfg["sim"].get("xml_path", XML_PATH_NEW))
+    # print(f"Saving modified XML to: {new_xml_path}")
+    mujoco.mj_saveLastXML(new_xml_path, model)
+    model = mujoco.MjModel.from_xml_path(new_xml_path)
+
+    real_start_pos = cfg["ball"]["start_pos"]
+    real_ball_xy = real_start_pos[:2]
+    obs_start_pos = cfg["ball"]["obs_start_pos"]
+    obs_ball_xy = obs_start_pos[:2]
+    cfg["disc_positions"] = disc_positions
     set_model_options_from_cfg(model, cfg)
     data = mujoco.MjData(model)
     cfg_nsub = int(cfg["sim"].get("nsubsteps", 1))
@@ -555,24 +583,29 @@ def run_sim(aim_yaw_deg, vx_des, hole_pos_xy, cfg, disc_positions):
     reset_ball_state(model, data, cfg, ids)
 
     # move hole and ground cutout to desired position
-    
 
     # debug_print_green_spans(model)
 
     mujoco.mj_forward(model, data)
 
+    base_jid = ids["base_jid"]
+    qadr_base0 = model.jnt_qposadr[base_jid]
+    base_z0 = 0.37865 - 0.36
+
+    base_pos_xyz = np.array([obs_ball_xy[0], obs_ball_xy[1], base_z0], float)
+
+
     qadr_base, vadr_base, base_pos_baked, base_quat_baked = bake_aim_pose(
-        model, data, yaw_rad=math.radians(aim_yaw_deg)
+        model, data, ball_xyz=base_pos_xyz, yaw_rad=math.radians(aim_yaw_deg)
     )
     reset_club_pose(model, data, ids, cfg["club"].get("start_angle_deg", 40.0))
     max_vel = math.radians(float(cfg["club"].get("max_vel_deg_s", 1000.0)))
 
-    ball_x, ball_y, in_hole = run_loop(model, data, cfg,
+    return run_loop(model, data, cfg,
              (qadr_base, vadr_base),
              (base_pos_baked, base_quat_baked),
-             ids, nstep, max_vel, float(vx_des))
+             ids, nstep, max_vel, float(vx_des), math.radians(aim_yaw_deg))
 
-    return ball_x, ball_y, in_hole
 # ---------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------
@@ -611,30 +644,17 @@ def main():
     if args.no_render and not args.render:
         render = False
 
-    # Build cfg from args (start from deepcopy of defaults to avoid accidental mutation)
-    # cfg = copy.deepcopy(cfg_defaults)
-    # cfg["sim"]["timestep"] = args.sim_timestep
-    # cfg["sim"]["nsubsteps"] = args.sim_nsubsteps
-    # cfg["sim"]["safe_substep"] = args.sim_safe_substep
-    # cfg["sim"]["max_duration_sec"] = args.sim_duration if args.duration is None else float(args.duration)
-    # keep default render unless user explicitly overrode
     if render is not None:
         cfg["sim"]["render"] = bool(render)
 
-    # cfg["club"]["max_vel_deg_s"] = args.club_max_vel_deg_s
-    # cfg["club"]["start_angle_deg"] = args.club_start_angle
-
-    # cfg["hole"]["radius"] = args.hole_radius
-    # cfg["ball"]["radius"] = args.ball_radius
-    # cfg["ball"]["start_pos"] = list(args.ball_start_pos)
-    cfg["sim"]["csv_path"] = str(project_root) + "/" + cfg["sim"]["csv_path"]
     cfg["sim"]["csv_period"] = args.csv_period
-    aim_yaw = 90
-    vx_des =  0.9
-    hole_pos_xy = [-2.49, -1.12]
-    # disc_positions = [( 0.0, 0.7), (0.001, 0.3), (0.0, -0.3), (0.0, -0.7)]
-    disc_positions = generate_disc_positions(num_discs=4, x_min=-2.5, x_max=2.5, y_min=-2.0, y_max=2.0, hole_xy=hole_pos_xy)
-
+    aim_yaw = 0
+    vx_des =  1.3
+    hole_pos_xy = [5, 0]
+    # disc_positions = generate_disc_positions(5, -3.0, 3.0, -2.0, 2.0, hole_pos_xy)
+    disc_positions = [(1.4956361419452078, -0.29096378977334414), (-0.20827146563258125, -0.5665742751926417), (-1.1686851660689785, -0.7053216711723784), (-2.1658353815296345, -0.6954762744879543)]
+    cfg["ball"]["start_pos"] = [np.float64(-0.10126499661175004), np.float64(-0.48780616912307617), 0.02135]
+    cfg["ball"]["obs_start_pos"] = [np.float64(-0.1013574481871513), np.float64(-0.4878724069881774), 0.02135]
     run_sim(
         aim_yaw_deg=aim_yaw,
         vx_des=vx_des,

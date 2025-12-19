@@ -1,0 +1,34 @@
+program: src/golf_robot/reinforcement_learning/ddpg_hyper_clean.py  # <-- adjust if filename differs
+method: bayes   # or "random" if you prefer
+
+metric:
+  name: final_success_rate
+  goal: maximize
+
+parameters:
+  actor_lr:
+    distribution: log_uniform_values
+    min: 1e-5
+    max: 3e-4
+
+  critic_lr:
+    distribution: log_uniform_values
+    min: 3e-5
+    max: 1e-3
+
+  noise_std:
+    distribution: uniform
+    min: 0.1
+    max: 0.4
+
+  hidden_dim:
+    values: [128, 256]
+
+  batch_size:
+    values: [64, 128]
+
+  grad_steps:
+    values: [1, 2, 4]
+
+  target_update_rho:
+    values: [0.005, 0.01, 0.02]

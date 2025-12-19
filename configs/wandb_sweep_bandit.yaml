@@ -1,0 +1,13 @@
+program: src/golf_robot/reinforcement_learning/contextual_bandit.py  # <-- adjust if filename differs
+method: grid   # or "random" if you prefer
+
+metric:
+  name: final_success_rate
+  goal: maximize
+
+parameters:
+  in_hole_reward:
+    values: [1.0, 3.0, 5.0]
+
+  distance_scale:
+    values: [0.5, 1.0, 3.0]

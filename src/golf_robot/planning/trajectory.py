@@ -464,7 +464,7 @@ def score_abs_joint_accel(Q, DQ, DDQ, dt, impact_idx, ddq_max, window_half_width
 
 
 
-def generate_trajectory(impact_speed, impact_angle):
+def generate_trajectory(impact_speed, impact_angle, ball_x_offset, ball_y_offset):
     """
     Generate a joint-space trajectory for the UR10 robot to achieve a specified
     TCP impact speed and direction at a designated waypoint.
@@ -496,7 +496,9 @@ def generate_trajectory(impact_speed, impact_angle):
     q0_start = np.array([np.deg2rad(-144.36), np.deg2rad(-162.82), np.deg2rad(-51.80),  np.deg2rad(66.92), np.deg2rad(42.60), np.deg2rad(6.51)])
     q0_end  = np.array([np.deg2rad(-87.65),  np.deg2rad(-135.05), np.deg2rad(-108.29), np.deg2rad(85.72), np.deg2rad(4.39),  np.deg2rad(-12.23)])
     
-    q0_hit  = np.array([-2.18480298, -2.68658532, -1.75772109,  1.30184109,  0.61400683,  0.50125856])  # reference impact joint config (+X direction)
+    # q0_hit  = np.array([-2.18480298, -2.68658532, -1.75772109,  1.30184109,  0.61400683,  0.50125856])  # reference impact joint config (+X direction)
+    q0_hit  = np.array([-2.11202641, -2.45037247, -1.67584054,  0.95906874,  0.53322783,  0.36131151])
+    q0_hit  = move_point_xyz(ball_x_offset, ball_y_offset, 0, q0_hit, q0_hit)[0]  # unwrap to near reference
     # possible_start_points = []
     # possible_end_points   = []
     # for x in range(5):
@@ -505,18 +507,18 @@ def generate_trajectory(impact_speed, impact_angle):
     #             possible_start_points.append(move_point_xyz(-0.6 + 0.05*x, -0.1 + 0.05*y, 0.15 + 0.03*z, q0_hit, q0_start)[0])
     #             possible_end_points.append(move_point_xyz(0.4 + 0.05*x, -0.1 + 0.05*y, 0.15 + 0.03*z, q0_hit, q0_end)[0])
         
-    possible_start_points = [move_point_xyz(-0.4, 0.0, 0.25 + Z_PALLET, q0_hit, q0_start)[0]
-                            #  move_point_xyz(-0.4, 0.2, 0.25, q0_hit, q0_start)[0],
-                            #  move_point_xyz(-0.4, -0.2, 0.25, q0_hit, q0_start)[0],
-                            #  move_point_xyz(-0.4, 0.0, 0.30, q0_hit, q0_start)[0],
-                            #  move_point_xyz(-0.4, 0.0, 0.20, q0_hit, q0_start)[0]
+    possible_start_points = [move_point_xyz(-0.4, 0.0, 0.25, q0_hit, q0_start)[0],
+                             move_point_xyz(-0.4, 0.2, 0.25, q0_hit, q0_start)[0],
+                             move_point_xyz(-0.4, -0.2, 0.25, q0_hit, q0_start)[0],
+                             move_point_xyz(-0.4, 0.0, 0.30, q0_hit, q0_start)[0],
+                             move_point_xyz(-0.4, 0.0, 0.20, q0_hit, q0_start)[0]
     ]
 
-    possible_end_points = [move_point_xyz(0.5, 0.0, 0.25 + Z_PALLET, q0_hit, q0_end)[0]
-                        #    move_point_xyz(0.5, 0.1, 0.25, q0_hit, q0_end)[0],
-                        #    move_point_xyz(0.5, -0.1, 0.25, q0_hit, q0_end)[0],
-                        #    move_point_xyz(0.5, 0.0, 0.30, q0_hit, q0_end)[0],
-                        #    move_point_xyz(0.5, 0.0, 0.20, q0_hit, q0_end)[0]
+    possible_end_points = [move_point_xyz(0.5, 0.0, 0.25, q0_hit, q0_end)[0],
+                           move_point_xyz(0.5, 0.1, 0.25, q0_hit, q0_end)[0],
+                           move_point_xyz(0.5, -0.1, 0.25, q0_hit, q0_end)[0],
+                           move_point_xyz(0.5, 0.0, 0.30, q0_hit, q0_end)[0],
+                           move_point_xyz(0.5, 0.0, 0.20, q0_hit, q0_end)[0]
     ]
 
     # q_start, _ = move_point_xyz(-0.4, 0.0, 0.25, q0_hit, q0_start) # 60 cm behind and 25 cm above ball
@@ -528,9 +530,10 @@ def generate_trajectory(impact_speed, impact_angle):
 
     # Compute impact joint configuration from desired direction
     impact_direction = np.array([np.cos(np.deg2rad(impact_angle)), np.sin(np.deg2rad(impact_angle)), 0.0])
+    
     ball_center = fk_ur10(q0_hit)[-1][:3, 3] + np.array([0.02133, 0.0, 0.0])  # TCP position at zero angle + offset
     q_hit = impact_joint_config_from_direction(q0_hit, impact_direction, ball_center=ball_center)
-    q_hit = move_point_xyz(0.0, 0.0, Z_PALLET, q_hit, q_hit)[0]  # unwrap to near reference
+    q_hit = move_point_xyz(0.0, 0.0, 0.0, q_hit, q_hit)[0]  # unwrap to near reference
     # waypoints = [q_start, q_hit, q_end]
     print("Q_HIT:")
     print(q_hit)
@@ -559,37 +562,49 @@ def generate_trajectory(impact_speed, impact_angle):
     best_Q_all   = None
     best_dQ_all  = None
     best_ddQ_all = None
-    min_score    = np.inf
-    high_score   = 0
+    found_any    = False
+
     for q_start in possible_start_points:
         for q_end in possible_end_points:
             waypoints = [q_start, q_hit, q_end]
-            segments, Q_all, dQ_all, ddQ_all = plan_piecewise_quintic(waypoints, impact_idx, lin_velocity)
+            segments_i, Q_all_i, dQ_all_i, ddQ_all_i = plan_piecewise_quintic(
+                waypoints, impact_idx, lin_velocity
+            )
 
+            if Q_all_i is not None:
+                # ✅ First feasible configuration found – stop searching
+                best_segment = segments_i
+                best_Q_all   = Q_all_i
+                best_dQ_all  = dQ_all_i
+                best_ddQ_all = ddQ_all_i
+                waypoints_best = waypoints
+                found_any = True
+                break  # break inner loop
 
-            # print("Trying start point:")
-            if Q_all is not None:
-                impact_sample_idx = len(segments[0]['Q']) - 1
-                ddq_impact       = ddQ_all[impact_sample_idx]
-                # score = score_trajectory(Q_all, dQ_all, ddQ_all, dt, DQ_MAX, DDQ_MAX)
-                score = score_abs_joint_accel(Q_all, dQ_all, ddQ_all, dt, impact_sample_idx, DDQ_MAX)
-                
-                if score < min_score:
-                    min_score    = score
-                    best_segment = segments
-                    best_Q_all   = Q_all
-                    best_dQ_all  = dQ_all
-                    best_ddQ_all = ddQ_all
-                if score > high_score:
-                    high_score = score
-                # print("worked")
-                # break
-     
-    print(f"Best score: {min_score}, worst score: {high_score}")
+        if found_any:
+            break  # break outer loop
+
+    if not found_any:
+        print("[ERROR] Trajectory planning failed.")
+        results = {
+            "t_plan": None,
+            "P_plan": None,
+            "Q_plan": None,
+            "dQ_plan": None,
+            "ddQ_plan": None,
+            "segments": None,
+            "waypoints": None,
+            "problem": "Trajectory planning failed for all start/end candidates.",
+        }
+        return results
+
+    # Use the first feasible trajectory we found
     segments = best_segment
-    Q_all   = best_Q_all
-    dQ_all  = best_dQ_all
-    ddQ_all = best_ddQ_all
+    Q_all    = best_Q_all
+    dQ_all   = best_dQ_all
+    ddQ_all  = best_ddQ_all
+    waypoints = waypoints_best
+
     # Impact is feasible; proceed with planning
     # segments, Q_all, dQ_all, ddQ_all = plan_piecewise_quintic(waypoints, impact_idx, lin_velocity)
 
