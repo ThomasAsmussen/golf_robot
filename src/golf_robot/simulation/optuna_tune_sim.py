@@ -10,12 +10,14 @@ import numpy as np
 import mujoco
 import optuna
 import optunahub
+import glob
+import re
 
 
 # ------------------------------ Paths ---------------------------------
 HERE = os.path.dirname(__file__)
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
-XML_PATH_DEFAULT = os.path.join(REPO, "models", "mujoco", "golf_world.xml")
+XML_PATH_DEFAULT = os.path.join(REPO, "models", "mujoco", "golf_world_no_hole.xml")
 DEFAULT_DB_PATH = os.path.join(HERE, "optuna_calib.db")
 
 
@@ -42,6 +44,7 @@ def get_ids(model):
         "act_id":        mj_id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, "club_motor"),
         "ball_jid":      mj_id(model, mujoco.mjtObj.mjOBJ_JOINT, "ball_free"),
         "base_jid":      mj_id(model, mujoco.mjtObj.mjOBJ_JOINT, "mount_free"),
+        "flex_jid":      mj_id(model, mujoco.mjtObj.mjOBJ_JOINT, "shaft_flex_joint"),
     }
 
 
@@ -66,10 +69,10 @@ def load_csv_x(path: str) -> Dict[str, np.ndarray]:
                 return header.index(n)
         return None
 
-    ti = find(["time", "t"])
-    xi = find(["x", "ball_x"])
-    vxi = find(["vx"])
-
+    ti = find(["time", "t", "time_s", "time (s)", "time[s]"])
+    xi = find(["x", "ball_x", "x_m", "x (m)", "x[m]"])
+    vxi = find(["vx", "vx_m_s", "vx (m/s)", "vx[m/s]"])
+    
     if ti is None or xi is None:
         raise ValueError(f"{path}: must include time and x columns")
 
@@ -86,7 +89,7 @@ def load_csv_x(path: str) -> Dict[str, np.ndarray]:
             vx[0]    = (x[1] - x[0])     / (t[1] - t[0] + 1e-12)
             vx[-1]   = (x[-1] - x[-2])   / (t[-1] - t[-2] + 1e-12)
 
-    t = t - t[0]  # start at zero
+    #t = t - t[0]  # start at zero
     return {"t": t, "x": x, "vx": vx}
 
 
@@ -109,6 +112,51 @@ def load_measurements_with_vx(csvvx_list: List[str]) -> List[Dict[str, np.ndarra
         m = load_csv_x(path)
         m["vx_des"] = float(vx_des)
         out.append(m)
+    return out
+
+
+_NAME_RE = re.compile(
+    r"^test_(?P<vx>[0-9]+(?:[.,][0-9]+)?)-(?P<idx>\d+)_trajectory_time_shifted",
+    re.IGNORECASE,
+)
+
+def infer_vx_from_filename(path: str) -> float:
+    """
+    Parse a speed from filenames like:
+      test_0.6-1_trajectory.csv
+      test_0.8-5_trajectory.csv
+      test_1.0-3_trajectory.csv
+    Returns vx_des as float (e.g. 0.6, 0.8, 1.0).
+    """
+    base = os.path.splitext(os.path.basename(path))[0]
+    m = _NAME_RE.match(base)
+    if not m:
+        raise ValueError(f"Cannot infer vx_des from filename: {base}")
+    vx_str = m.group("vx").replace(",", ".")
+    return float(vx_str)
+
+
+def load_measurements_from_dir(dir_path: str) -> List[Dict[str, np.ndarray]]:
+    """
+    Scan a directory for files named like test_<vx>-<id>_trajectory*.csv,
+    load each with load_csv_x, and attach the inferred vx_des.
+    """
+    pattern = os.path.join(dir_path, "test_*_trajectory_time_shifted*")
+    files = sorted(glob.glob(pattern))
+    if not files:
+        raise FileNotFoundError(f"No files matching {pattern!r}")
+
+    print("[info] Found files:")
+    for f in files:
+        print("   ", f)
+    
+    out: List[Dict[str, np.ndarray]] = []
+    for path in files:
+        vx_des = infer_vx_from_filename(path)
+        m = load_csv_x(path)   # expects CSV with time + x columns
+        m["vx_des"] = float(vx_des)
+        out.append(m)
+        print(f"[info] loaded {os.path.basename(path)} with vx_des={vx_des}")
     return out
 
 
@@ -139,21 +187,33 @@ def bake_aim_pose(model, data, yaw_rad=0.0):
     data.qvel[vadr:vadr+6] = 0.0
     mujoco.mj_forward(model, data)
 
-
-def head_ball_dx(model, data, ids):
+def head_ball_dx(data, ids):
     return float(data.geom_xpos[ids["club_head_gid"]][0] - data.geom_xpos[ids["ball_gid"]][0])
 
+def command_impact_speed(model, data, ids, vx_des=1.0, R=0.36):
+    """
+    Open-loop command:
+    - Compute hinge angular speed that would give linear speed vx_des
+      at 0° (unflexed configuration).
+    - Do NOT use live club head pose in the Jacobian, so the motor
+      doesn't compensate for shaft flex.
+    """
 
-def command_impact_speed(model, data, ids, vx_des=1.0):
-    dx = head_ball_dx(model, data, ids)
+    # Direction to the impact plane (same logic as before)
+    dx = head_ball_dx(data, ids)   # <-- remove `model` here
     dir_to_plane = -np.sign(dx if dx != 0.0 else 1e-12)
-    v_des = float(abs(vx_des)) * dir_to_plane
-    jid = ids["hinge_jid"]; gid = ids["club_head_gid"]
-    r   = np.array(data.geom_xpos[gid]) - np.array(data.xanchor[jid])
-    den = float(np.cross(np.array(data.xaxis[jid]), r)[0])
-    if abs(den) < 1e-8:
+
+    # Desired linear speed (along x) at 0°
+    v_des = -float(abs(vx_des)) * dir_to_plane
+
+    # Mapping v = omega * R  =>  omega = v / R
+    if abs(R) < 1e-8:
         return 0.0
-    return float(v_des / den)
+
+    omega_cmd = v_des / float(R)
+    
+    return float(omega_cmd)
+
 
 
 # -------------------------- In-place parameter set --------------------
@@ -172,87 +232,213 @@ def apply_params_inplace_only_requested(model, ids, trial):
       - global default <geom friction="slide spin roll">
     but only in a reasonably small neighborhood around the XML values.
     """
-    # ---- Baseline values from your XML ----
-    base_tc   = 0.02
-    base_dr   = 0.26
-    base_a    = 0.7
-    base_b    = 0.95
-    base_c    = 0.01
-    base_slide = 0.20
-    base_spin  = 0.001
-    base_roll  = 0.0014
+    if True:
+        # ---- Baseline values from your XML ----
+        base_tc   = 0.01
+        base_dr   = 0.13
+        base_a    = 0.6
+        base_b    = 1.05
+        base_c    = 0.001
+        base_slide = 0.40
+        base_spin  = 0.0001
+        #base_roll  = 0.000845
 
-    # ---- Ball–club contact pair (local search) ----
-    pid = find_pair_index(model, ids["ball_gid"], ids["club_head_gid"])
-    if pid == -1:
-        raise RuntimeError("Ball–club contact pair not found in compiled model.")
+        # ---- Ball–club contact pair (local search) ----
+        pid = find_pair_index(model, ids["ball_gid"], ids["club_head_gid"])
+        if pid == -1:
+            raise RuntimeError("Ball–club contact pair not found in compiled model.")
 
-    # solref = [timeconst, damp_ratio]
-    tc = trial.suggest_float(
-        "pair.solref.tc",
-        base_tc * 0.5,
-        base_tc * 2.0,
-        log=True,
-    )
-    dr = trial.suggest_float(
-        "pair.solref.dr",
-        base_dr * 0.5,
-        base_dr * 2.0,
-    )
-    model.pair_solref[pid][0] = tc
-    model.pair_solref[pid][1] = dr
+        # solref = [timeconst, damp_ratio]
+        tc = trial.suggest_float(
+            "pair.solref.tc",
+            base_tc * 0.5,
+            base_tc * 2.0,
+            log=True,
+        )
+        dr = trial.suggest_float(
+            "pair.solref.dr",
+            base_dr * 0.5,
+            base_dr * 2.0,
+        )
+        model.pair_solref[pid][0] = tc
+        model.pair_solref[pid][1] = dr
 
-    # solimp = [a, b, c]
-    a = trial.suggest_float(
-        "pair.solimp.a",
-        base_a - 0.1,
-        base_a + 0.1,
-    )
-    b = trial.suggest_float(
-        "pair.solimp.b",
-        base_b - 0.1,
-        base_b + 0.1,
-    )
-    c = trial.suggest_float(
-        "pair.solimp.c",
-        base_c * 0.1,
-        base_c * 10.0,
-        log=True,
-    )
-    model.pair_solimp[pid][0] = a
-    model.pair_solimp[pid][1] = b
-    model.pair_solimp[pid][2] = c
+        # solimp = [a, b, c]
+        a = trial.suggest_float(
+            "pair.solimp.a",
+            base_a - 0.3,
+            base_a + 0.3,
+        )
+        b = trial.suggest_float(
+            "pair.solimp.b",
+            base_b - 0.3,
+            base_b + 0.3,
+        )
+        c = trial.suggest_float(
+            "pair.solimp.c",
+            base_c * 0.5,
+            base_c * 2.0,
+            log=True,
+        )
+        model.pair_solimp[pid][0] = a
+        model.pair_solimp[pid][1] = b
+        model.pair_solimp[pid][2] = c
 
-    # ---- Global default <geom friction="slide spin roll"> (local search) ----
-    slide = trial.suggest_float(
-        "default.geom.friction.slide",
-        base_slide * 0.1,
-        base_slide * 10.0,
-    )
-    spin = trial.suggest_float(
-        "default.geom.friction.spin",
-        base_spin * 0.1,
-        base_spin * 10.0,
-        log=True,
-    )
-    roll = trial.suggest_float(
-        "default.geom.friction.roll",
-        base_roll * 0.1,
-        base_roll * 10.0,
-        log=True,
-    )
+        # ---- Global default <geom friction="slide spin roll"> (local search) ----
+        slide = trial.suggest_float(
+            "default.geom.friction.slide",
+            base_slide * 0.5,
+            base_slide * 2.0,
+        )
+        spin = trial.suggest_float(
+            "default.geom.friction.spin",
+            base_spin * 0.01,
+            base_spin * 10.0,
+            log=True,
+        )
+        #roll = trial.suggest_float(
+        #    "default.geom.friction.roll",
+        #    base_roll * 0.1,
+        #    base_roll * 10.0,
+        #    log=True,
+        #)
 
-    # Apply to all contact geoms
-    for gid in range(model.ngeom):
-        try:
-            contype = int(model.geom_contype[gid])
-            if contype == 0:
-                continue
-        except Exception:
-            pass
-        model.geom_friction[gid][0] = slide
-        model.geom_friction[gid][1] = spin
-        model.geom_friction[gid][2] = roll
+        # Apply to all contact geoms
+        for gid in range(model.ngeom):
+            try:
+                contype = int(model.geom_contype[gid])
+                if contype == 0:
+                    continue
+            except Exception:
+                pass
+            model.geom_friction[gid][0] = slide
+            model.geom_friction[gid][1] = spin
+            #model.geom_friction[gid][2] = roll
+        
+    else:
+        # ---- Ball–club contact pair (local search) ----
+        pid = find_pair_index(model, ids["ball_gid"], ids["club_head_gid"])
+        if pid == -1:
+            raise RuntimeError("Ball–club contact pair not found in compiled model.")
+
+        base_tc   = 0.0945187990260779
+        base_dr   = 0.25991
+        # solref = [timeconst, damp_ratio]
+        tc = trial.suggest_float(
+            "pair.solref.tc",
+            base_tc * 0.2,
+            base_tc * 5.0,
+            log=True,
+        )
+        dr = trial.suggest_float(
+            "pair.solref.dr",
+            base_dr * 0.2,
+            base_dr * 5.0,
+        )
+        model.pair_solref[pid][0] = tc
+        model.pair_solref[pid][1] = dr
+
+        base_slide = 0.40
+        # ---- Global default <geom friction="slide spin roll"> (local search) ----
+        slide = trial.suggest_float(
+            "default.geom.friction.slide",
+            base_slide * 0.5,
+            base_slide * 2.0,
+        )
+        for gid in range(model.ngeom):
+            try:
+                contype = int(model.geom_contype[gid])
+                if contype == 0:
+                    continue
+            except Exception:
+                pass
+            model.geom_friction[gid][0] = slide
+            #model.geom_friction[gid][1] = spin
+            #model.geom_friction[gid][2] = roll
+    
+    # ---- Actuator gain: kv for the club velocity motor ----
+    #kv = trial.suggest_float(
+    #    "actuator.club_motor.kv",
+    #    base_kv * 0.0001,
+    #    base_kv * 1.1,
+    #    log=True,
+    #)
+    #act_id = ids["act_id"]
+    #model.actuator_gainprm[act_id][0] = kv
+    
+    #hinge_jid = ids["hinge_jid"]
+    
+    # HINGE STUFF:
+    #hinge_dof = model.jnt_dofadr[hinge_jid]
+
+    #base_damp = 0.01
+    #damp = trial.suggest_float(
+    #    "joint.club_hinge.damping",
+    #    base_damp * 0.001,
+    #    base_damp * 100.0,
+    #    log=True,
+    #)
+    #model.dof_damping[hinge_dof] = damp
+    
+    #hinge_qadr = model.jnt_qposadr[hinge_jid]
+    #base_stiff = 5
+
+    #stiff = trial.suggest_float(
+    #    "joint.club_hinge.stiffness",
+    #    base_stiff * 0.01,
+    #    base_stiff * 100.0,
+    #    log=True,
+    #)
+
+    #model.qpos_spring[hinge_qadr] = stiff
+    
+    #speed_scale = trial.suggest_float(
+    #    "controller.speed_scale",
+    #    0.5,     # lower bound (tune as needed)
+    #    2.0,     # upper bound (tune as needed)
+    #    log=True
+    #)
+
+    # Store in model for later (safe hack: use model.user_data or similar)
+    #model.userdata = np.array([speed_scale], float)
+    
+    
+    # ------------------------------------------------------------------
+    # NEW: flex hinge dynamics as hyperparameters
+    # ------------------------------------------------------------------
+    #flex_jid = ids["flex_jid"]
+    #flex_dof = model.jnt_dofadr[flex_jid]
+
+    # Baseline from compiled model (fallbacks for safety)
+    #base_flex_damp = 0.1
+
+    # Damping (log-scale around baseline)
+    #flex_damp = trial.suggest_float(
+    #    "joint.shaft_flex.damping",
+    #    base_flex_damp * 0.001,
+    #    base_flex_damp * 1000.0,
+    #    log=True,
+    #)
+    #model.dof_damping[flex_dof] = flex_damp
+
+    # Stiffness (log-scale around baseline)
+    # If baseline is zero, use a nominal range [1, 1000].
+
+    #base_flex_stiff = 10.0
+    #flex_stiff = trial.suggest_float(
+    #    "joint.shaft_flex.stiffness",
+    #    base_flex_stiff*0.01,
+    #    base_flex_stiff*100.0,
+    #    log=True,
+    #)
+
+    # Apply stiffness back to the joint (if available)
+    #try:
+    #    model.jnt_stiffness[flex_jid] = flex_stiff
+    #except AttributeError:
+        # If this field doesn't exist in your mujoco bindings, you may need a
+        # different mechanism (e.g. qpos_spring, equality constraints, etc.)
+    #    pass
 
 
 # ------------------- Dense rollout + interpolation --------------------
@@ -459,14 +645,23 @@ def make_objective(model, ids,
         # Mutate ONLY the requested params
         apply_params_inplace_only_requested(model, ids, trial)
 
+        power_scale = trial.suggest_float(
+            "controller.power_scale",
+            0.3,
+            1.7,
+        )
+
+        v_ref = 0.8 # the speed where you want actual = command (at this speed, no scaling)
+
         total_cost = 0.0
         total_n = 0
 
         # For each unique desired velocity, simulate once
         for vx_val, lst in meas_by_vx.items():
+            vx_cmd = v_ref * (vx_val / v_ref) ** power_scale
             t_dense, x_dense, vx_dense = simulate_dense_trajectory(
                 model, ids,
-                vx_des=vx_val,
+                vx_des=vx_cmd,
                 aim_yaw_deg=aim_yaw_deg,
                 start_angle_deg=start_angle_deg,
                 sim_timestep=sim_timestep,
@@ -507,7 +702,7 @@ def build_argparser():
         "--csvvx",
         type=str,
         action="append",
-        required=True,
+        required=False,
         help='Repeat as "PATH|VX_DES". Example: --csvvx "C:\\path\\file.csv|0.8"',
     )
     p.add_argument("--trials", type=int, default=300)
@@ -536,6 +731,15 @@ def build_argparser():
                    help='Optuna storage URL (e.g., sqlite:///C:/path/optuna.db)')
     p.add_argument("--study-name", type=str, default="golf-calib",
                    help="Optuna study name for dashboard/resume.")
+    p.add_argument(
+    "--auto-dir",
+    type=str,
+    default=None,
+    help=(
+        "Directory containing files named like "
+        "test_<vx>-<id>_trajectory*.csv. The <vx> part "
+        "is parsed as vx_des for each file."
+    ),)
     return p
 
 
@@ -555,7 +759,14 @@ def main():
     args = build_argparser().parse_args()
 
     # Load measurements with per-file vx_des
-    measurements = load_measurements_with_vx(args.csvvx)
+    # Load measurements (either from --auto-dir or explicit --csvvx)
+    if args.auto_dir:
+        measurements = load_measurements_from_dir(args.auto_dir)
+    elif args.csvvx:
+        measurements = load_measurements_with_vx(args.csvvx)
+    else:
+        raise ValueError("You must provide either --auto-dir or at least one --csvvx.")
+
 
     # Build model once from PATH so relative assets resolve
     xml_abs = os.path.abspath(args.xml)

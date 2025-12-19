@@ -1,4 +1,5 @@
 import numpy as np
+import threading
 from ur10_logger import UR10Logger
 
 Z_PALLET = 0.145  # from config.py
@@ -164,11 +165,21 @@ if __name__ == "__main__":
     HOST = "192.38.66.227"   # UR10
     PORT_logger = 30003
     PORT_cmd = 30002
+    time_sleep = 10.0
 
     # 1) Set up your logger on its own socket/connection
     logger = UR10Logger(HOST, port=PORT_logger, log_folder="log")
     logger.connect()
     logger.start_logging()
+    
+    # 1.1) Start ball detection
+    vision = False
+    if vision == True:
+        stop_event = threading.Event()
+        from record_camera import record_from_camera
+        recording_thread = threading.Thread(target = record_from_camera, kwargs ={"camera_index": 1, "time_length": time_sleep}, daemon=True,)  # you can make it return output_path
+        recording_thread.start()
+        time.sleep(10.0)  # give camera some time to set up
 
     # 2) Open a separate socket for sending the program
     cmd = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -177,11 +188,11 @@ if __name__ == "__main__":
     print("Sending swing...")
     swing_meta = send_swing(cmd, x_start=-0.997, x_end=-0.297,
            y_ball=-0.600, z_ball=0.01+Z_PALLET, #-0.040 old
-           path_angle_deg=0, attack_angle_deg=0.2,
-           vel=2.5, acc=4.5)
+           path_angle_deg=0, attack_angle_deg=0.3,
+           vel=1.2, acc=5.5)
 
     # 3) Let the swing run and the logger collect a bit extra
-    time.sleep(10.0)   # 8.0 adjust to cover your full motion
+    time.sleep(time_sleep)   # 8.0 adjust to cover your full motion
 
     # 4) Clean up
     try:
@@ -189,6 +200,13 @@ if __name__ == "__main__":
     except OSError:
         pass
     cmd.close()
+    
+    if vision == True:
+        print("Stopping camera recording...")
+        stop_event.set()
+        recording_thread.join()
+        print("Recording thread joined. UR10 logic done.")
+
 
     logger.stop_logging()
     logger.close()

@@ -19,10 +19,18 @@
 #include "../include/communication/ur_driver.h"
 #include "../include/communication/ur5.h"
 
-static const std::string CSV_IN   = "log/trajectory_sim.csv";      // input
-// static const std::string CSV_OUT  = "log/streamed_measurements.csv"; // output
+//static const std::string CSV_IN   = "C:/Users/marti/'OneDrive - Danmarks Tekniske Universitet'/DTU/GitHub/golf_robot/log/trajectory_sim.csv";      // input
+//static const std::string CSV_OUT  = "log/streamed_measurements.csv"; // output
+//static const std::string CSV_OUT =
+//    "/home/thomas/Documents/masters_project/golf_robot/log/streamed_measurements.csv";
+//static const std::string CSV_OUT =
+//    "C:/Users/marti/'OneDrive - Danmarks Tekniske Universitet'/DTU/GitHub/golf_robot/log/streamed_measurements.csv";
+static const std::string CSV_IN =
+    "/mnt/c/Users/marti/OneDrive - Danmarks Tekniske Universitet/DTU/GitHub/golf_robot/log/trajectory_sim.csv";
+
 static const std::string CSV_OUT =
-    "/home/thomas/Documents/masters_project/golf_robot/log/streamed_measurements.csv";
+    "/mnt/c/Users/marti/OneDrive - Danmarks Tekniske Universitet/DTU/GitHub/golf_robot/log/streamed_measurements.csv";
+
 
 // static const std::string ROBOT_IP = "192.168.56.101";              // robot/sim IP
 static const std::string ROBOT_IP = "192.38.66.227"; 

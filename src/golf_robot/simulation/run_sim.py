@@ -13,7 +13,7 @@ import csv
 # ---------------------------------------------------------------------
 HERE = os.path.dirname(__file__)
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
-XML_PATH = os.path.join(REPO, "models", "mujoco", "golf_world.xml")
+XML_PATH = os.path.join(REPO, "models", "mujoco", "golf_world_no_hole.xml")
 
 # ---------------------------------------------------------------------
 # Default configuration (single source of truth for defaults)
@@ -157,16 +157,40 @@ def club_head_vx(model, data, ids):
 # ---------------------------------------------------------------------
 # Command mapping
 # ---------------------------------------------------------------------
-def command_impact_speed(model, data, ids, vx_des=1.0):
-    dx = head_ball_dx(data, ids)
+#def command_impact_speed(model, data, ids, vx_des=1.0):
+#    dx = head_ball_dx(data, ids)
+#    dir_to_plane = -np.sign(dx if dx != 0.0 else 1e-12)
+#    v_des = float(abs(vx_des)) * dir_to_plane
+#    jid = ids["hinge_jid"]; gid = ids["club_head_gid"]
+#    r   = np.array(data.geom_xpos[gid]) - np.array(data.xanchor[jid])
+#    den = float(np.cross(np.array(data.xaxis[jid]), r)[0])
+#    if abs(den) < 1e-8:
+#        return 0.0
+#    return float(v_des / den)
+
+def command_impact_speed(model, data, ids, vx_des=1.0, R=0.36):
+    """
+    Open-loop command:
+    - Compute hinge angular speed that would give linear speed vx_des
+      at 0° (unflexed configuration).
+    - Do NOT use live club head pose in the Jacobian, so the motor
+      doesn't compensate for shaft flex.
+    """
+
+    # Direction to the impact plane (same logic as before)
+    dx = head_ball_dx(data, ids)   # <-- remove `model` here
     dir_to_plane = -np.sign(dx if dx != 0.0 else 1e-12)
-    v_des = float(abs(vx_des)) * dir_to_plane
-    jid = ids["hinge_jid"]; gid = ids["club_head_gid"]
-    r   = np.array(data.geom_xpos[gid]) - np.array(data.xanchor[jid])
-    den = float(np.cross(np.array(data.xaxis[jid]), r)[0])
-    if abs(den) < 1e-8:
+
+    # Desired linear speed (along x) at 0°
+    v_des = -float(abs(vx_des)) * dir_to_plane
+
+    # Mapping v = omega * R  =>  omega = v / R
+    if abs(R) < 1e-8:
         return 0.0
-    return float(v_des / den)
+
+    omega_cmd = v_des / float(R)
+    return float(omega_cmd)
+
 
 # ---------------------------------------------------------------------
 # Viewer wrapper
@@ -252,7 +276,11 @@ def run_loop(model, data, cfg,
                 data.qpos[qadr_base+3:qadr_base+7] = base_quat_baked
                 data.qvel[vadr_base:vadr_base+6] = 0.0
 
-                qd_cmd = command_impact_speed(model, data, ids, vx_des=vx_des)
+                #v_ref = 0.8
+                #v_pow_scale = 0.5596406147335973
+                #v_scaled = v_ref * (vx_des / v_ref) ** v_pow_scale
+                v_scaled = vx_des
+                qd_cmd = command_impact_speed(model, data, ids, vx_des=v_scaled)
                 lo, hi = model.actuator_ctrlrange[act_id]
                 qd_cmd = float(np.clip(qd_cmd, -max_vel, max_vel))
                 qd_cmd = float(np.clip(qd_cmd, lo, hi))
