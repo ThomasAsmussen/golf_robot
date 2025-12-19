@@ -166,7 +166,7 @@ def tcp_path_from_Q(Q):
     return np.array([tcp_xyz_from_q(q) for q in Q])
 
 
-def plot_comparisons(t_plan, Q_plan, dQ_plan, t_meas, Q_meas, dQ_meas, out_prefix=None):
+def plot_comparisons(t_plan, Q_plan, dQ_plan, t_meas, Q_meas, dQ_meas, out_prefix=None, Q_kf=None):
     os.makedirs(OUT_DIR, exist_ok=True)
     ts = out_prefix or time.strftime('%Y%m%d_%H%M%S')
 
@@ -282,11 +282,19 @@ def plot_comparisons(t_plan, Q_plan, dQ_plan, t_meas, Q_meas, dQ_meas, out_prefi
         except Exception:
             P_meas = None
 
+    P_kf = None
+    if Q_kf is not None:
+        try:
+            P_kf = tcp_path_from_Q(Q_kf)
+        except Exception:
+            P_kf = None
     if P_plan is not None and P_meas is not None:
         fig = plt.figure(figsize=(10,8))
         ax = fig.add_subplot(111, projection='3d')
         ax.plot(P_plan[:,0], P_plan[:,1], P_plan[:,2], 'b-', label='Planned', linewidth=2)
         ax.plot(P_meas[:,0], P_meas[:,1], P_meas[:,2], 'r--', label='Measured', linewidth=1)
+        if P_kf is not None:
+            ax.plot(P_kf[:,0], P_kf[:,1], P_kf[:,2], color='g', linestyle='-.', label='KF', linewidth=1.5)
         ax.set_xlabel('X (m)')
         ax.set_ylabel('Y (m)')
         ax.set_zlabel('Z (m)')
@@ -384,8 +392,26 @@ def load_kf_csv(path):
     return np.asarray(t_list, float), np.asarray(Q_list, float).reshape(-1,6), np.asarray(dQ_list, float).reshape(-1,6)
 
 
-def plot_kf_comparisons(t_meas, Q_meas, dQ_meas, t_kf, Q_kf, dQ_kf, out_prefix=None):
+def save_fd_velocities(t_meas, dQ_meas_fd, out_file='log/step.csv'):
+    """Save finite-difference velocities to CSV: t, dq0, dq1, ..., dq5
+    """
+    if t_meas is None or dQ_meas_fd is None or len(t_meas) == 0:
+        print("[WARN] Cannot save FD velocities: no data")
+        return
+    os.makedirs(os.path.dirname(out_file), exist_ok=True)
+    with open(out_file, 'w') as f:
+        # Write header
+        f.write('t,dq0,dq1,dq2,dq3,dq4,dq5\n')
+        # Write rows
+        for i, t_val in enumerate(t_meas):
+            row = [str(t_val)] + [str(dQ_meas_fd[i, j]) for j in range(6)]
+            f.write(','.join(row) + '\n')
+    print(f"[INFO] Saved FD velocities to {out_file}")
+
+
+def plot_kf_comparisons(t_meas, Q_meas, dQ_meas, t_kf, Q_kf, dQ_kf, out_prefix=None, t_plan=None, dQ_plan=None):
     """Create two plots comparing measured joints/velocities to KF predictions.
+    Adds direct finite-difference velocities from measured positions and optional planned velocities.
     Returns filenames (fn_q, fn_dq) or (None,None) if skipped.
     """
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -419,13 +445,37 @@ def plot_kf_comparisons(t_meas, Q_meas, dQ_meas, t_kf, Q_kf, dQ_kf, out_prefix=N
             plt.savefig(fn_q)
             plt.close()
 
-    # Joint velocities comparison
+    # Joint velocities comparison (measured vs KF, plus finite diff and planned)
+    def _finite_diff_velocities(t, Q):
+        if t is None or Q is None or len(t) < 2 or len(Q) < 2:
+            return None
+        dQ_fd = np.zeros_like(Q)
+        for j in range(Q.shape[1]):
+            try:
+                dQ_fd[:, j] = np.gradient(Q[:, j], t)
+            except Exception:
+                dt = np.diff(t)
+                dq = np.diff(Q[:, j]) / dt
+                dQ_fd[:-1, j] = dq
+                dQ_fd[-1, j] = dq[-1] if len(dq) > 0 else 0.0
+        return dQ_fd
+
+    dQ_meas_fd = _finite_diff_velocities(t_meas, Q_meas)
+
     if t_meas is not None and len(t_meas) > 0 and t_kf is not None and len(t_kf) > 0:
         fig, axes = plt.subplots(3,2, figsize=(12,10))
         axes = axes.flatten()
         for i in range(6):
-            axes[i].plot(t_meas, dQ_meas[:,i], 'r.', label='Measured', linewidth=0.7)
-            axes[i].plot(t_kf, dQ_kf[:,i], 'b.', label='KF pred', linewidth=2)
+            # measured (red)
+            axes[i].plot(t_meas, dQ_meas[:,i], 'r.', label='Measured dQ', linewidth=0.7)
+            # direct finite-difference from measured positions (orange)
+            if dQ_meas_fd is not None:
+                axes[i].plot(t_meas, dQ_meas_fd[:,i], color='orange', linestyle='-', label='Measured FD dQ', linewidth=1.2)
+            # Kalman filter prediction (blue)
+            axes[i].plot(t_kf, dQ_kf[:,i], 'b.', label='KF pred dQ', linewidth=2)
+            # planned velocities (green) if provided
+            if t_plan is not None and dQ_plan is not None and len(t_plan) == len(dQ_plan):
+                axes[i].plot(t_plan, dQ_plan[:,i], color='green', linestyle='-', label='Planned dQ', linewidth=2)
             axes[i].set_xlabel('Time (s)')
             axes[i].set_ylabel(f'Joint {i+1} Velocity (rad/s)')
             axes[i].legend()
@@ -548,13 +598,45 @@ def main():
     print(f"[INFO] Loading streamer log: {streamer_log}")
     t_meas, Q_meas, dQ_meas = load_streamer_log(streamer_log)
 
+    # Attempt to load KF predictions early so we can include TCP in 3D plot
+    t_kf = Q_kf = dQ_kf = None
+    kf_path = os.path.join(OUT_DIR, 'kf_predictions.csv')
+    if os.path.exists(kf_path):
+        try:
+            t_kf, Q_kf, dQ_kf = load_kf_csv(kf_path)
+        except Exception as e:
+            print(f"[WARN] Failed to load KF predictions for TCP plot: {e}")
+
     print("[INFO] Plotting comparisons...")
     # Plot distribution of sampling intervals first
     sf = plot_sampling_intervals(t_meas)
     if sf:
         print(f"[INFO] Saved sampling-intervals plot: {sf}")
 
-    f1, f2, f_accel, f_tcp = plot_comparisons(t_plan, Q_plan, dQ_plan, t_meas, Q_meas, dQ_meas)
+    # Compute and save finite-difference velocities
+    def _finite_diff_velocities(t, Q):
+        if t is None or Q is None or len(t) < 2 or len(Q) < 2:
+            return None
+        dQ_fd = np.zeros_like(Q)
+        for j in range(Q.shape[1]):
+            try:
+                dQ_fd[:, j] = np.gradient(Q[:, j], t)
+            except Exception:
+                dt = np.diff(t)
+                dq = np.diff(Q[:, j]) / dt
+                dQ_fd[:-1, j] = dq
+                dQ_fd[-1, j] = dq[-1] if len(dq) > 0 else 0.0
+        return dQ_fd
+
+    dQ_meas_fd = _finite_diff_velocities(t_meas, Q_meas)
+    save_fd_velocities(t_meas, dQ_meas_fd)
+
+    f1, f2, f_accel, f_tcp = plot_comparisons(
+        t_plan, Q_plan, dQ_plan,
+        t_meas, Q_meas, dQ_meas,
+        out_prefix=None,
+        Q_kf=Q_kf if Q_kf is not None else None
+    )
     print("[INFO] Saved plots:")
     print(f"  - {f1}")
     print(f"  - {f2}")
@@ -563,19 +645,24 @@ def main():
     if f_tcp:
         print(f"  - {f_tcp}")
 
-    # If Kalman filter predictions exist, load and plot comparisons
-    kf_path = os.path.join(OUT_DIR, 'kf_predictions.csv')
-    if os.path.exists(kf_path):
-        print(f"[INFO] Loading KF predictions: {kf_path}")
-        t_kf, Q_kf, dQ_kf = load_kf_csv(kf_path)
+    # If Kalman filter predictions exist, plot comparisons (reuse early load if available)
+    if t_kf is not None:
+        print(f"[INFO] Using KF predictions for comparisons: {kf_path}")
         if t_kf is not None:
-            fn_q, fn_dq = plot_kf_comparisons(t_meas, Q_meas, dQ_meas, t_kf, Q_kf, dQ_kf)
+            fn_q, fn_dq = plot_kf_comparisons(
+                t_meas, Q_meas, dQ_meas,
+                t_kf, Q_kf, dQ_kf,
+                out_prefix=None,
+                t_plan=t_plan,
+                dQ_plan=dQ_plan
+            )
             print("[INFO] Saved KF comparison plots:")
             if fn_q:
                 print(f"  - {fn_q}")
             if fn_dq:
                 print(f"  - {fn_dq}")
-        else:
+    else:
+        if os.path.exists(kf_path):
             print("[WARN] KF predictions file found but no valid rows parsed.")
 
     # Plot TCP velocity comparisons (vx,vy,vz,|v|)

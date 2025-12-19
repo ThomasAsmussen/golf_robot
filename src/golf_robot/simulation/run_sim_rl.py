@@ -405,6 +405,11 @@ def run_loop(model, data, cfg,
 
     # try:
     with viewer_ctx as v:
+        if cfg["sim"].get("render", True):
+            v.cam.lookat[:] = np.array([2.5, 0.0, 0.0])   # choose center point in world coords
+            v.cam.azimuth = 0.0
+            v.cam.elevation = -90.0                       # look straight down
+            v.cam.distance = 7.0                          # adjust zoom
         while v.is_running():
             while pending_actions:
                 act = pending_actions.pop(0)
@@ -643,8 +648,8 @@ def main():
         cfg["sim"]["render"] = bool(render)
 
     cfg["sim"]["csv_period"] = args.csv_period
-    aim_yaw = 10.258417129516602
-    vx_des =  2.3321681022644043
+    aim_yaw = 0
+    vx_des =  1.3
     hole_pos_xy = [5, 0]
     # disc_positions = generate_disc_positions(5, -3.0, 3.0, -2.0, 2.0, hole_pos_xy)
     disc_positions = [(1.4956361419452078, -0.29096378977334414), (-0.20827146563258125, -0.5665742751926417), (-1.1686851660689785, -0.7053216711723784), (-2.1658353815296345, -0.6954762744879543)]
