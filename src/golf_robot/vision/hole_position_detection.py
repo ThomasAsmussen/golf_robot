@@ -121,6 +121,6 @@ print(centers)  # [(cx, cy), ...]
 save_holes_config(
     detections=centers,
     frame_shape=img.shape,
-    path="data/holes_config.json",
+    path="data/holes_pixel_config.json",
     pixels_per_cm=6.5
 )
