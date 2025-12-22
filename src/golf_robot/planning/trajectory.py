@@ -3,9 +3,9 @@ Trajectory generation using quintic polynomials with automatic time-scaling to s
 """
 
 import numpy as np
-from config import Q_MIN, Q_MAX, DQ_MAX, DDQ_MAX, DT, Z_PALLET
-from utils import unwrap_to_seed_all, normalize
-from kinematics import numeric_jacobian, fk_ur10, rotation_z, pick_ik_solution, move_point_xyz
+from planning.config import Q_MIN, Q_MAX, DQ_MAX, DDQ_MAX, DT, Z_PALLET
+from planning.utils import unwrap_to_seed_all, normalize
+from planning.kinematics import numeric_jacobian, fk_ur10, rotation_z, pick_ik_solution, move_point_xyz
 import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt

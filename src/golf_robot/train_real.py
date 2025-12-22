@@ -7,23 +7,128 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import uuid
-from reinforcement_learning.contextual_bandit import training
-from vision.ball2hole_distance import compute_ball2hole_distance
+import subprocess
+import re
+import uuid
+from contextual_bandit2 import training
+from vision.ball2hole_distance import get_ball_final_position
 from vision.ball_start_position import get_ball_start_position
+from planning.generate_trajectory_csv import generate_trajectory_csv
+
+def confirm_continue():
+    # Confirm
+    key = input("Press y to continue: ").lower()
+    if key == "y":
+        print("Confirmed")
+    else:
+        print("Aborted by user")
+        sys.exit(0)
 
 
-def real_init_parameters():
-    bx, by = get_ball_start_position(debug=False, use_cam=True)
-    #hole_positions = 
-    #disc_positions = 
+def real_init_parameters(camera_index):
+    # Ball
+    bx, by = get_ball_start_position(debug=True, debug_raw=False, use_cam=True, camera_index=camera_index)
+    ball_start_position = np.array([bx, by])  # in meters
+    print(ball_start_position)
+    
+    # Holes
+    here = Path(__file__).resolve().parent
+    config_dir = here.parents[1] / "configs"
+    with open(config_dir / "hole_config.yaml", "r") as f:
+        hole_positions = yaml.safe_load(f)
+    hole_number = 1  # choose hole number
+    hx = hole_positions[hole_number]["x"]
+    hy = hole_positions[hole_number]["y"]
+    hole_position = np.array([hx, hy]) # choose first hole for now
+    print("hole_position: ", hole_position)
+    
+    # Discs:
+    disc_positions = [] # not used for now in real training
+    
+    # Confirm
+    confirm_continue()
+    
+    return ball_start_position, hole_position, disc_positions
     
 
+def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quintic", check_rtt=False):
+    print(f"Impact velocity: {impact_velocity} m/s, swing angle: {swing_angle} deg, ball start pos: {ball_start_position} m")
+    if planner == "quintic":
+        generate_trajectory_csv(impact_velocity, swing_angle, ball_start_position[0], ball_start_position[1])
+    if planner == "linear":
+        sys.exit("Linear planner not implemented for real robot yet.")
+        
+    if check_rtt:
+        out = subprocess.check_output(
+            ["wsl", "ping", "-c", "3", "192.38.66.227"],
+            text=True
+        )
 
-def run_real()
-    #compute_ball2hole_distance(ball_position)
+        rtts = [
+            float(m.group(1))
+            for m in re.finditer(r'time=([\d.]+)\s*ms', out)
+        ]
+
+        print("RTTs (ms):", rtts)
+        print("avg:", sum(rtts)/len(rtts))
+    
+    confirm_continue()
+    
+    here = Path(__file__).resolve().parent
+    traj_exe = here / "communication/traj_streamer"
+    print(traj_exe)
+    win_path = Path(__file__).resolve().parent / "communication" / "traj_streamer"
+    wsl_path = subprocess.check_output(
+        ["wsl", "wslpath", "-a", str(win_path)],
+        text=True
+    ).strip()
+
+    result = subprocess.run(
+        ["wsl", wsl_path],
+        check=True, capture_output=True, text=True
+    )
+    print("Trajectory streamer output:")
+    print(result.stdout)
+    
+    
+    # Measure 
+    key = input("Is ball in hole? (Press y) - Is ball out of bounds (Press o)").lower()
+    if key == "y":
+        print("Ball in hole confirmed")
+        in_hole = True
+        out_of_bounds = False
+    elif key == "o":
+        print("Ball out of bounds confirmed")
+        in_hole = False
+        out_of_bounds = True
+    else:
+        in_hole = False
+        out_of_bounds = False
+    
+    ball_final_position = get_ball_final_position(camera_index=0, chosen_hole=1, use_cam=True)
+    
+    return ball_final_position[0], ball_final_position[1], in_hole, out_of_bounds
     
 
+#ball_start_position, hole_position, disc_positions = real_init_parameters(camera_index=0)
+#run_real(impact_velocity=1.0, swing_angle=0.0, ball_start_position=ball_start_position, planner="quintic", check_rtt=True)
 
-#training(input_func=real_init_parameters, env_step=run_real)
+here    = Path(__file__).resolve().parent
+sim_dir = here / "simulation"
+sys.path.append(str(sim_dir))
+
+project_root        = here.parents[1]
+mujoco_config_path  = project_root / "configs" / "mujoco_config.yaml"
+rl_config_path      = project_root / "configs" / "rl_config.yaml"
+
+with open(mujoco_config_path, "r") as f:
+    mujoco_cfg = yaml.safe_load(f)
+
+with open(rl_config_path, "r") as f:
+    rl_cfg = yaml.safe_load(f)
+    
+tmp_name     = f"golf_world_tmp_{os.getpid()}_{uuid.uuid4().hex}.xml"
+    
+training(rl_cfg=rl_cfg, mujoco_cfg=mujoco_cfg, project_root=project_root, continue_training=False, input_func=real_init_parameters, env_step=run_real, env_type="real", tmp_name=tmp_name)
 
 

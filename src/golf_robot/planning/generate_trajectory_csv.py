@@ -11,8 +11,8 @@ import numpy as np
 import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
-from kinematics import numeric_jacobian
-from trajectory import tcp_path_from_Q, generate_trajectory
+from planning.kinematics import numeric_jacobian
+from planning.trajectory import tcp_path_from_Q, generate_trajectory
 
 # Toggle to True to show TCP position and TCP velocity plots after planning
 SAVE_PLOTS = False
@@ -20,7 +20,7 @@ SHOW_PLOTS = False
 CSV_OUTPUT_PATH = 'log/trajectory_sim.csv'
 
 
-def generate_trajectory_csv(impact_speed, impact_direction, ball_x_offset, ball_y_offset, path):
+def generate_trajectory_csv(impact_speed, impact_direction, ball_x_offset, ball_y_offset, path = CSV_OUTPUT_PATH):
     """
     Generate a trajectory via the planner and save it to CSV.
     

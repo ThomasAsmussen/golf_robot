@@ -402,7 +402,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
             ball_start_obs, hole_pos_obs, disc_positions, x, y, hole_pos = sim_init_parameters(mujoco_cfg, max_num_discs)
 
         if env_type == "real":
-            ball_start_obs, hole_pos_obs, disc_positions = real_init_parameters()
+            ball_start_obs, hole_pos_obs, disc_positions = input_func(camera_index=0)
 
 
         state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 5)
@@ -440,10 +440,16 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
         # -------------------------------------------------
         # One-step environment: simulate and get reward
         # -------------------------------------------------
-        result = env_step(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
+        if env_type == "sim":
+            result = env_step(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
+        if env_type == "real":
+            result = env_step(impact_velocity=speed, swing_angle=angle_deg, ball_start_position=ball_start_obs, planner="quintic", check_rtt=True)
 
         if result is None:
-            result = env_step(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
+            if env_type == "sim":
+                result = env_step(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
+            if env_type == "real":
+                result = env_step(impact_velocity=speed, swing_angle=angle_deg, ball_start_position=ball_start_obs, planner="quintic", check_rtt=True)
 
             if result is None:
                 print(
@@ -460,7 +466,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
 
         reward = compute_reward(
             ball_end_pos=np.array([ball_x, ball_y]),
-            hole_pos=hole_pos,
+            hole_pos=hole_pos_obs,
             in_hole=in_hole,
             trajectory=trajectory,
             distance_scale=distance_scale,

@@ -3,8 +3,8 @@ Kinematics for the UR10 robot (with a mounted golf club).
 """
 
 import numpy as np
-from config import A, D, Z_CLUB, Q_MIN, Q_MAX, X_CLUB_LONG, Y_CLUB_LONG, X_CLUB_SHORT, Y_CLUB_SHORT, CLUB_MID
-from utils import rotm_from_rpy, T_from_xyz_rpy, unwrap_to_seed
+from planning.config import A, D, Z_CLUB, Q_MIN, Q_MAX, X_CLUB_LONG, Y_CLUB_LONG, X_CLUB_SHORT, Y_CLUB_SHORT, CLUB_MID
+from planning.utils import rotm_from_rpy, T_from_xyz_rpy, unwrap_to_seed
 
 
 def fk_ur10(q):

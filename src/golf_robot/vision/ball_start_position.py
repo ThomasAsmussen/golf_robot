@@ -1,13 +1,12 @@
 import cv2
 import os
 import numpy as np
-from ball_position_detection import detect_ball_position
-from vision_utils import apply_white_balance, compute_wb_gains_from_corners, rectify_with_chessboard, load_camera_params, pixel_to_plane, plane_to_pixel
+from vision.ball_position_detection import detect_ball_position
+from vision.vision_utils import apply_white_balance, compute_wb_gains_from_corners, rectify_with_chessboard, load_camera_params, pixel_to_plane, plane_to_pixel
 
 
-def get_ball_start_position(debug=False, use_cam=True):
+def get_ball_start_position(debug=True, debug_raw=False, use_cam=True, camera_index = 1):
     # Read image
-    camera_index = 0
     frame_height = 1080
     frame_width = 1920
     if use_cam:
@@ -33,8 +32,9 @@ def get_ball_start_position(debug=False, use_cam=True):
     else:
         img = cv2.imread("data/ball_start_test2.jpg")
 
-    #cv2.imshow("debug pic", img)
-    #cv2.waitKey(0)
+    if debug_raw:
+        cv2.imshow("debug pic", img)
+        cv2.waitKey(0)
 
     h, w = img.shape[:2]
     # ------ DO ONCE (START) ------- #
@@ -163,5 +163,5 @@ def get_ball_start_position(debug=False, use_cam=True):
     return (dx, dy)
 
 if __name__ == "__main__":
-    dx, dy = get_ball_start_position(debug = True, use_cam=False)
+    dx, dy = get_ball_start_position(debug = True, use_cam=False, camera_index=1)
     print("Ball start position (dx, dy) from origo:", dx, dy)
