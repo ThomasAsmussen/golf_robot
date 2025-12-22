@@ -168,7 +168,7 @@ def rectify_with_chessboard(
     cb_cols=8,
     cb_rows=6,
     square_size_m=0.030,
-    debug=True,
+    debug=False,
     win_size=(11, 11),
     refine_eps=0.001,
     refine_iters=30
