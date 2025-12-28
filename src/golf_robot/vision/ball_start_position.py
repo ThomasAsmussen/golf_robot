@@ -4,12 +4,12 @@ import numpy as np
 from vision.ball_position_detection import detect_ball_position
 from vision.vision_utils import apply_white_balance, compute_wb_gains_from_corners, rectify_with_chessboard, load_camera_params, pixel_to_plane, plane_to_pixel
 
-# from ball_position_detection import detect_ball_position
-# from vision_utils import apply_white_balance, compute_wb_gains_from_corners, rectify_with_chessboard, load_camera_params, pixel_to_plane, plane_to_pixel
+#from ball_position_detection import detect_ball_position
+#from vision_utils import apply_white_balance, compute_wb_gains_from_corners, rectify_with_chessboard, load_camera_params, pixel_to_plane, plane_to_pixel
 
 def capture_single_frame(
     camera_index: int,
-    operating_system: str = "linux",
+    operating_system: str = "windows",
     frame_width: int = 1920,
     frame_height: int = 1080,
     n_warmup: int = 15,
@@ -35,7 +35,8 @@ def capture_single_frame(
 
     # MJPG is nice but can be flaky on some setups; keep it if it behaves,
     # otherwise comment this line out.
-    # cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    if operating_system.lower() == "windows":
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
 
     try:
         # Warmup: let exposure / WB settle & flush old buffers
@@ -211,6 +212,6 @@ def get_ball_start_position(debug=True, debug_raw=False, use_cam=True, camera_in
     return (dx, dy)
 
 if __name__ == "__main__":
-    dx, dy = get_ball_start_position(debug = True, use_cam=True, debug_raw=True, camera_index=4, operating_system="linux")
+    dx, dy = get_ball_start_position(debug = True, use_cam=True, debug_raw=True, camera_index=0, operating_system="windows")
     
     print("Ball start position (dx, dy) from origo:", dx, dy)
