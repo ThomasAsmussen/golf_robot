@@ -1,48 +1,72 @@
 import cv2
 import os
 import time
-import subprocess
 
 def record_from_camera(
     camera_index=0,
     output_folder=os.path.abspath("data"),
-    #output_folder=os.path.abspath(os.path.join("data", "tuning_videos")),
     filename_prefix="hole_test",
     fps=30,
     frame_width=1920,
     frame_height=1080,
     time_length=10.0,
     show_preview=False,
-    convert_to_mp4=True
+    convert_to_mp4=False,
 ):
     os.makedirs(output_folder, exist_ok=True)
 
-    cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+    # No CAP_DSHOW on Linux
+    cap = cv2.VideoCapture(camera_index)
+
+    # Optionally: force V4L2 backend
+    # cap = cv2.VideoCapture(camera_index, cv2.CAP_V4L2)
+
+    if not cap.isOpened():
+        print(f"Could not open camera {camera_index}.")
+        return
+
+    # Try to set camera properties (some drivers may ignore these)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_height)
     cap.set(cv2.CAP_PROP_FPS, fps)
-    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
 
-    if not cap.isOpened():
-        print("Could not open camera.")
-        return
+    print("Requested FPS:", fps)
+    print("Camera reports FPS:", cap.get(cv2.CAP_PROP_FPS))
+    # Often not needed, and can cause issues on some cams, so you can comment this out
+    # cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
 
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     avi_path = os.path.join(output_folder, f"{filename_prefix}_{timestamp}.avi")
-    mp4_path = avi_path.replace(".avi", ".mp4")
 
-    fourcc = cv2.VideoWriter_fourcc(*"MJPG")  # very light encoder
+    # On Ubuntu, MJPG sometimes fails. Try XVID or mp4v.
+    # fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+    fourcc = cv2.VideoWriter_fourcc(*"XVID")  # or "mp4v" with .mp4 extension
+
     writer = cv2.VideoWriter(avi_path, fourcc, fps, (frame_width, frame_height))
+
+    if not writer.isOpened():
+        print("Could not open VideoWriter. Check codec/fourcc and file path.")
+        cap.release()
+        return
 
     print(f"Recording raw AVI to {avi_path}")
 
+
+
     t0 = time.time()
     frame_count = 0
-    
+
     while time.time() - t0 < time_length:
         ret, frame = cap.read()
         if not ret:
+            print("Failed to grab frame from camera.")
             break
+
+        # Make sure frame size matches what VideoWriter expects
+        h, w = frame.shape[:2]
+        if (w, h) != (frame_width, frame_height):
+            # Resize if needed
+            frame = cv2.resize(frame, (frame_width, frame_height))
 
         writer.write(frame)
         frame_count += 1
@@ -57,24 +81,11 @@ def record_from_camera(
     cv2.destroyAllWindows()
 
     print(f"Recorded {frame_count} raw frames.")
-
-    # Convert to MP4 afterwards
-    if convert_to_mp4:
-        pass #No need
-        #print("Converting to MP4…")
-        #ffmpeg_cmd = [
-        #    "ffmpeg", "-y",
-        #    "-i", avi_path,
-        #    "-vcodec", "libx264",
-        #    "-preset", "slow",
-        #    "-crf", "18",
-        #    mp4_path
-        #]
-        #subprocess.run(ffmpeg_cmd)
-        #print(f"MP4 saved: {mp4_path}")
-
     print("Done.")
-
+    
+    actual_fps = frame_count / (time.time() - t0)
+    print(f"Recorded {frame_count} frames in {time.time() - t0:.2f} s "
+        f"(~{actual_fps:.2f} fps)")
 
 if __name__ == "__main__":
-    record_from_camera(camera_index=1)
+    record_from_camera(camera_index=2)

@@ -7,30 +7,80 @@ from vision.hole_position_detection import find_holes, save_holes_config
 from vision.ball_position_detection import detect_ball_position
 from vision.vision_utils import apply_white_balance, compute_wb_gains_from_corners, rectify_with_chessboard, load_camera_params, pixel_to_plane, plane_to_pixel
 
-def get_ball_final_position(camera_index=0, chosen_hole=None, use_cam=True, debug=True):
+# from hole_position_detection import find_holes, save_holes_config
+# from ball_position_detection import detect_ball_position
+# from vision_utils import apply_white_balance, compute_wb_gains_from_corners, rectify_with_chessboard, load_camera_params, pixel_to_plane, plane_to_pixel
+
+import cv2
+
+def capture_single_frame(
+    camera_index: int,
+    operating_system: str = "linux",
+    frame_width: int = 1920,
+    frame_height: int = 1080,
+    n_warmup: int = 15,
+    n_attempts: int = 5,
+):
+    """
+    Open a camera, warm it up, grab ONE clean frame, then close it again.
+    Includes basic sanity checks on the returned frame size.
+    """
+    # Choose backend
+    if operating_system.lower() == "windows":
+        cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+    else:
+        # Explicit V4L2 backend on Linux
+        cap = cv2.VideoCapture(camera_index, cv2.CAP_V4L2)
+
+    if not cap.isOpened():
+        raise RuntimeError(f"Could not open camera index {camera_index}")
+
+    # Configure resolution
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_height)
+
+    # MJPG is nice but can be flaky on some setups; keep it if it behaves,
+    # otherwise comment this line out.
+    # cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+
+    try:
+        # Warmup: let exposure / WB settle & flush old buffers
+        for _ in range(n_warmup):
+            cap.grab()
+
+        # Try a few times to get a correctly sized frame
+        for _ in range(n_attempts):
+            ret, img = cap.read()
+            if not ret or img is None:
+                continue
+
+            h, w = img.shape[:2]
+            if h == frame_height and w == frame_width:
+                return img
+
+            # If size is wrong, flush a bit and retry
+            for _ in range(5):
+                cap.grab()
+
+        raise RuntimeError(
+            f"Failed to capture a valid {frame_width}x{frame_height} frame "
+            f"from camera {camera_index}"
+        )
+    finally:
+        cap.release()
+
+
+def get_ball_final_position(camera_index=0, chosen_hole=None, use_cam=True, debug=True, operating_system="windows"):
     # Read image
     frame_height = 1080
     frame_width = 1920
     if use_cam:
-        # --- Capture one image from camera instead of reading from disk ---
-        cap = cv2.VideoCapture(camera_index)  # try 0, or 1 if you have multiple cameras
-        cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_height)
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-
-        if not cap.isOpened():
-            raise RuntimeError("Could not open camera")
-
-        # Warm up a few frames (helps exposure/white balance settle)
-        for _ in range(10):
-            cap.read()
-
-        ret, img = cap.read()
-        cap.release()
-
-        if not ret or img is None:
-            raise RuntimeError("Failed to capture image from camera")
+        img = capture_single_frame(
+            camera_index=camera_index,
+            operating_system=operating_system,
+            frame_width=frame_width,
+            frame_height=frame_height,
+        )
     else:
         img = cv2.imread("data/hole_test_50x30.jpg")
     h, w = img.shape[:2]
@@ -130,6 +180,8 @@ def get_ball_final_position(camera_index=0, chosen_hole=None, use_cam=True, debu
         print("No hole chosen, aborting")
         sys.exit(0)
     else:
+        print(f"Chosen hole: {chosen_hole}")
+        print(f"Hole positions: {hole_positions}")
         hole_position = hole_positions[chosen_hole-1][0]
     print(hole_position)
     # Convert to real world
@@ -213,5 +265,5 @@ def get_ball_final_position(camera_index=0, chosen_hole=None, use_cam=True, debu
     return ball_final_position
  
 if __name__ == "__main__":
-    ball_final_position = get_ball_final_position(camera_index=0, chosen_hole=1, use_cam=False)
+    ball_final_position = get_ball_final_position(camera_index=2, chosen_hole=1, use_cam=True, debug=True, operating_system="linux")
     print("Ball final position (bx, by) from origo:", ball_final_position)

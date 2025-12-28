@@ -498,7 +498,7 @@ def generate_trajectory(impact_speed, impact_angle, ball_x_offset, ball_y_offset
     
     # q0_hit  = np.array([-2.18480298, -2.68658532, -1.75772109,  1.30184109,  0.61400683,  0.50125856])  # reference impact joint config (+X direction)
     q0_hit  = np.array([-2.11202641, -2.45037247, -1.67584054,  0.95906874,  0.53322783,  0.36131151])
-    q0_hit  = move_point_xyz(ball_x_offset, ball_y_offset, 0, q0_hit, q0_hit)[0]  # unwrap to near reference
+    q0_hit  = move_point_xyz(ball_x_offset, ball_y_offset, 0.01, q0_hit, q0_hit)[0]  # unwrap to near reference
     # possible_start_points = []
     # possible_end_points   = []
     # for x in range(5):

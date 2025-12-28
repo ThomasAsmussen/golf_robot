@@ -283,15 +283,6 @@ def sim_init_parameters(mujoco_cfg, max_num_discs):
     return ball_start_obs, hole_pos_obs, disc_positions, x, y, hole_pos
 
 
-def real_init_parameters():
-    # For real robot, implement context sampling as needed
-    raise NotImplementedError("real_init_parameters() is not implemented.")
-
-
-def run_real(angle_deg, speed, hole_xy, env_cfg, disc_positions):
-    # For real robot, implement environment step as needed
-    raise NotImplementedError("run_real() is not implemented.")
-
 # ---------------------------------------------------------
 # Training loop (Contextual Bandit)
 # ---------------------------------------------------------
@@ -350,6 +341,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
             model_path=project_root / "models" / "rl" / "ddpg" / f"ddpg_critic_{model_name}",
             rl_cfg=rl_cfg,
         )
+        print("Continuing training from model:", model_name)
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         actor = Actor(state_dim, action_dim, hidden_dim).to(device)
@@ -402,7 +394,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
             ball_start_obs, hole_pos_obs, disc_positions, x, y, hole_pos = sim_init_parameters(mujoco_cfg, max_num_discs)
 
         if env_type == "real":
-            ball_start_obs, hole_pos_obs, disc_positions = input_func(camera_index=0)
+            ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(camera_index=4)
 
 
         state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 5)
@@ -443,13 +435,13 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
         if env_type == "sim":
             result = env_step(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
         if env_type == "real":
-            result = env_step(impact_velocity=speed, swing_angle=angle_deg, ball_start_position=ball_start_obs, planner="quintic", check_rtt=True)
+            result = env_step(impact_velocity=speed, swing_angle=angle_deg, ball_start_position=ball_start_obs, planner="quintic", check_rtt=True, chosen_hole=chosen_hole)
 
         if result is None:
             if env_type == "sim":
                 result = env_step(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
             if env_type == "real":
-                result = env_step(impact_velocity=speed, swing_angle=angle_deg, ball_start_position=ball_start_obs, planner="quintic", check_rtt=True)
+                result = env_step(impact_velocity=speed, swing_angle=angle_deg, ball_start_position=ball_start_obs, planner="quintic", check_rtt=True, chosen_hole=chosen_hole)
 
             if result is None:
                 print(
@@ -517,9 +509,18 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
             critic_loss_value = critic_loss.item()
             actor_loss_value  = actor_loss.item()
 
-            if tmp_name is not None:
-                torch.save(actor.state_dict(),  model_dir / f"ddpg_actor_{tmp_name}.pth")
-                torch.save(critic.state_dict(), model_dir / f"ddpg_critic_{tmp_name}.pth")
+            if env_type == "real":
+                if tmp_name is not None: 
+                    torch.save(actor.state_dict(),  model_dir / f"ddpg_actor_{tmp_name}.pth")
+                    torch.save(critic.state_dict(), model_dir / f"ddpg_critic_{tmp_name}.pth")
+                else: 
+                    print("No tmp_name provided; models not saved during real robot training.")
+        if env_type == "real":
+            key = input("Continue training? ").lower()
+            if key != "y":
+                print("Training aborted by user.")
+                sys.exit(0)
+
 
         # -------------------------------------------------
         # Logging / prints
