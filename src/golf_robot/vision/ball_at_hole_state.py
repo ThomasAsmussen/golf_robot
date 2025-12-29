@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import time
 import csv
 import json
-from vision.vision_utils import (
+from vision_utils import (
     KalmanFilterCV2D,
     load_camera_params,
     rectify_with_chessboard,
@@ -406,13 +406,27 @@ def process_video(
                         crossed_once = True
                         
                         if crossed_once:
-                            #     plt.figure()
-                            #     plt.plot(xs, ys, marker="o")
-                            #     plt.gca().set_aspect("equal", "box")
-                            #     plt.xlabel("X [m]")
-                            #     plt.ylabel("Y [m]")
-                            #     plt.title("Ball trajectory on plane (Kalman filtered)")
-                            #     plt.show()
+                            #load_hole_center_px
+                            fig = plt.figure()
+                            plt.plot(xs, ys, marker="o")
+                            plt.scatter(
+                                hole_xo,
+                                hole_yo,
+                                s=150,
+                                c="black",
+                                marker="o",
+                                edgecolors="white",
+                                linewidths=2,
+                                label="Holes",
+                                zorder=5
+                            )
+                            plt.gca().set_aspect("equal", "box")
+                            plt.xlabel("X [m]")
+                            plt.ylabel("Y [m]")
+                            plt.title("Ball trajectory on plane (Kalman filtered)")
+                            plt.draw()
+                            plt.waitforbuttonpress(0)
+                            plt.close(fig)
                             return dist, spd
                         
                     else:
