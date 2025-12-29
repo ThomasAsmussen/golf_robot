@@ -12,6 +12,7 @@ wandb/
 log/
 tuning_results/
 models/rl/
+data/
 # Mac OS-specific storage files
 .DS_Store
 

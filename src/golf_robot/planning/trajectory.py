@@ -255,7 +255,7 @@ def plan_piecewise_quintic(waypoints, impact_idx, lin_velocity):
         else:
             dqf = np.zeros(6)
 
-        print(f"ddq0: {ddq0}, ddqf: {ddqf}")
+        # print(f"ddq0: {ddq0}, ddqf: {ddqf}")
         # Given start and end conditions, plan the segment with time-scaling
         ts, Q, DQ, DDQ, feasible = auto_time_and_discretize(q0, dq0, ddq0, qf, dqf, ddqf, T_max=5.0)
 
@@ -380,8 +380,8 @@ def impact_joint_config_from_direction(q_hit_ref, impact_dir_xy, ball_center=[0.
 
     Q, errs = pick_ik_solution(T_des, q_hit_ref)
 
-    print(Q)
-    print(q_hit_ref)
+    # print(Q)
+    # print(q_hit_ref)
     if errs == 1 or Q is None:
         print("[WARNING] No IK solution found for desired impact pose.")
         return None
@@ -536,8 +536,8 @@ def generate_trajectory(impact_speed, impact_angle, ball_x_offset, ball_y_offset
     q_hit = impact_joint_config_from_direction(q0_hit, impact_direction, ball_center=ball_center)
     q_hit = move_point_xyz(0.0, 0.0, 0.0, q_hit, q_hit)[0]  # unwrap to near reference
     # waypoints = [q_start, q_hit, q_end]
-    print("Q_HIT:")
-    print(q_hit)
+    # print("Q_HIT:")
+    # print(q_hit)
     v_dir_base   = normalize(impact_direction)  # unit vector of desired direction
     lin_velocity = v_dir_base * impact_speed    # desired TCP linear velocity at impact
     impact_idx   = 1                            # index of impact waypoint (second in a 3-waypoint plan)
@@ -647,9 +647,9 @@ def generate_trajectory(impact_speed, impact_angle, ball_x_offset, ball_y_offset
     results['achieved_impact_speed'] = float(np.linalg.norm(tcp_vel_impact))
 
     # Print joint limits used
-    print("[INFO] Joint limits used for planning:")
-    print(f"  - Max joint velocity (rad/s): {np.round(DQ_MAX, 3).tolist()}")
-    print(f"  - Max joint acceleration (rad/s^2): {np.round(DDQ_MAX, 3).tolist()}\n")
+    # print("[INFO] Joint limits used for planning:")
+    # print(f"  - Max joint velocity (rad/s): {np.round(DQ_MAX, 3).tolist()}")
+    # print(f"  - Max joint acceleration (rad/s^2): {np.round(DDQ_MAX, 3).tolist()}\n")
 
     # Report impact verification
     print("[IMPACT VERIFICATION]")

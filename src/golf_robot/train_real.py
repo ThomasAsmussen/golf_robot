@@ -43,7 +43,7 @@ def real_init_parameters(camera_index):
     
     # Holes
     chosen_hole = random.choice([1,2,3])
-    # chosen_hole = 3  # for testing purposes
+    # chosen_hole = 2  # for testing purposes
     here = Path(__file__).resolve().parent
     config_dir = here.parents[1] / "configs"
     with open(config_dir / "hole_config.yaml", "r") as f:
@@ -52,7 +52,7 @@ def real_init_parameters(camera_index):
     hx = hole_positions[chosen_hole]["x"]
     hy = hole_positions[chosen_hole]["y"]
     hole_position = np.array([hx, hy]) # choose first hole for now
-    print("hole_position: ", hole_position)
+    print(f"Chosen hole {chosen_hole} at position:", hole_position)
     
     # Discs:
     disc_positions = [] # not used for now in real training
@@ -170,6 +170,16 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
         print("Ball in hole confirmed")
         in_hole = True
         out_of_bounds = False
+        dist_at_hole, speed_at_hole = None, None
+        here = Path(__file__).resolve().parent
+        config_dir = here.parents[1] / "configs"
+        with open(config_dir / "hole_config.yaml", "r") as f:
+            hole_positions = yaml.safe_load(f)
+        # hole_number = 1  # choose hole number
+        hx = hole_positions[chosen_hole]["x"]
+        hy = hole_positions[chosen_hole]["y"]
+        ball_final_position = np.array([hx, hy]) # choose first hole for now
+
     elif key == "o":
         print("Ball out of bounds confirmed")
         in_hole = False
@@ -181,7 +191,8 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
     if not out_of_bounds and not in_hole:
         key = input(f"Is ball on green? (Press y)").lower()
         if key == "y":
-           ball_final_position = get_ball_final_position(camera_index=CAMERA_INDEX_END, chosen_hole=chosen_hole, use_cam=True, debug=True, operating_system=OPERATING_SYSTEM)
+            ball_final_position = get_ball_final_position(camera_index=CAMERA_INDEX_END, chosen_hole=chosen_hole, use_cam=True, debug=True, operating_system=OPERATING_SYSTEM)
+            dist_at_hole, speed_at_hole = None, None
         else: 
             data_dir = "data"
             prefix ="trajectory_recording"

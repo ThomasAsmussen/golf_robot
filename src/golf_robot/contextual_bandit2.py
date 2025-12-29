@@ -10,6 +10,7 @@ import wandb
 import uuid
 import json
 import time
+import re
 
 # ---------------------------------------------------------
 # Global noise parameters (environment / measurement noise)
@@ -125,7 +126,7 @@ class EpisodeLoggerJson:
         self.f = open(self.path, "a", buffering=1)
 
     def log(self, record: dict):
-        print(f"Logging episode to {self.path}: episode {record.get('episode', 'N/A')}")
+        # print(f"Logging episode to {self.path}: episode {record.get('episode', 'N/A')}")
         self.f.write(json.dumps(record, default=_json_default) + "\n")
         self.f.flush()
         os.fsync(self.f.fileno())
@@ -417,7 +418,23 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
     # -------------------------
     # Initialize models
     # -------------------------
-    if continue_training:
+    if continue_training and env_type == "real":
+
+        model_dir = project_root / "models" / "rl" / "ddpg"
+
+        actor_path, critic_path = find_latest_ddpg_checkpoint(
+            model_dir,
+            prefix=None,   # or None to load absolutely newest
+        )
+
+        print(f"Loading latest checkpoints:")
+        print(f"  Actor : {actor_path.name}")
+        print(f"  Critic: {critic_path.name}")
+
+        actor, device = load_actor(actor_path, rl_cfg)
+        critic, _     = load_critic(critic_path, rl_cfg)
+
+    elif continue_training:
         actor, device = load_actor(
             model_path=project_root / "models" / "rl" / "ddpg" / f"ddpg_actor_{model_name}",
             rl_cfg=rl_cfg,
@@ -465,7 +482,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
     episode_log_path = None
 
     if env_type == "real":
-        episode_log_path = project_root / "log" / "real_episodes" / "logging_test.jsonl"
+        episode_log_path = project_root / "log" / "real_episodes" / "episode_logger.jsonl"
         episode_logger = EpisodeLoggerJson(episode_log_path)
 
         loaded_n = load_replay_from_jsonl(
@@ -595,8 +612,10 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
                     "reward": reward,
                     "chosen_hole": chosen_hole,
                     "ball_end": [ball_x, ball_y],
+                    "dist_at_hole": meta["dist_at_hole"],
+                    "speed_at_hole": meta["speed_at_hole"],
                 }
-                print(f"Logging episode data: {logging_dict}")
+                # print(f"Logging episode data: {logging_dict}")
                 episode_logger.log(logging_dict)
 
         # Store (s,a,r) in buffer (contextual bandit)
@@ -781,6 +800,35 @@ def load_critic(model_path, rl_cfg):
     critic.eval()
     return critic, device
 
+
+def find_latest_ddpg_checkpoint(model_dir: Path, prefix: str | None = None):
+    """
+    Find newest (actor, critic) checkpoint pair.
+    If prefix is given, only match files containing that prefix.
+    """
+    actor_files = list(model_dir.glob("ddpg_actor_*.pth"))
+
+    if prefix is not None:
+        actor_files = [
+            f for f in actor_files
+            if prefix in f.stem
+        ]
+
+    if not actor_files:
+        raise FileNotFoundError("No matching actor checkpoints found.")
+
+    # newest by modification time
+    actor_file = max(actor_files, key=lambda f: f.stat().st_mtime)
+
+    # infer critic path
+    critic_file = actor_file.with_name(
+        actor_file.name.replace("ddpg_actor_", "ddpg_critic_")
+    )
+
+    if not critic_file.exists():
+        raise FileNotFoundError(f"Matching critic not found for {actor_file.name}")
+
+    return actor_file, critic_file
 
 # ---------------------------------------------------------
 # Helper: map normalized actions -> (speed, angle_deg)
