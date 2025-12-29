@@ -239,7 +239,7 @@ def real_init_parameters(camera_index):
     
     # Holes
     chosen_hole = random.choice([1,2,3])
-    # chosen_hole = 2  # for testing purposes
+    # chosen_hole = 1  # for testing purposes
     here = Path(__file__).resolve().parent
     config_dir = here.parents[1] / "configs"
     with open(config_dir / "hole_config.yaml", "r") as f:
@@ -368,6 +368,7 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
     dist_at_hole = None
     speed_at_hole = None
     ball_final_position = np.array([0.0, 0.0])  # optional: safe default
+    continue_training = False
     
     state = prompter.ask_hole_oob(chosen_hole)
 
@@ -423,11 +424,8 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
 
 
     continue_training = prompter.ask_yes_no("Continue training?")
-    if continue_training:
-        meta["continue_training"] = True
-    else:
+    if not continue_training:
         print("Training aborted by user")
-        meta["continue_training"] = False
     
     meta = {
         "dist_at_hole": dist_at_hole,
