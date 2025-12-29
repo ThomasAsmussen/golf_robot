@@ -25,15 +25,114 @@ OPERATING_SYSTEM = "linux"  # "windows" or "linux"
 CAMERA_INDEX_START = 2  # starting camera index for real robot
 CAMERA_INDEX_END   = 4  # ending camera index for real robot
 
-def confirm_continue():
-    # Confirm
-    key = input("Press y to continue: ").lower()
-    if key == "y":
-        print("Confirmed")
-    else:
-        print("Aborted by user")
-        sys.exit(0)
+import threading
+import tkinter as tk
 
+class HumanPrompter:
+    """
+    Tiny Tkinter UI for human confirmations.
+    - Call methods like confirm_continue(), ask_hole_oob(), ask_yes_no()
+    - Methods BLOCK until a button is pressed, but do not require terminal focus.
+    """
+
+    def __init__(self, title="Golf Human Input"):
+        self._root = tk.Tk()
+        self._root.title(title)
+        self._root.attributes("-topmost", True)  # keep on top (optional)
+
+        self._frame = tk.Frame(self._root, padx=12, pady=12)
+        self._frame.pack(fill="both", expand=True)
+
+        self._label = tk.Label(self._frame, text="", justify="left", wraplength=420)
+        self._label.pack(fill="x", pady=(0, 10))
+
+        self._btn_row = tk.Frame(self._frame)
+        self._btn_row.pack(fill="x")
+
+        # state for current question
+        self._event = threading.Event()
+        self._result = None
+
+        # handle window close
+        self._root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # start with an idle UI
+        self._set_buttons([])
+
+        # make sure it appears
+        self._root.update()
+
+    def _on_close(self):
+        # Treat closing the window as "abort"
+        self._result = None
+        self._event.set()
+        self._root.destroy()
+
+    def _set_message(self, text: str):
+        self._label.config(text=text)
+
+    def _set_buttons(self, buttons):
+        # buttons: list of (text, value)
+        for w in self._btn_row.winfo_children():
+            w.destroy()
+
+        for (txt, val) in buttons:
+            b = tk.Button(self._btn_row, text=txt, command=lambda v=val: self._choose(v))
+            b.pack(side="left", padx=6)
+
+    def _choose(self, value):
+        self._result = value
+        self._event.set()
+
+    def _wait(self):
+        # keep UI responsive while blocking caller
+        self._event.clear()
+        while not self._event.is_set():
+            try:
+                self._root.update()
+            except tk.TclError:
+                # window destroyed
+                break
+
+        return self._result
+
+    # ---------- Public API ----------
+    def confirm_or_exit(self, text="Press Continue to proceed."):
+        ok = self.confirm_continue(text)
+        if not ok:
+            print("Aborted by user")
+            self.close()
+            sys.exit(0)
+        print("Confirmed")
+
+    def confirm_continue(self, text="Continue?"):
+        self._set_message(text)
+        self._set_buttons([("Continue", True), ("Abort", False)])
+        res = self._wait()
+        return bool(res)
+
+    def ask_hole_oob(self, chosen_hole: int):
+        self._set_message(f"Hole {chosen_hole}: what happened?")
+        self._set_buttons([
+            ("✅ In hole", "in_hole"),
+            ("🚫 Out of bounds", "oob"),
+            ("➡️ Neither", "neither"),
+        ])
+        return self._wait()
+
+    def ask_yes_no(self, question: str, default=False):
+        self._set_message(question)
+        self._set_buttons([("Yes", True), ("No", False)])
+        res = self._wait()
+        if res is None:
+            return default
+        return bool(res)
+
+    def close(self):
+        try:
+            self._root.destroy()
+        except tk.TclError:
+            pass
 
 def real_init_parameters(camera_index):
     # Ball
@@ -58,7 +157,7 @@ def real_init_parameters(camera_index):
     disc_positions = [] # not used for now in real training
     
     # Confirm
-    confirm_continue()
+    prompter.confirm_or_exit("Trajectory ready. Continue to execute?")
     
     return ball_start_position, hole_position, disc_positions, chosen_hole
     
@@ -123,7 +222,7 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
             print("RTTs (ms):", rtts)
             print("avg:", sum(rtts)/len(rtts))
     
-    confirm_continue()
+    prompter.confirm_or_exit("Ready to execute trajectory. Continue?")
     
     here = Path(__file__).resolve().parent
     traj_exe = here / "communication/traj_streamer"
@@ -165,22 +264,28 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
 
     
     # Measure 
-    key = input(f"Is ball in hole {chosen_hole}? (Press y) - Is ball out of bounds (Press o) - Otherwise press any other").lower()
-    if key == "y":
+    # Deafaults
+    dist_at_hole = None
+    speed_at_hole = None
+    ball_final_position = np.array([0.0, 0.0])  # optional: safe default
+    
+    state = prompter.ask_hole_oob(chosen_hole)
+
+    if state == "in_hole":
         print("Ball in hole confirmed")
         in_hole = True
         out_of_bounds = False
-    elif key == "o":
+    elif state == "oob":
         print("Ball out of bounds confirmed")
         in_hole = False
         out_of_bounds = True
     else:
         in_hole = False
         out_of_bounds = False
-    
+        
     if not out_of_bounds and not in_hole:
-        key = input(f"Is ball on green? (Press y)").lower()
-        if key == "y":
+        on_green = prompter.ask_yes_no("Is ball on green?")
+        if on_green:
            ball_final_position = get_ball_final_position(camera_index=CAMERA_INDEX_END, chosen_hole=chosen_hole, use_cam=True, debug=True, operating_system=OPERATING_SYSTEM)
         else: 
             data_dir = "data"
@@ -202,11 +307,10 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
         speed_at_hole = None
 
     
-    key = input("Use shot for training? ").lower()
-    used_for_training = (key == "y")
+    used_for_training = prompter.ask_yes_no("Use shot for training?")
     if not used_for_training:
         print("Shot discarded by user")
-    
+        
     meta = {
         "dist_at_hole": dist_at_hole,
         "speed_at_hole": speed_at_hole,
@@ -219,22 +323,47 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
 #ball_start_position, hole_position, disc_positions = real_init_parameters(camera_index=0)
 #run_real(impact_velocity=1.0, swing_angle=0.0, ball_start_position=ball_start_position, planner="quintic", check_rtt=True)
 
-here    = Path(__file__).resolve().parent
-sim_dir = here / "simulation"
-sys.path.append(str(sim_dir))
+def main():
+    global prompter
 
-project_root        = here.parents[1]
-mujoco_config_path  = project_root / "configs" / "mujoco_config.yaml"
-rl_config_path      = project_root / "configs" / "rl_config.yaml"
+    # Create UI once (Tk must live in main thread)
+    prompter = HumanPrompter(title="Golf Human Input")
 
-with open(mujoco_config_path, "r") as f:
-    mujoco_cfg = yaml.safe_load(f)
+    here = Path(__file__).resolve().parent
+    sim_dir = here / "simulation"
+    sys.path.append(str(sim_dir))
 
-with open(rl_config_path, "r") as f:
-    rl_cfg = yaml.safe_load(f)
-    
-tmp_name     = f"golf_world_tmp_{os.getpid()}_{uuid.uuid4().hex}"
-    
-# training(rl_cfg=rl_cfg, mujoco_cfg=mujoco_cfg, project_root=project_root, continue_training=rl_cfg["training"]["continue_training"], input_func=real_init_parameters, env_step=run_real, env_type="real", tmp_name=tmp_name)
+    project_root       = here.parents[1]
+    mujoco_config_path = project_root / "configs" / "mujoco_config.yaml"
+    rl_config_path     = project_root / "configs" / "rl_config.yaml"
 
-training(rl_cfg=rl_cfg, mujoco_cfg=mujoco_cfg, project_root=project_root, continue_training=rl_cfg["training"]["continue_training"], input_func=real_init_parameters, env_step=run_real, env_type="real", tmp_name=tmp_name, camera_index_start=CAMERA_INDEX_START)
+    with open(mujoco_config_path, "r") as f:
+        mujoco_cfg = yaml.safe_load(f)
+
+    with open(rl_config_path, "r") as f:
+        rl_cfg = yaml.safe_load(f)
+
+    tmp_name = f"golf_world_tmp_{os.getpid()}_{uuid.uuid4().hex}"
+
+    try:
+        training(
+            rl_cfg=rl_cfg,
+            mujoco_cfg=mujoco_cfg,
+            project_root=project_root,
+            continue_training=rl_cfg["training"]["continue_training"],
+            input_func=real_init_parameters,
+            env_step=run_real,
+            env_type="real",
+            tmp_name=tmp_name,
+            camera_index_start=CAMERA_INDEX_START,
+        )
+    finally:
+        # Always close the Tk window (even on exceptions / sys.exit)
+        try:
+            prompter.close()
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    main()
