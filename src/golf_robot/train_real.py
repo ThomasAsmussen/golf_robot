@@ -47,7 +47,16 @@ class HumanPrompter:
         self._label.pack(fill="x", pady=(0, 10))
 
         self._btn_row = tk.Frame(self._frame)
-        self._btn_row.pack(fill="x")
+        self._btn_row.pack(fill="both", expand=True)   # allow the row to expand vertically too
+        self._btn_row.grid_columnconfigure(0, weight=1)  # center container
+
+        self._status = tk.Label(self._frame, text="", justify="center")
+        self._status.pack(fill="x", pady=(8, 0))
+
+        self._spinner_job = None
+        self._spinner_base = ""
+        self._spinner_i = 0
+
 
         # state for current question
         self._event = threading.Event()
@@ -76,9 +85,31 @@ class HumanPrompter:
         for w in self._btn_row.winfo_children():
             w.destroy()
 
-        for (txt, val) in buttons:
-            b = tk.Button(self._btn_row, text=txt, command=lambda v=val: self._choose(v))
-            b.pack(side="left", padx=6)
+        # A centered inner frame that holds the buttons
+        inner = tk.Frame(self._btn_row)
+        inner.grid(row=0, column=0, sticky="nsew")  # centered by parent column weight
+
+        # Make buttons evenly sized
+        btn_font = ("TkDefaultFont", 12)   # bigger text
+        btn_padx = 12
+        btn_pady = 10
+        min_width_chars = 14              # width in "characters" for tk.Button
+        min_height = 2                    # height in text rows
+
+        # Configure columns so buttons distribute nicely
+        for i in range(len(buttons)):
+            inner.grid_columnconfigure(i, weight=1)
+
+        for i, (txt, val) in enumerate(buttons):
+            b = tk.Button(
+                inner,
+                text=txt,
+                font=btn_font,
+                width=min_width_chars,
+                height=min_height,
+                command=lambda v=val: self._choose(v),
+            )
+            b.grid(row=0, column=i, padx=btn_padx, pady=btn_pady, sticky="ew")
 
     def _choose(self, value):
         self._result = value
@@ -96,7 +127,73 @@ class HumanPrompter:
 
         return self._result
 
+    def _tick_spinner(self):
+        dots = "." * (self._spinner_i % 4)  # "", ".", "..", "..."
+        self._status.config(text=f"{self._spinner_base}{dots}")
+        self._spinner_i += 1
+        self._spinner_job = self._root.after(300, self._tick_spinner)
+
+        
     # ---------- Public API ----------
+    def busy_start(self, text="Working..."):
+        """Show an animated 'spinner' text and disable buttons."""
+        self._spinner_base = text
+        self._spinner_i = 0
+
+        # disable any existing buttons
+        for child in self._btn_row.winfo_children():
+            for b in child.winfo_children():
+                if isinstance(b, tk.Button):
+                    b.config(state="disabled")
+
+        # start animation
+        self._status.config(text=text)
+        self._tick_spinner()
+        
+    def busy_stop(self):
+        """Stop spinner and clear status."""
+        if self._spinner_job is not None:
+            try:
+                self._root.after_cancel(self._spinner_job)
+            except tk.TclError:
+                pass
+            self._spinner_job = None
+        self._status.config(text="")
+
+    def run_with_spinner(self, text, fn, *args, **kwargs):
+        """
+        Run a blocking function in a worker thread while showing spinner.
+        Returns fn's return value, or re-raises its exception.
+        """
+        result = {"value": None, "err": None}
+        done = threading.Event()
+
+        def worker():
+            try:
+                result["value"] = fn(*args, **kwargs)
+            except Exception as e:
+                result["err"] = e
+            finally:
+                done.set()
+
+        self.busy_start(text)
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+
+        while not done.is_set():
+            try:
+                self._root.update()
+            except tk.TclError:
+                break
+            time.sleep(0.01)
+
+        self.busy_stop()
+
+        if result["err"] is not None:
+            raise result["err"]
+        return result["value"]
+
+
     def confirm_or_exit(self, text="Press Continue to proceed."):
         ok = self.confirm_continue(text)
         if not ok:
@@ -114,9 +211,9 @@ class HumanPrompter:
     def ask_hole_oob(self, chosen_hole: int):
         self._set_message(f"Hole {chosen_hole}: what happened?")
         self._set_buttons([
-            ("✅ In hole", "in_hole"),
-            ("🚫 Out of bounds", "oob"),
-            ("➡️ Neither", "neither"),
+            ("✓ In hole", "in_hole"),
+            ("✘ Out of bounds", "oob"),
+            ("/ Neither", "neither"),
         ])
         return self._wait()
 
@@ -222,46 +319,45 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
             print("RTTs (ms):", rtts)
             print("avg:", sum(rtts)/len(rtts))
     
-    prompter.confirm_or_exit("Ready to execute trajectory. Continue?")
     
-    here = Path(__file__).resolve().parent
-    traj_exe = here / "communication/traj_streamer"
-    print(traj_exe)
-    win_path = Path(__file__).resolve().parent / "communication" / "traj_streamer"
+    prompter.confirm_or_exit("Ready to execute trajectory. Continue?")
 
-    if OPERATING_SYSTEM == "windows":
+    here = Path(__file__).resolve().parent
+    traj_exe = here / "communication" / "traj_streamer"
+
+    if OPERATING_SYSTEM == "linux":
+        traj_cmd = [str(traj_exe)]
+
+    elif OPERATING_SYSTEM == "windows":
+        win_path = here / "communication" / "traj_streamer"
         wsl_path = subprocess.check_output(
             ["wsl", "wslpath", "-a", str(win_path)],
             text=True
         ).strip()
+        traj_cmd = ["wsl", wsl_path]
 
-        result = subprocess.run(
-            ["wsl", wsl_path],
-            check=True, capture_output=True, text=True
+    else:
+        raise RuntimeError(f"Unsupported OS: {OPERATING_SYSTEM}")
+    
+    def run_traj():
+        return subprocess.run(
+            traj_cmd,
+            check=True,
+            capture_output=True,
+            text=True,
         )
-    elif OPERATING_SYSTEM == "linux":
-        try:
-            result = subprocess.run(
-                [str(traj_exe)],
-                check=True, capture_output=True, text=True
-            )
-        except subprocess.CalledProcessError as e:
-            print("traj_streamer failed with return code:", e.returncode)
-            print("---- stdout ----")
-            print(e.stdout)
-            print("---- stderr ----")
-            print(e.stderr)
-            raise
+
+    result = prompter.run_with_spinner("Shooting", run_traj)
+
     print("Trajectory streamer output:")
     print(result.stdout)
-    
+
     
     # Stop vision recording
     print("Stopping camera recording...")
     stop_event.set()
     recording_thread.join()
     print("Recording thread joined. Done.")
-
     
     # Measure 
     # Deafaults
