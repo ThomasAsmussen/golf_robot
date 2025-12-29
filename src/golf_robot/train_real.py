@@ -416,19 +416,21 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
     used_for_training = prompter.ask_yes_no("Use shot for training?")
     if not used_for_training:
         print("Shot discarded by user")
-        
+
+
+    continue_training = prompter.ask_yes_no("Continue training?")
+    if continue_training:
+        meta["continue_training"] = True
+    else:
+        print("Training aborted by user")
+        meta["continue_training"] = False
+    
     meta = {
         "dist_at_hole": dist_at_hole,
         "speed_at_hole": speed_at_hole,
         "used_for_training": used_for_training,
         "continue_training": continue_training,
     }
-
-    continue_training = prompter.ask_yes_no("Continue training?")
-    if not continue_training:
-        print("Training aborted by user")
-        prompter.close()
-        sys.exit(0)
 
     return ball_final_position[0], ball_final_position[1], in_hole, meta
     
