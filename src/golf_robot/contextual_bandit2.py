@@ -569,8 +569,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
             in_hole_reward=in_hole_reward,
         )
 
-        if env_type == "real" and isinstance(trajectory, dict):
-            meta = trajectory
+        if env_type == "real" and isinstance(meta, dict):
             used_for_training = bool(meta.get("used_for_training", True))
             out_of_bounds = bool(meta.get("out_of_bounds", False))
 

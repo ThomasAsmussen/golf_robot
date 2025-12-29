@@ -12,18 +12,24 @@ def record_from_camera(
     frame_height=1080,
     keep_last_seconds=5.0,
     show_preview=False,
-    stop_event=None,  # <-- pass this in from the training script
+    stop_event=None,
+    operating_system="linux"  # <-- pass this in from the training script
 ):
     os.makedirs(output_folder, exist_ok=True)
 
 
         # Choose backend
-    if True:   #operating_system.lower() == "windows":
+    if operating_system == "windows":   #operating_system.lower() == "windows":
         cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
-    else:
+    elif operating_system == "linux": 
         # Explicit V4L2 backend on Linux
         cap = cv2.VideoCapture(camera_index, cv2.CAP_V4L2)
-        
+        # cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+    else:
+        raise RuntimeError(f"Unsupported operating system: {operating_system}")
+    
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+
     if not cap.isOpened():
         print(f"Could not open camera {camera_index}.")
         return None
@@ -32,9 +38,6 @@ def record_from_camera(
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_height)
     cap.set(cv2.CAP_PROP_FPS, fps)
     
-    if True: #operating_system.lower() == "windows":
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-
     buffer_size = max(1, int(round(fps * keep_last_seconds)))
     frame_buffer = deque(maxlen=buffer_size)
 
@@ -90,4 +93,4 @@ def record_from_camera(
 
 if __name__ == "__main__":
     # Example: run capture for 10s, but only save the last 5s
-    record_from_camera(camera_index=2, time_length=10.0, keep_last_seconds=5.0, show_preview=False)
+    record_from_camera(camera_index=4, time_length=10.0, keep_last_seconds=5.0, show_preview=False)

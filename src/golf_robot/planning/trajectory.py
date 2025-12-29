@@ -3,16 +3,16 @@ Trajectory generation using quintic polynomials with automatic time-scaling to s
 """
 
 import numpy as np
-# from planning.config import Q_MIN, Q_MAX, DQ_MAX, DDQ_MAX, DT, Z_PALLET
-# from planning.utils import unwrap_to_seed_all, normalize
-# from planning.kinematics import numeric_jacobian, fk_ur10, rotation_z, pick_ik_solution, move_point_xyz
+from planning.config import Q_MIN, Q_MAX, DQ_MAX, DDQ_MAX, DT, Z_PALLET
+from planning.utils import unwrap_to_seed_all, normalize
+from planning.kinematics import numeric_jacobian, fk_ur10, rotation_z, pick_ik_solution, move_point_xyz
 import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 
-from config import Q_MIN, Q_MAX, DQ_MAX, DDQ_MAX, DT, Z_PALLET
-from utils import unwrap_to_seed_all, normalize
-from kinematics import numeric_jacobian, fk_ur10, rotation_z, pick_ik_solution, move_point_xyz
+# from config import Q_MIN, Q_MAX, DQ_MAX, DDQ_MAX, DT, Z_PALLET
+# from utils import unwrap_to_seed_all, normalize
+# from kinematics import numeric_jacobian, fk_ur10, rotation_z, pick_ik_solution, move_point_xyz
 
 
 def quintic_coeffs(q0, dq0, ddq0, qf, dqf, ddqf, T):
@@ -512,7 +512,7 @@ def generate_trajectory(impact_speed, impact_angle, ball_x_offset, ball_y_offset
     #             possible_start_points.append(move_point_xyz(-0.6 + 0.05*x, -0.1 + 0.05*y, 0.15 + 0.03*z, q0_hit, q0_start)[0])
     #             possible_end_points.append(move_point_xyz(0.4 + 0.05*x, -0.1 + 0.05*y, 0.15 + 0.03*z, q0_hit, q0_end)[0])
         
-    possible_start_points = [move_point_xyz(-0.1, -0, 0.25, q0_hit, q0_start)[0]
+    possible_start_points = [move_point_xyz(-0.4, 0.0, 0.25, q0_hit, q0_start)[0]
     ]
 
     possible_end_points = [move_point_xyz(0.5, 0.0, 0.25, q0_hit, q0_end)[0]

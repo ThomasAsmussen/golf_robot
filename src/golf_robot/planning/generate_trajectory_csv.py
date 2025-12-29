@@ -11,11 +11,11 @@ import numpy as np
 import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
-# from planning.kinematics import numeric_jacobian
-# from planning.trajectory import tcp_path_from_Q, generate_trajectory
+from planning.kinematics import numeric_jacobian
+from planning.trajectory import tcp_path_from_Q, generate_trajectory
 
-from kinematics import numeric_jacobian
-from trajectory import tcp_path_from_Q, generate_trajectory
+# from kinematics import numeric_jacobian
+# from trajectory import tcp_path_from_Q, generate_trajectory
 
 # Toggle to True to show TCP position and TCP velocity plots after planning
 SAVE_PLOTS = False

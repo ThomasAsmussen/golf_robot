@@ -21,9 +21,9 @@ from planning.generate_trajectory_csv import generate_trajectory_csv
 from vision.record_camera import record_from_camera
 from vision.ball_at_hole_state import process_video
 
-OPERATING_SYSTEM = "windows"  # "windows" or "linux"
-CAMERA_INDEX_START = 1  # starting camera index for real robot
-CAMERA_INDEX_END   = 0  # ending camera index for real robot
+OPERATING_SYSTEM = "linux"  # "windows" or "linux"
+CAMERA_INDEX_START = 2  # starting camera index for real robot
+CAMERA_INDEX_END   = 4  # ending camera index for real robot
 
 def confirm_continue():
     # Confirm
@@ -74,13 +74,14 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
         kwargs={
             "camera_index": CAMERA_INDEX_END,
             "stop_event": stop_event,       # <-- this is what makes it stop after training
-            "keep_last_seconds": 10.0,       # <-- rolling buffer size
+            "keep_last_seconds": 15.0,       # <-- rolling buffer size
             "fps": 30,
             "frame_width": 1920,
             "frame_height": 1080,
             "output_folder": "data",
             "filename_prefix": "trajectory_recording",
             "show_preview": False,
+            "operating_system": OPERATING_SYSTEM,
         },
         daemon=True,
     )
@@ -184,7 +185,7 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
         else: 
             data_dir = "data"
             prefix ="trajectory_recording"
-            pattern = os.path.join(data_dir, f"{prefix}_*_last10s.avi")
+            pattern = os.path.join(data_dir, f"{prefix}_*_last15s.avi")
             files = glob.glob(pattern)
             video_path = max(files, key=os.path.getmtime)
             
@@ -234,6 +235,6 @@ with open(rl_config_path, "r") as f:
     
 tmp_name     = f"golf_world_tmp_{os.getpid()}_{uuid.uuid4().hex}"
     
-training(rl_cfg=rl_cfg, mujoco_cfg=mujoco_cfg, project_root=project_root, continue_training=rl_cfg["training"]["continue_training"], input_func=real_init_parameters, env_step=run_real, env_type="real", tmp_name=tmp_name)
+# training(rl_cfg=rl_cfg, mujoco_cfg=mujoco_cfg, project_root=project_root, continue_training=rl_cfg["training"]["continue_training"], input_func=real_init_parameters, env_step=run_real, env_type="real", tmp_name=tmp_name)
 
 training(rl_cfg=rl_cfg, mujoco_cfg=mujoco_cfg, project_root=project_root, continue_training=rl_cfg["training"]["continue_training"], input_func=real_init_parameters, env_step=run_real, env_type="real", tmp_name=tmp_name, camera_index_start=CAMERA_INDEX_START)
