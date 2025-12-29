@@ -246,6 +246,10 @@ def process_video(
     xs_hist, ys_hist, ts_hist = [], [], []
     prev_fx = None
     crossed_once = False
+    ROI_R = 140  # pixels (tune)
+    GOLF_BALL_DIAM_M = 0.05
+    DIAM_TOL_M = 0.02
+    INIT_CONSEC = 2
 
     while True:
         ret, frame_raw = cap.read()
@@ -257,50 +261,76 @@ def process_video(
         # A) Undistort current frame
         #frame_u = cv2.undistort(frame_raw, K, distCoeffs)
         frame_u = cv2.remap(frame_raw, map1, map2, interpolation=cv2.INTER_LINEAR)
-
-        # B) Apply the same WB gains
-        frame_wb = apply_white_balance(frame_u, gains)
-
-        # C) Blur
-        blurred = cv2.medianBlur(frame_wb, 5)
-        blurred = cv2.GaussianBlur(blurred, (3, 3), 0)
         
-        # XXXX)
-        blurred = cv2.bitwise_and(blurred, blurred, mask=green_perimeter_mask)
+        
+        # B) ROI selection: process only a small window around the Kalman position
+        # Default ROI = full frame (used when KF not initialized yet)
+        roi_x0, roi_y0, roi_x1, roi_y1 = 0, 0, w, h
+
+        if kf.x is not None:
+            # Convert current KF state (meters in origo frame) -> pixel prediction,
+            # so we can crop around where we expect the ball to be.
+            Xp, Yp = float(kf.x[0,0] + ref_x - offset_x), float(kf.x[1,0] + ref_y - offset_y)
+            u_hat, v_hat = plane_to_pixel(Xp, Yp, H_plane_corrected)
+            ui, vi = int(round(u_hat)), int(round(v_hat))
+            # Clamp ROI to image bounds
+            roi_x0 = max(0, ui - ROI_R); roi_x1 = min(w, ui + ROI_R)
+            roi_y0 = max(0, vi - ROI_R); roi_y1 = min(h, vi + ROI_R)
+
+        # Crop both the frame and the green-perimeter mask to the ROI.
+        # All detection work below should use these smaller arrays.
+        frame_roi = frame_u[roi_y0:roi_y1, roi_x0:roi_x1]
+        mask_roi  = green_perimeter_mask[roi_y0:roi_y1, roi_x0:roi_x1]
+        
+        # C) Apply WB ONLY on ROI (faster than full frame)
+        frame_roi_wb = apply_white_balance(frame_roi, gains)  # ROI only
+        # C) Blur ONLY on ROI
+        blurred = cv2.medianBlur(frame_roi_wb, 5)
+        blurred = cv2.GaussianBlur(blurred, (3, 3), 0)
+        # D) Apply the green mask ONLY on ROI (mask_roi matches ROI shape)
+        blurred = cv2.bitwise_and(blurred, blurred, mask=mask_roi)  # ROI mask
         #cv2.imshow("green", cv2.resize(blurred, (800,600)))
         #cv2.waitKey(0)
         
-        # D) HSV + masks
+        # E) HSV + masks
         hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
-        sat = hsv[:, :, 1]
-        mask_sat = sat >= 150
+        #sat = hsv[:, :, 1]
+        #mask_sat = sat >= 150
 
-        hue = hsv[:, :, 0]
-        low_thres, up_thres = 1, 10 # 2, 10
-        mask_hue = (hue >= low_thres) & (hue <= up_thres)
-
-        blurred[~(mask_sat & mask_hue)] = (0, 0, 0) # Filtered
-
-        # E) Morphology
+        #hue = hsv[:, :, 0]
+        #low_thres, up_thres = 1, 10 # 2, 10
+        #mask_hue = (hue >= low_thres) & (hue <= up_thres)
+         
+        #blurred[~(mask_sat & mask_hue)] = (0, 0, 0) # Filtered
+        
+        mask_hsv = cv2.inRange(hsv, (1, 150, 0), (10, 255, 255))
+        #filtered = cv2.bitwise_and(blurred, blurred, mask=mask_hsv) # Dont do this, use binary mask directly for computation speed
+        
+        # F) Morphology
         # Open to remove noise
         kernel = np.ones((3, 3), np.uint8)
-        opened = cv2.morphologyEx(blurred, cv2.MORPH_OPEN, kernel)
+        opened = cv2.morphologyEx(mask_hsv, cv2.MORPH_OPEN, kernel)
         
         # Close to fill holes
         kernel = np.ones((5, 5), np.uint8)
         closed = cv2.morphologyEx(opened,cv2.MORPH_CLOSE, kernel)
 
-        # F) Blob + circularity
-        gray_closed = cv2.cvtColor(closed, cv2.COLOR_BGR2GRAY)
-        _, mask_bin = cv2.threshold(gray_closed, 1, 255, cv2.THRESH_BINARY)
+        # G) Blob + circularity
+        #gray_closed = cv2.cvtColor(closed, cv2.COLOR_BGR2GRAY)
+        _, mask_bin = cv2.threshold(closed, 1, 255, cv2.THRESH_BINARY)
 
         center, radius, contour = find_most_circular_blob(mask_bin)
+        
+        if center is not None:
+            center = (center[0] + roi_x0, center[1] + roi_y0)
+        
         debug = frame_u.copy()  # draw on undistorted image (or frame_raw if you prefer)
 
         
-        GOLF_BALL_DIAM_M = 0.05  # 42.67 mm + 7.33 mm margin for the outer circle
-        DIAM_TOL_M = 0.02     # 10mm tolerance (start here; widen to 0.015 if needed)
-        INIT_CONSEC = 2        # require 2 consecutive ball-sized detections to start
+        # Moved outside the loop
+        #GOLF_BALL_DIAM_M = 0.05  # 42.67 mm + 7.33 mm margin for the outer circle
+        #DIAM_TOL_M = 0.02     # 10mm tolerance (start here; widen to 0.015 if needed)
+        #INIT_CONSEC = 2        # require 2 consecutive ball-sized detections to start
 
         if "init_streak" not in locals():
             init_streak = 0
@@ -420,13 +450,26 @@ def process_video(
                                 label="Holes",
                                 zorder=5
                             )
+                            plt.scatter(
+                                bx,
+                                by,
+                                s=150,
+                                c="orange",
+                                marker="o",
+                                edgecolors="white",
+                                linewidths=1,
+                                label="Holes",
+                                zorder=5
+                            )
                             plt.gca().set_aspect("equal", "box")
                             plt.xlabel("X [m]")
                             plt.ylabel("Y [m]")
                             plt.title("Ball trajectory on plane (Kalman filtered)")
+                            plt.grid()
                             plt.draw()
                             plt.waitforbuttonpress(0)
                             plt.close(fig)
+                            
                             return dist, spd
                         
                     else:
