@@ -287,7 +287,11 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
         
     
     if planner == "quintic":
-        generate_trajectory_csv(impact_velocity, swing_angle, ball_start_position[0], ball_start_position[1])
+        results = generate_trajectory_csv(impact_velocity, swing_angle, ball_start_position[0], ball_start_position[1])
+        if results is None:
+            print("Trajectory not feasible, aborting.")
+            sys.exit(0)
+
     if planner == "linear":
         sys.exit("Linear planner not implemented for real robot yet.")
     
