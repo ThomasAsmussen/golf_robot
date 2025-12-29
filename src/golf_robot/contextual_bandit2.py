@@ -255,7 +255,7 @@ def scale_state_vec(state_vec):
 # ---------------------------------------------------------
 # Reward and state encoding
 # ---------------------------------------------------------
-def compute_reward(ball_end_pos, hole_pos, in_hole, trajectory, in_hole_reward=3.0, distance_scale=0.5):
+def compute_reward(ball_end_pos, hole_pos, in_hole, meta, in_hole_reward=3.0, distance_scale=0.5):
     """
     Single-step reward.
     - If in_hole: large positive reward.
@@ -264,6 +264,13 @@ def compute_reward(ball_end_pos, hole_pos, in_hole, trajectory, in_hole_reward=3
     if in_hole:
         return in_hole_reward
 
+    dist_at_hole = meta.get("dist_at_hole", None)
+    speed_at_hole = meta.get("speed_at_hole", None)
+    if dist_at_hole is not None and speed_at_hole is not None:
+        dist_at_hole_reward = np.exp(-5 * dist_at_hole)
+        speed_at_hole_reward = np.exp(-5 * np.abs(speed_at_hole - 0.5))
+        return 0.5 * dist_at_hole_reward + 0.5 * speed_at_hole_reward
+    
     final_dist = np.linalg.norm(ball_end_pos - hole_pos)
     final_dist_reward = np.exp(-distance_scale * final_dist)
     return final_dist_reward
@@ -364,7 +371,7 @@ def sim_init_parameters(mujoco_cfg, max_num_discs):
 # ---------------------------------------------------------
 # Training loop (Contextual Bandit)
 # ---------------------------------------------------------
-def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_func=None, env_step=None, env_type="sim", tmp_name=None):
+def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_func=None, env_step=None, env_type="sim", tmp_name=None, camera_index_start=None):
     """
     Contextual bandit:
       - context = (ball_start_obs, hole_pos_obs, discs)
@@ -491,7 +498,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
             ball_start_obs, hole_pos_obs, disc_positions, x, y, hole_pos = sim_init_parameters(mujoco_cfg, max_num_discs)
 
         if env_type == "real":
-            ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(camera_index=2)
+            ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(camera_index=camera_index_start)
 
 
         state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 5)
@@ -551,16 +558,13 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
                 else:
                     continue
 
-        ball_x, ball_y, in_hole, trajectory = result
-
-        meta = {}
-
+        ball_x, ball_y, in_hole, meta = result
 
         reward = compute_reward(
             ball_end_pos=np.array([ball_x, ball_y]),
             hole_pos=hole_pos_obs,
             in_hole=in_hole,
-            trajectory=trajectory,
+            meta=meta,
             distance_scale=distance_scale,
             in_hole_reward=in_hole_reward,
         )
@@ -850,7 +854,7 @@ def evaluation_policy_short(
                 angle_deg = np.clip(angle_deg + angle_deg_noise, angle_low, angle_high)
 
 
-            ball_x, ball_y, in_hole, trajectory = env_step(
+            ball_x, ball_y, in_hole, meta = env_step(
                 angle_deg, speed, [x, y], mujoco_cfg, disc_positions
             )
 
@@ -858,7 +862,7 @@ def evaluation_policy_short(
                 ball_end_pos=np.array([ball_x, ball_y]),
                 hole_pos=hole_pos,
                 in_hole=in_hole,
-                trajectory=trajectory,
+                meta=meta,
                 distance_scale=rl_cfg["reward"]["distance_scale"],
                 in_hole_reward=rl_cfg["reward"]["in_hole_reward"],
             )

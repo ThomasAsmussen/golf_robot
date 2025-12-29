@@ -41,7 +41,8 @@ def capture_single_frame(
 
     # MJPG is nice but can be flaky on some setups; keep it if it behaves,
     # otherwise comment this line out.
-    # cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    if operating_system.lower() == "windows":
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
 
     try:
         # Warmup: let exposure / WB settle & flush old buffers

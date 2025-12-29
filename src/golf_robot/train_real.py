@@ -11,12 +11,19 @@ import subprocess
 import re
 import random
 import uuid
+import threading
+import time
+import glob
 from contextual_bandit2 import training
 from vision.ball2hole_distance import get_ball_final_position
 from vision.ball_start_position import get_ball_start_position
 from planning.generate_trajectory_csv import generate_trajectory_csv
+from vision.record_camera import record_from_camera
+from vision.ball_at_hole_state import process_video
 
-OPERATING_SYSTEM = "linux"  # "windows" or "linux"
+OPERATING_SYSTEM = "windows"  # "windows" or "linux"
+CAMERA_INDEX_START = 1  # starting camera index for real robot
+CAMERA_INDEX_END   = 0  # ending camera index for real robot
 
 def confirm_continue():
     # Confirm
@@ -58,6 +65,30 @@ def real_init_parameters(camera_index):
 
 def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quintic", check_rtt=False, chosen_hole=None):
     print(f"Impact velocity: {impact_velocity} m/s, swing angle: {swing_angle} deg, ball start pos: {ball_start_position} m")
+   
+    # Start vision recording
+    stop_event = threading.Event()
+
+    recording_thread = threading.Thread(
+        target=record_from_camera,
+        kwargs={
+            "camera_index": CAMERA_INDEX_END,
+            "stop_event": stop_event,       # <-- this is what makes it stop after training
+            "keep_last_seconds": 10.0,       # <-- rolling buffer size
+            "fps": 30,
+            "frame_width": 1920,
+            "frame_height": 1080,
+            "output_folder": "data",
+            "filename_prefix": "trajectory_recording",
+            "show_preview": False,
+        },
+        daemon=True,
+    )
+    recording_thread.start()
+
+    time.sleep(2.0)  # optional warm-up
+        
+    
     if planner == "quintic":
         generate_trajectory_csv(impact_velocity, swing_angle, ball_start_position[0], ball_start_position[1])
     if planner == "linear":
@@ -125,8 +156,15 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
     print(result.stdout)
     
     
+    # Stop vision recording
+    print("Stopping camera recording...")
+    stop_event.set()
+    recording_thread.join()
+    print("Recording thread joined. Done.")
+
+    
     # Measure 
-    key = input(f"Is ball in hole {chosen_hole}? (Press y) - Is ball out of bounds (Press o)").lower()
+    key = input(f"Is ball in hole {chosen_hole}? (Press y) - Is ball out of bounds (Press o) - Otherwise press any other").lower()
     if key == "y":
         print("Ball in hole confirmed")
         in_hole = True
@@ -139,20 +177,39 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
         in_hole = False
         out_of_bounds = False
     
-    if not out_of_bounds:
-        ball_final_position = get_ball_final_position(camera_index=4, chosen_hole=chosen_hole, use_cam=True, debug=True, operating_system=OPERATING_SYSTEM)
+    if not out_of_bounds and not in_hole:
+        key = input(f"Is ball on green? (Press y)").lower()
+        if key == "y":
+           ball_final_position = get_ball_final_position(camera_index=CAMERA_INDEX_END, chosen_hole=chosen_hole, use_cam=True, debug=True, operating_system=OPERATING_SYSTEM)
+        else: 
+            data_dir = "data"
+            prefix ="trajectory_recording"
+            pattern = os.path.join(data_dir, f"{prefix}_*_last10s.avi")
+            files = glob.glob(pattern)
+            video_path = max(files, key=os.path.getmtime)
+            
+            dist_at_hole, speed_at_hole = process_video(
+                video_path, chosen_hole=chosen_hole,
+                real_time_show=False,   # turn off GUI if running batch
+            )
+            ball_final_position = np.array([0, 0]) # dummy value
+
     
     if out_of_bounds:
-        ball_final_position = np.array([0, 0])
+        ball_final_position = np.array([0, 0]) # dummy value
+        dist_at_hole = None
+        speed_at_hole = None
 
+    
     key = input("Use shot for training? ").lower()
     used_for_training = (key == "y")
     if not used_for_training:
         print("Shot discarded by user")
     
     meta = {
-        "out_of_bounds": out_of_bounds,
-        "used_for_training": used_for_training
+        "dist_at_hole": dist_at_hole,
+        "speed_at_hole": speed_at_hole,
+        "used_for_training": used_for_training,
     }
 
     return ball_final_position[0], ball_final_position[1], in_hole, meta
@@ -179,4 +236,4 @@ tmp_name     = f"golf_world_tmp_{os.getpid()}_{uuid.uuid4().hex}"
     
 training(rl_cfg=rl_cfg, mujoco_cfg=mujoco_cfg, project_root=project_root, continue_training=rl_cfg["training"]["continue_training"], input_func=real_init_parameters, env_step=run_real, env_type="real", tmp_name=tmp_name)
 
-
+training(rl_cfg=rl_cfg, mujoco_cfg=mujoco_cfg, project_root=project_root, continue_training=rl_cfg["training"]["continue_training"], input_func=real_init_parameters, env_step=run_real, env_type="real", tmp_name=tmp_name, camera_index_start=CAMERA_INDEX_START)

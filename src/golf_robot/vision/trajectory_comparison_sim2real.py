@@ -8,7 +8,7 @@ from scipy.signal import savgol_filter
 # 1) CONFIG
 # ------------------------------------------------------------------
 
-RESULTS_DIR = os.path.join("data", "tuning_results")
+RESULTS_DIR = os.path.join("data", "needs_deletion")
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 def savefig(name: str):
@@ -18,27 +18,27 @@ def savefig(name: str):
                     dpi=300, bbox_inches="tight")
 # Path to simulation CSV (assumed single file)
 SIM_DIR = os.path.join("data", "tuning_sim")
-SIM_CSV = os.path.join(SIM_DIR, "sim_vxscale_tester.csv")
+#SIM_CSV = os.path.join(SIM_DIR, "sim_tester.csv")
 
 # Folder where all physical CSVs are stored
-PHYS_DIR = os.path.join("data", "tuning_videos_processed")
+PHYS_DIR = os.path.join("data", "needs_deletion")
 
 
 # ------------------------------------------------------------------
 # 2) LOAD SIMULATION DATA ONCE
 # ------------------------------------------------------------------
 
-sim = pd.read_csv(SIM_CSV)
+#sim = pd.read_csv(SIM_CSV)
 
 # Adjust these column names if your sim CSV differs
-time_sim = sim["time"].to_numpy()
-time_sim = time_sim
-x_sim = sim["ball_x"].to_numpy()
-y_sim = sim["ball_z"].to_numpy()
+#time_sim = sim["time"].to_numpy()
+#time_sim = time_sim
+#x_sim = sim["ball_x"].to_numpy()
+#y_sim = sim["ball_z"].to_numpy()
 
 # Sim velocities
-vx_sim = np.gradient(x_sim, time_sim)
-vy_sim = np.gradient(y_sim, time_sim)
+#vx_sim = np.gradient(x_sim, time_sim)
+#vy_sim = np.gradient(y_sim, time_sim)
 
 
 # ------------------------------------------------------------------
@@ -46,7 +46,7 @@ vy_sim = np.gradient(y_sim, time_sim)
 # ------------------------------------------------------------------
 
 # Get all .csv files in PHYS_DIR
-phys_files = [f for f in os.listdir(PHYS_DIR) if f.lower().endswith("time_shifted.csv")]
+phys_files = [f for f in os.listdir(PHYS_DIR) if f.lower().endswith(".csv")]
 phys_files.sort()
 
 if not phys_files:
@@ -68,6 +68,8 @@ for phys_file in phys_files:
     #     ["time_s", "x_m", "y_m", "vx_m_s", "vy_m_s", "speed_m_s"]
     # ------------------------------------------------------------------
     time_phys = phys["time_s"].to_numpy()
+    #x_phys = phys["x_m"].to_numpy()
+    #y_phys = phys["y_m"].to_numpy()
     x_phys = phys["x_m"].to_numpy()
     y_phys = phys["y_m"].to_numpy()
 
@@ -105,7 +107,7 @@ for phys_file in phys_files:
     # 3b) POSITION PLOT: Sim vs Physical
     # ------------------------------------------------------------------
     plt.figure(figsize=(5, 5))
-    plt.plot(time_sim, x_sim, label='Sim X')
+    #plt.plot(time_sim, x_sim, label='Sim X')
     plt.plot(time_phys, x_phys, label='Physical X', linestyle='--')
     plt.xlabel('Time [s]')
     plt.ylabel('X Position [m]')
@@ -120,7 +122,7 @@ for phys_file in phys_files:
     # 3c) VELOCITY PLOT: Sim vs Physical
     # ------------------------------------------------------------------
     plt.figure(figsize=(5, 5))
-    plt.plot(time_sim, vx_sim, label='Sim Vx')
+    #plt.plot(time_sim, vx_sim, label='Sim Vx')
     plt.plot(time_phys, vx_phys_smooth, label='Physical Vx (smoothed)', linestyle='--')
     plt.xlabel('Time [s]')
     plt.ylabel('Velocity X [m/s]')
