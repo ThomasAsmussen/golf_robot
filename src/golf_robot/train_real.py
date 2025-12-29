@@ -232,7 +232,8 @@ with open(mujoco_config_path, "r") as f:
 with open(rl_config_path, "r") as f:
     rl_cfg = yaml.safe_load(f)
     
-tmp_name     = f"golf_world_tmp_{os.getpid()}_{uuid.uuid4().hex}.xml"
-
+tmp_name     = f"golf_world_tmp_{os.getpid()}_{uuid.uuid4().hex}"
+    
+training(rl_cfg=rl_cfg, mujoco_cfg=mujoco_cfg, project_root=project_root, continue_training=rl_cfg["training"]["continue_training"], input_func=real_init_parameters, env_step=run_real, env_type="real", tmp_name=tmp_name)
 
 training(rl_cfg=rl_cfg, mujoco_cfg=mujoco_cfg, project_root=project_root, continue_training=rl_cfg["training"]["continue_training"], input_func=real_init_parameters, env_step=run_real, env_type="real", tmp_name=tmp_name, camera_index_start=CAMERA_INDEX_START)

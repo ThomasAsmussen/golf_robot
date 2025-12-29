@@ -8,6 +8,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import wandb
 import uuid
+import json
+import time
 
 # ---------------------------------------------------------
 # Global noise parameters (environment / measurement noise)
@@ -70,7 +72,80 @@ class Critic(nn.Module):
         x = F.relu(self.fc2(x))
         x = self.out(x)
         return x
+    
 
+def load_replay_from_jsonl(
+        jsonl_path: Path,
+        replay_buffer_big,
+        replay_buffer_recent,
+        max_recent: int = 1000,
+):
+    jsonl_path = Path(jsonl_path)
+    if not jsonl_path.exists():
+        return 0
+
+    loaded = 0
+    lines = jsonl_path.read_text().strip().splitlines()
+
+    if not lines:
+        return 0
+    
+    for line in lines:
+        ep = json.loads(line)
+
+        if not ep.get("used_for_training", True):
+            continue
+
+        s = torch.tensor(ep["state_norm"], dtype=torch.float32)
+        a = torch.tensor(ep["action_norm"], dtype=torch.float32)
+        r = float(ep["reward"])
+
+        replay_buffer_big.add(s, a, r)
+        loaded += 1
+
+    replay_buffer_recent.clear()
+    for line in lines[-max_recent:]:
+        ep = json.loads(line)
+        if not ep.get("used_for_training", True):
+            continue
+
+        s = torch.tensor(ep["state_norm"], dtype=torch.float32)
+        a = torch.tensor(ep["action_norm"], dtype=torch.float32)
+        r = float(ep["reward"])
+        replay_buffer_recent.add(s, a, r)
+    
+    return loaded
+
+
+
+class EpisodeLoggerJson:
+    def __init__(self, path: Path):
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.f = open(self.path, "a", buffering=1)
+
+    def log(self, record: dict):
+        print(f"Logging episode to {self.path}: episode {record.get('episode', 'N/A')}")
+        self.f.write(json.dumps(record, default=_json_default) + "\n")
+        self.f.flush()
+        os.fsync(self.f.fileno())
+
+    def close(self):
+        self.f.close()
+
+
+def _json_default(obj):
+    import numpy as np
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.floating,)):
+        return float(obj)
+    if isinstance(obj, (np.bool_,)):
+        return bool(obj)
+    if isinstance(obj, (np.ndarray,)):
+        return obj.tolist()
+    # last resort: stringify (or raise)
+    return str(obj)
 
 # ---------------------------------------------------------
 # Replay Buffer
@@ -109,6 +184,9 @@ class ReplayBuffer:
         self.ptr = 0
         self.full = False
         self.data = []
+
+
+
 
 
 def sample_mixed(recent_buf, all_buf, recent_ratio, batch_size):
@@ -382,6 +460,25 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
     max_num_discs = 0
     stage_start_episode = 0
     noise_std_stage_start = noise_std
+
+    episode_logger = None
+    episode_log_path = None
+
+    if env_type == "real":
+        episode_log_path = project_root / "log" / "real_episodes" / "logging_test.jsonl"
+        episode_logger = EpisodeLoggerJson(episode_log_path)
+
+        loaded_n = load_replay_from_jsonl(
+            episode_log_path,
+            replay_buffer_big,
+            replay_buffer_recent,
+            max_recent=1000,
+        )
+
+        if loaded_n > 0:
+            print(f"Loaded {loaded_n} episodes from {episode_log_path} into replay buffer.")
+        else:
+            print(f"No existing episode log found at {episode_log_path}. Starting fresh.")
     
     for episode in range(episodes):
         # -------------------------------------------------
@@ -472,6 +569,37 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
             in_hole_reward=in_hole_reward,
         )
 
+        if env_type == "real" and isinstance(trajectory, dict):
+            meta = trajectory
+            used_for_training = bool(meta.get("used_for_training", True))
+            out_of_bounds = bool(meta.get("out_of_bounds", False))
+
+            if not used_for_training:
+                print("Episode discarded by user; not adding to replay buffer.")
+                continue
+            else:
+                print(f"Storing episode")
+                logging_dict = {
+                    "episode": episode,
+                    "time": time.time(),
+                    "used_for_training": used_for_training,
+                    "ball_start_obs": ball_start_obs.tolist(),
+                    "hole_pos_obs": hole_pos_obs.tolist(),
+                    "disc_positions": disc_positions,
+                    "state_norm": state_norm.tolist(),
+                    "action_norm": a_noisy.cpu().numpy().tolist(),
+                    "speed": speed,
+                    "angle_deg": angle_deg,
+                    "ball_final_pos": [ball_x, ball_y],
+                    "in_hole": in_hole,
+                    "out_of_bounds": out_of_bounds,
+                    "reward": reward,
+                    "chosen_hole": chosen_hole,
+                    "ball_end": [ball_x, ball_y],
+                }
+                print(f"Logging episode data: {logging_dict}")
+                episode_logger.log(logging_dict)
+
         # Store (s,a,r) in buffer (contextual bandit)
         s_train = s.detach().cpu()
         a_train = a_noisy.detach().cpu()
@@ -483,6 +611,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
         # TD-style supervised update: Q(s,a) -> r
         # -------------------------------------------------
         if len(replay_buffer_big.data) >= batch_size:
+            print("Updating networks...")
             for _ in range(grad_steps):
                 states_b, actions_b, rewards_b = sample_mixed(
                     replay_buffer_recent,
@@ -615,6 +744,10 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
         torch.save(actor.state_dict(),  model_dir / f"ddpg_actor_{run_name}.pth")
         torch.save(critic.state_dict(), model_dir / f"ddpg_critic_{run_name}.pth")
         print("Sweep complete. Models saved.")
+    
+    if episode_logger is not None:
+        episode_logger.close()
+
     elif tmp_name is not None:
         torch.save(actor.state_dict(),  model_dir / f"ddpg_actor_{tmp_name}.pth")
         torch.save(critic.state_dict(), model_dir / f"ddpg_critic_{tmp_name}.pth")

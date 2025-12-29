@@ -134,20 +134,22 @@
 #include "../include/communication/ur5.h"
 
 //static const std::string CSV_IN   = "C:/Users/marti/'OneDrive - Danmarks Tekniske Universitet'/DTU/GitHub/golf_robot/log/trajectory_sim.csv";      // input
-//static const std::string CSV_OUT  = "log/streamed_measurements.csv"; // output
+static const std::string CSV_IN   = "log/trajectory_sim.csv";      // input
+static const std::string CSV_OUT  = "log/streamed_measurements.csv"; // output
 //static const std::string CSV_OUT =
 //    "/home/thomas/Documents/masters_project/golf_robot/log/streamed_measurements.csv";
 //static const std::string CSV_OUT =
 //    "C:/Users/marti/'OneDrive - Danmarks Tekniske Universitet'/DTU/GitHub/golf_robot/log/streamed_measurements.csv";
-static const std::string CSV_IN =
-    "/mnt/c/Users/marti/OneDrive - Danmarks Tekniske Universitet/DTU/GitHub/golf_robot/log/trajectory_sim.csv";
+// static const std::string CSV_IN =
+//     "/mnt/c/Users/marti/OneDrive - Danmarks Tekniske Universitet/DTU/GitHub/golf_robot/log/trajectory_sim.csv";
 
-static const std::string CSV_OUT =
-    "/mnt/c/Users/marti/OneDrive - Danmarks Tekniske Universitet/DTU/GitHub/golf_robot/log/streamed_measurements.csv";
+// static const std::string CSV_OUT =
+//     "/mnt/c/Users/marti/OneDrive - Danmarks Tekniske Universitet/DTU/GitHub/golf_robot/log/streamed_measurements.csv";
 
 
 static const std::string ROBOT_IP = "192.38.66.227";
 static const int         REVERSE_PORT = 5007;
+static const std::array<double,6> END_POS = {-2.47, -2.38, -1.55, 1.66, 0.49, -0.26};
 
 static const double ACCEL  = 6.0;
 static const double DT     = 0.008;     // 8 ms
@@ -651,9 +653,13 @@ for (size_t i = 0; i < N && keep_running.load(); ++i) {
         const double a_move = 1.2;
         const double v_move = 0.25;
         char cmdbuf[512];
+        // snprintf(cmdbuf, sizeof(cmdbuf),
+        //          "movej([%.6f,%.6f,%.6f,%.6f,%.6f,%.6f], a=%.3f, v=%.3f)\n",
+        //          q_start[0], q_start[1], q_start[2], q_start[3], q_start[4], q_start[5],
+        //          a_move, v_move);
         snprintf(cmdbuf, sizeof(cmdbuf),
                  "movej([%.6f,%.6f,%.6f,%.6f,%.6f,%.6f], a=%.3f, v=%.3f)\n",
-                 q_start[0], q_start[1], q_start[2], q_start[3], q_start[4], q_start[5],
+                 END_POS[0], END_POS[1], END_POS[2], END_POS[3], END_POS[4], END_POS[5],
                  a_move, v_move);
         mydriver.rt_interface_->addCommandToQueue(std::string(cmdbuf));
 
