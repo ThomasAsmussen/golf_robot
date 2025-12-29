@@ -406,6 +406,13 @@ def process_video(
                         crossed_once = True
                         
                         if crossed_once:
+                            #     plt.figure()
+                            #     plt.plot(xs, ys, marker="o")
+                            #     plt.gca().set_aspect("equal", "box")
+                            #     plt.xlabel("X [m]")
+                            #     plt.ylabel("Y [m]")
+                            #     plt.title("Ball trajectory on plane (Kalman filtered)")
+                            #     plt.show()
                             return dist, spd
                         
                     else:
