@@ -35,8 +35,8 @@ def real_init_parameters(camera_index):
     print(ball_start_position)
     
     # Holes
-    # chosen_hole = random.choice([1,2,3])
-    chosen_hole = 3  # for testing purposes
+    chosen_hole = random.choice([1,2,3])
+    # chosen_hole = 3  # for testing purposes
     here = Path(__file__).resolve().parent
     config_dir = here.parents[1] / "configs"
     with open(config_dir / "hole_config.yaml", "r") as f:
@@ -140,17 +140,22 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
         out_of_bounds = False
     
     if not out_of_bounds:
-        ball_final_position = get_ball_final_position(camera_index=2, chosen_hole=1, use_cam=True, debug=True, operating_system=OPERATING_SYSTEM)
+        ball_final_position = get_ball_final_position(camera_index=4, chosen_hole=chosen_hole, use_cam=True, debug=True, operating_system=OPERATING_SYSTEM)
     
     if out_of_bounds:
         ball_final_position = np.array([0, 0])
 
     key = input("Use shot for training? ").lower()
-    if key != "y":
+    used_for_training = (key == "y")
+    if not used_for_training:
         print("Shot discarded by user")
-        sys.exit(0)
+    
+    meta = {
+        "out_of_bounds": out_of_bounds,
+        "used_for_training": used_for_training
+    }
 
-    return ball_final_position[0], ball_final_position[1], in_hole, out_of_bounds
+    return ball_final_position[0], ball_final_position[1], in_hole, meta
     
 
 #ball_start_position, hole_position, disc_positions = real_init_parameters(camera_index=0)
@@ -170,7 +175,7 @@ with open(mujoco_config_path, "r") as f:
 with open(rl_config_path, "r") as f:
     rl_cfg = yaml.safe_load(f)
     
-tmp_name     = f"golf_world_tmp_{os.getpid()}_{uuid.uuid4().hex}.xml"
+tmp_name     = f"golf_world_tmp_{os.getpid()}_{uuid.uuid4().hex}"
     
 training(rl_cfg=rl_cfg, mujoco_cfg=mujoco_cfg, project_root=project_root, continue_training=rl_cfg["training"]["continue_training"], input_func=real_init_parameters, env_step=run_real, env_type="real", tmp_name=tmp_name)
 

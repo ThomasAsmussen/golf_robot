@@ -3,12 +3,16 @@ Trajectory generation using quintic polynomials with automatic time-scaling to s
 """
 
 import numpy as np
-from planning.config import Q_MIN, Q_MAX, DQ_MAX, DDQ_MAX, DT, Z_PALLET
-from planning.utils import unwrap_to_seed_all, normalize
-from planning.kinematics import numeric_jacobian, fk_ur10, rotation_z, pick_ik_solution, move_point_xyz
+# from planning.config import Q_MIN, Q_MAX, DQ_MAX, DDQ_MAX, DT, Z_PALLET
+# from planning.utils import unwrap_to_seed_all, normalize
+# from planning.kinematics import numeric_jacobian, fk_ur10, rotation_z, pick_ik_solution, move_point_xyz
 import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
+
+from config import Q_MIN, Q_MAX, DQ_MAX, DDQ_MAX, DT, Z_PALLET
+from utils import unwrap_to_seed_all, normalize
+from kinematics import numeric_jacobian, fk_ur10, rotation_z, pick_ik_solution, move_point_xyz
 
 
 def quintic_coeffs(q0, dq0, ddq0, qf, dqf, ddqf, T):
@@ -175,8 +179,9 @@ def auto_time_and_discretize(q0, dq0, ddq0, qf, dqf, ddqf, T_max=8.0,):
         
         # If any collision detected, increase T and retry
         if not ok:
-            T *= growth_gain
-            continue
+            # T *= growth_gain
+            # continue
+            return None, None, None, None, False
 
         feasible = True
         return ts, Q, dQ, ddQ, feasible
@@ -507,18 +512,14 @@ def generate_trajectory(impact_speed, impact_angle, ball_x_offset, ball_y_offset
     #             possible_start_points.append(move_point_xyz(-0.6 + 0.05*x, -0.1 + 0.05*y, 0.15 + 0.03*z, q0_hit, q0_start)[0])
     #             possible_end_points.append(move_point_xyz(0.4 + 0.05*x, -0.1 + 0.05*y, 0.15 + 0.03*z, q0_hit, q0_end)[0])
         
-    possible_start_points = [move_point_xyz(-0.4, 0.0, 0.25, q0_hit, q0_start)[0],
-                             move_point_xyz(-0.4, 0.2, 0.25, q0_hit, q0_start)[0],
-                             move_point_xyz(-0.4, -0.2, 0.25, q0_hit, q0_start)[0],
-                             move_point_xyz(-0.4, 0.0, 0.30, q0_hit, q0_start)[0],
-                             move_point_xyz(-0.4, 0.0, 0.20, q0_hit, q0_start)[0]
+    possible_start_points = [move_point_xyz(-0.1, -0, 0.25, q0_hit, q0_start)[0]
     ]
 
-    possible_end_points = [move_point_xyz(0.5, 0.0, 0.25, q0_hit, q0_end)[0],
-                           move_point_xyz(0.5, 0.1, 0.25, q0_hit, q0_end)[0],
-                           move_point_xyz(0.5, -0.1, 0.25, q0_hit, q0_end)[0],
-                           move_point_xyz(0.5, 0.0, 0.30, q0_hit, q0_end)[0],
-                           move_point_xyz(0.5, 0.0, 0.20, q0_hit, q0_end)[0]
+    possible_end_points = [move_point_xyz(0.5, 0.0, 0.25, q0_hit, q0_end)[0]
+                        #    move_point_xyz(0.5, 0.1, 0.25, q0_hit, q0_end)[0],
+                        #    move_point_xyz(0.4, -0.1, 0.25, q0_hit, q0_end)[0],
+                        #    move_point_xyz(0.4, 0.0, 0.30, q0_hit, q0_end)[0],
+                        #    move_point_xyz(0.4, 0.0, 0.20, q0_hit, q0_end)[0]
     ]
 
     # q_start, _ = move_point_xyz(-0.4, 0.0, 0.25, q0_hit, q0_start) # 60 cm behind and 25 cm above ball
@@ -572,7 +573,7 @@ def generate_trajectory(impact_speed, impact_angle, ball_x_offset, ball_y_offset
             )
 
             if Q_all_i is not None:
-                # ✅ First feasible configuration found – stop searching
+                # First feasible configuration found – stop searching
                 best_segment = segments_i
                 best_Q_all   = Q_all_i
                 best_dQ_all  = dQ_all_i
