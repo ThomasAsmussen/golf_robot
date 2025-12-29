@@ -670,10 +670,9 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
                 else: 
                     print("No tmp_name provided; models not saved during real robot training.")
         if env_type == "real":
-            key = input("Continue training? ").lower()
-            if key != "y":
+            if not meta.get("continue_training", True):
                 print("Training aborted by user.")
-                sys.exit(0)
+                break   # 👈 clean exit
 
 
         # -------------------------------------------------

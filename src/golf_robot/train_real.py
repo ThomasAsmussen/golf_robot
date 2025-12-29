@@ -421,6 +421,7 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
         "dist_at_hole": dist_at_hole,
         "speed_at_hole": speed_at_hole,
         "used_for_training": used_for_training,
+        "continue_training": continue_training,
     }
 
     continue_training = prompter.ask_yes_no("Continue training?")
