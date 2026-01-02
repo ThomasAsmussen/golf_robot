@@ -22,11 +22,13 @@ from vision.ball_start_position import get_ball_start_position
 from planning.generate_trajectory_csv import generate_trajectory_csv
 from vision.record_camera import record_from_camera
 from vision.ball_at_hole_state import process_video
+from vision.ffmpeg_record import start_ffmpeg_record_windows, stop_ffmpeg_record, get_video_frame_count, trim_last_seconds_reencode
 
 
 OPERATING_SYSTEM = "windows"  # "windows" or "linux"
 CAMERA_INDEX_START = 1  # starting camera index for real robot
 CAMERA_INDEX_END   = 0  # ending camera index for real robot
+CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
 END_POS = [-2.47, -2.38, -1.55, 1.66, 0.49, -0.26]
 
 
@@ -460,28 +462,31 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
     print(f"Impact velocity: {impact_velocity} m/s, swing angle: {swing_angle} deg, ball start pos: {ball_start_position} m")
    
     # Start vision recording
-    stop_event = threading.Event()
+    # stop_event = threading.Event()
 
-    recording_thread = threading.Thread(
-        target=record_from_camera,
-        kwargs={
-            "camera_index": CAMERA_INDEX_END,
-            "stop_event": stop_event,       # <-- this is what makes it stop after training
-            "keep_last_seconds": 15.0,       # <-- rolling buffer size
-            "fps": 30,
-            "frame_width": 1920,
-            "frame_height": 1080,
-            "output_folder": "data",
-            "filename_prefix": "trajectory_recording",
-            "show_preview": False,
-            "operating_system": OPERATING_SYSTEM,
-        },
-        daemon=True,
-    )
-    recording_thread.start()
+    # recording_thread = threading.Thread(
+    #     target=record_from_camera,
+    #     kwargs={
+    #         "camera_index": CAMERA_INDEX_END,
+    #         "stop_event": stop_event,       # <-- this is what makes it stop after training
+    #         "keep_last_seconds": 15.0,       # <-- rolling buffer size
+    #         "fps": 30,
+    #         "frame_width": 1920,
+    #         "frame_height": 1080,
+    #         "output_folder": "data",
+    #         "filename_prefix": "trajectory_recording",
+    #         "show_preview": False,
+    #         "operating_system": OPERATING_SYSTEM,
+    #     },
+    #     daemon=True,
+    # )
+    # recording_thread.start()
+    camera_name = CAMERA_END #"HD Pro Webcam C920"  # from ffmpeg -list_devices
+    out_path = f"data/trajectory_recording_{time.strftime('%Y%m%d_%H%M%S')}.avi"
 
-    time.sleep(2.0)  # optional warm-up
-        
+    rec = start_ffmpeg_record_windows(camera_name, out_path, 1920, 1080, 30)
+    time.sleep(2.0)  # optional warmup
+
     
     if planner == "quintic":
         results = generate_trajectory_csv(impact_velocity, swing_angle, ball_start_position[0], ball_start_position[1])
@@ -555,9 +560,29 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
     
     # Stop vision recording
     print("Stopping camera recording...")
-    stop_event.set()
-    recording_thread.join()
+    # stop_event.set()
+    # recording_thread.join()
+    stop_ffmpeg_record(rec)
     print("Recording thread joined. Done.")
+
+    data_dir = "data"
+    prefix ="trajectory_recording"
+    pattern = os.path.join(data_dir, f"{prefix}_*") #_last15s.avi")
+    files = glob.glob(pattern)
+    video_path = max(files, key=os.path.getmtime)
+    last15_path = video_path.replace(".avi", "_last15.mp4")  # mp4 is nicer for tools
+    ffmpeg_exe = str(Path(__file__).resolve().parent / "vision" /"ffmpeg.exe")
+    trim_last_seconds_reencode(ffmpeg_exe, video_path, last15_path, seconds=15)
+    print("Saved last 15s:", last15_path)
+    
+    print("Recorded video path:", last15_path)
+    frames_captured = get_video_frame_count(last15_path)
+    expected_frames = int(15 * 30)
+    print(frames_captured)
+
+    
+    print(f"Captured {frames_captured}/{expected_frames} frames")
+    print(f"Drop ratio: {(1 - frames_captured/expected_frames)*100:.1f}%")
     
     # Start thread for return to home position
     ur_movej(

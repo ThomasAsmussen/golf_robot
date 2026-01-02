@@ -37,7 +37,6 @@ def record_from_camera(
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_height)
     cap.set(cv2.CAP_PROP_FPS, fps)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     
     buffer_size = max(1, int(round(fps * keep_last_seconds)))
     frame_buffer = deque(maxlen=buffer_size)
