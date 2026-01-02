@@ -13,6 +13,8 @@ import glob
 import tkinter as tk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
+from PIL import Image, ImageTk
+import cv2
 from contextual_bandit2 import training
 from vision.ball2hole_distance import get_ball_final_position
 from vision.ball_start_position import get_ball_start_position
@@ -181,11 +183,97 @@ class HumanPrompter:
 
     
     # ---------- Public API ----------
+    def show_image(self, bgr_img, title=""):
+        """
+        Show a BGR OpenCV image inside the main GUI, with Continue button at the top.
+        Blocks until Continue is pressed.
+        """
+        self._clear_content()
+
+        # 2-row grid: row0 buttons, row1 image
+        self._content.grid_rowconfigure(0, weight=0)
+        self._content.grid_rowconfigure(1, weight=1)
+        self._content.grid_columnconfigure(0, weight=1)
+
+        # --- Top controls (same place as other buttons) ---
+        top = tk.Frame(self._content)
+        top.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        top.grid_columnconfigure(0, weight=1)
+
+        if title:
+            lbl = tk.Label(top, text=title, font=("TkDefaultFont", 14, "bold"))
+            lbl.pack(side="left")
+
+        btn = tk.Button(
+            top,
+            text="Continue",
+            font=("TkDefaultFont", 12),
+            width=14,
+            height=2,
+            command=lambda: self._choose(True),
+        )
+        btn.pack(side="right")
+
+        # --- Image area ---
+        img_frame = tk.Frame(self._content)
+        img_frame.grid(row=1, column=0, sticky="nsew")
+        img_frame.grid_rowconfigure(0, weight=1)
+        img_frame.grid_columnconfigure(0, weight=1)
+
+        # Convert BGR -> RGB -> PIL
+        rgb = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
+        pil = Image.fromarray(rgb)
+
+        # Fit image to available area (keep aspect)
+        self._root.update_idletasks()
+        max_w = img_frame.winfo_width() or 820
+        max_h = img_frame.winfo_height() or 560
+
+        pil.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
+
+        tk_img = ImageTk.PhotoImage(pil)
+
+        img_label = tk.Label(img_frame, image=tk_img)
+        img_label.image = tk_img  # IMPORTANT: keep reference
+        img_label.grid(row=0, column=0, sticky="nsew")
+
+        self._wait()
+
+    
     # Tkinter plot for trajectory, used in GUI mode
     def show_trajectory_plot(self, xs, ys, hole_xo, hole_yo, bx, by):
         self._clear_content()
 
-        fig = Figure(figsize=(5.8, 4.2), dpi=100)
+        # Make _content a 2-row grid: top = buttons, bottom = plot (expand)
+        self._content.grid_rowconfigure(0, weight=0)  # buttons row
+        self._content.grid_rowconfigure(1, weight=1)  # plot row expands
+        self._content.grid_columnconfigure(0, weight=1)
+
+        # --- Top bar (same place as other buttons) ---
+        top = tk.Frame(self._content)
+        top.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        top.grid_columnconfigure(0, weight=1)
+
+        btn = tk.Button(
+            top,
+            text="Continue",
+            font=("TkDefaultFont", 12),
+            command=lambda: self._choose(True),
+            width=14,
+            height=2,
+        )
+        btn.pack()  # centered in the top bar
+
+        # In show_trajectory_plot, before creating plot_frame:
+        self._set_message("Trajectory result")  # optional
+        self._set_buttons([("Continue", True)])
+        # then create plot_frame in row=1 instead of row=0 (so _set_buttons uses row 0)
+
+        # --- Plot area (fills rest) ---
+        plot_frame = tk.Frame(self._content)
+        plot_frame.grid(row=1, column=0, sticky="nsew")
+
+        fig = Figure(figsize=(6.8, 5.0), dpi=100)
         ax = fig.add_subplot(111)
 
         ax.plot(xs, ys, marker="o")
@@ -198,21 +286,13 @@ class HumanPrompter:
         ax.set_title("Ball trajectory (Kalman filtered)")
         ax.grid(True)
 
-        canvas = FigureCanvasTkAgg(fig, master=self._content)
+        canvas = FigureCanvasTkAgg(fig, master=plot_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
-        # Optional continue button below plot
-        btn = tk.Button(
-            self._content,
-            text="Continue",
-            font=("TkDefaultFont", 12),
-            command=lambda: self._choose(True),
-        )
-        btn.pack(pady=8)
-
         self._wait()
 
+    
     def show_hole(self, hole_number: int):
         self._headline.config(text=f"HOLE {hole_number}")
         
@@ -321,9 +401,12 @@ class HumanPrompter:
 
 def real_init_parameters(camera_index):
     # Ball
-    bx, by = get_ball_start_position(debug=True, debug_raw=False, use_cam=True, camera_index=camera_index, operating_system=OPERATING_SYSTEM)
+    bx, by, dbg = get_ball_start_position(debug=True, return_debug_image=True, debug_raw=False, use_cam=True, camera_index=camera_index, operating_system=OPERATING_SYSTEM)
     ball_start_position = np.array([bx, by])  # in meters
     print(ball_start_position)
+    
+    if dbg is not None:
+        prompter.show_image(dbg, title="Ball start detection")
     
     # Holes
     chosen_hole = random.choice([1,2,3])

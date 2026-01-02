@@ -66,7 +66,7 @@ def capture_single_frame(
         print("img.shape =", img.shape)
         cap.release()
 
-def get_ball_start_position(debug=True, debug_raw=False, use_cam=True, camera_index = 1, operating_system="windows"):
+def get_ball_start_position(debug=True, return_debug_image=False, debug_raw=False, use_cam=True, camera_index = 1, operating_system="windows"):
     # Read image
     frame_height = 1080
     frame_width = 1920
@@ -205,9 +205,12 @@ def get_ball_start_position(debug=True, debug_raw=False, use_cam=True, camera_in
 
         cv2.putText(dbg, "+Y", (py[0] + 5, py[1] + 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
-        cv2.imshow("ball + ref + coordinate frame", dbg)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        if return_debug_image:
+            return (dx, dy, dbg)
+        else:   
+            cv2.imshow("ball + ref + coordinate frame", dbg)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
         
     return (dx, dy)
 
