@@ -9,6 +9,7 @@ import re
 import random
 import threading
 import time
+import socket
 import glob
 import tkinter as tk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -555,16 +556,8 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
 
     print("Trajectory streamer output:")
     print(result.stdout)
-
-    
-    # Stop vision recording
-    print("Stopping camera recording...")
-    stop_event.set()
-    recording_thread.join()
-    print("Recording thread joined. Done.")
     
     # Start thread for return to home position
-    
     ur_thread = threading.Thread(
         target=ur_movej,
         kwargs={
@@ -573,6 +566,14 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
         },
     )
     ur_thread.start()
+    
+    # Stop vision recording
+    print("Stopping camera recording...")
+    stop_event.set()
+    recording_thread.join()
+    print("Recording thread joined. Done.")
+    
+
 
     # Measure 
     # Deafaults
