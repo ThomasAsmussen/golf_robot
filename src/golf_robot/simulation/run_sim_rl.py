@@ -337,7 +337,7 @@ class NullViewer:
 # ---------------------------------------------------------------------
 def run_loop(model, data, cfg,
              base_idx, base_pose,
-             ids, nstep, max_vel, vx_des, aim_yaw_rad):
+             ids, nstep, max_vel, vx_des, aim_yaw_rad, hole_xy):
     """
     Run the main simulation loop with viewer or headless.
     inputs:
@@ -487,6 +487,8 @@ def run_loop(model, data, cfg,
                         if not started:
                             started = True
 
+                    
+
                     elif started and ((t - last_move_t) >= 0.05):
                         if do_print:
                             print(f"[{t:7.3f}s] Ball has been still for 0.05s, ending simulation.")
@@ -498,6 +500,12 @@ def run_loop(model, data, cfg,
                     last_xy = xy.copy()
                     last_move_t = t
 
+                # if ball has gone further in x than the hole, stop sim
+                if (hole_xy[0] - ball_p[0]) < -0.2:
+                    if do_print:
+                        print(f"[{t:7.3f}s] Ball has passed beyond hole x-position, ending simulation.")
+                    return ball_p[0], ball_p[1], is_ball_in_hole(data, cfg, ids), np.array(trajectory)
+                
                 if z < -0.2:
                     if do_print:
                         print(f"[{t:7.3f}s] Ball has fallen below z=-0.2m, ending simulation.")
@@ -604,7 +612,7 @@ def run_sim(aim_yaw_deg, vx_des, hole_pos_xy, cfg, disc_positions=None):
     return run_loop(model, data, cfg,
              (qadr_base, vadr_base),
              (base_pos_baked, base_quat_baked),
-             ids, nstep, max_vel, float(vx_des), math.radians(aim_yaw_deg))
+             ids, nstep, max_vel, float(vx_des), math.radians(aim_yaw_deg), hole_pos_xy)
 
 # ---------------------------------------------------------------------
 # CLI

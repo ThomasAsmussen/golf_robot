@@ -1,5 +1,5 @@
-program: src/golf_robot/reinforcement_learning/contextual_bandit.py  # <-- adjust if filename differs
-method: grid   # or "random" if you prefer
+program: src/golf_robot/contextual_bandit2.py  # <-- adjust if filename differs
+method: bayes   # or "random" if you prefer
 
 metric:
   name: final_success_rate
@@ -11,3 +11,15 @@ parameters:
 
   distance_scale:
     values: [0.5, 1.0, 3.0]
+
+  w_distance:
+    values: [0.2, 0.5, 0.8]
+
+  optimal_speed:
+    values: [0.5, 0.65, 0.8]
+
+  dist_at_hole_scale:
+    values: [2.0, 5.0, 10.0]
+
+  optimal_speed_scale:
+    values: [2.0, 5.0, 10.0]

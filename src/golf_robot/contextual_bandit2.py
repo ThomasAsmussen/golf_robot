@@ -11,30 +11,23 @@ import uuid
 import json
 import time
 import re
+from rl_common import *
 
 # ---------------------------------------------------------
 # Global noise parameters (environment / measurement noise)
 # ---------------------------------------------------------
-SPEED_NOISE_STD      = 0.1
-ANGLE_NOISE_STD      = 0.1
-BALL_OBS_NOISE_STD   = 0.002
-HOLE_OBS_NOISE_STD   = 0.002
-MIN_HOLE_X           = 3.0
-MAX_HOLE_X           = 4.0
-MIN_HOLE_Y           = -0.5
-MAX_HOLE_Y           = 0.5
-MIN_BALL_X           = -0.5
-MAX_BALL_X           = 0.5
-MIN_BALL_Y           = -0.5
-MAX_BALL_Y           = 0.5
-
-
-# ---------------------------------------------------------
-# Utilities
-# ---------------------------------------------------------
-def squash_to_range(x, lo, hi):
-    """Squash a value in [-1, 1] to [lo, hi]."""
-    return lo + 0.5 * (x + 1.0) * (hi - lo)
+# SPEED_NOISE_STD      = 0.1
+# ANGLE_NOISE_STD      = 0.1
+# BALL_OBS_NOISE_STD   = 0.002
+# HOLE_OBS_NOISE_STD   = 0.002
+# MIN_HOLE_X           = 3.0
+# MAX_HOLE_X           = 4.0
+# MIN_HOLE_Y           = -0.5
+# MAX_HOLE_Y           = 0.5
+# MIN_BALL_X           = -0.5
+# MAX_BALL_X           = 0.5
+# MIN_BALL_Y           = -0.5
+# MAX_BALL_Y           = 0.5
 
 
 # ---------------------------------------------------------
@@ -75,300 +68,6 @@ class Critic(nn.Module):
         return x
     
 
-def load_replay_from_jsonl(
-        jsonl_path: Path,
-        replay_buffer_big,
-        replay_buffer_recent,
-        max_recent: int = 1000,
-):
-    jsonl_path = Path(jsonl_path)
-    if not jsonl_path.exists():
-        return 0
-
-    loaded = 0
-    lines = jsonl_path.read_text().strip().splitlines()
-
-    if not lines:
-        return 0
-    
-    for line in lines:
-        ep = json.loads(line)
-
-        if not ep.get("used_for_training", True):
-            continue
-
-        s = torch.tensor(ep["state_norm"], dtype=torch.float32)
-        a = torch.tensor(ep["action_norm"], dtype=torch.float32)
-        r = float(ep["reward"])
-
-        replay_buffer_big.add(s, a, r)
-        loaded += 1
-
-    replay_buffer_recent.clear()
-    for line in lines[-max_recent:]:
-        ep = json.loads(line)
-        if not ep.get("used_for_training", True):
-            continue
-
-        s = torch.tensor(ep["state_norm"], dtype=torch.float32)
-        a = torch.tensor(ep["action_norm"], dtype=torch.float32)
-        r = float(ep["reward"])
-        replay_buffer_recent.add(s, a, r)
-    
-    return loaded
-
-
-
-class EpisodeLoggerJson:
-    def __init__(self, path: Path):
-        self.path = path
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.f = open(self.path, "a", buffering=1)
-
-    def log(self, record: dict):
-        # print(f"Logging episode to {self.path}: episode {record.get('episode', 'N/A')}")
-        self.f.write(json.dumps(record, default=_json_default) + "\n")
-        self.f.flush()
-        os.fsync(self.f.fileno())
-
-    def close(self):
-        self.f.close()
-
-
-def _json_default(obj):
-    import numpy as np
-    if isinstance(obj, (np.integer,)):
-        return int(obj)
-    if isinstance(obj, (np.floating,)):
-        return float(obj)
-    if isinstance(obj, (np.bool_,)):
-        return bool(obj)
-    if isinstance(obj, (np.ndarray,)):
-        return obj.tolist()
-    # last resort: stringify (or raise)
-    return str(obj)
-
-# ---------------------------------------------------------
-# Replay Buffer
-# ---------------------------------------------------------
-class ReplayBuffer:
-    """
-    Stores (state, action, reward) tuples for a contextual bandit.
-    No next_state, no done.
-    """
-    def __init__(self, capacity=100000):
-        self.capacity = capacity
-        self.ptr = 0
-        self.full = False
-        self.data = []
-
-    def add(self, state, action, reward):
-        if len(self.data) < self.capacity:
-            self.data.append((state, action, reward))
-        else:
-            self.data[self.ptr] = (state, action, reward)
-            self.full = True
-
-        self.ptr = (self.ptr + 1) % self.capacity
-
-    def sample(self, batch_size):
-        idx = torch.randint(0, len(self.data), (batch_size,))
-        states, actions, rewards = zip(*[self.data[i] for i in idx])
-
-        return (
-            torch.stack(states),
-            torch.stack(actions),
-            torch.tensor(rewards, dtype=torch.float32).unsqueeze(-1),
-        )
-
-    def clear(self):
-        self.ptr = 0
-        self.full = False
-        self.data = []
-
-
-
-
-
-def sample_mixed(recent_buf, all_buf, recent_ratio, batch_size):
-    n_recent_avail = len(recent_buf.data)
-    n_all_avail    = len(all_buf.data)
-
-    if n_all_avail == 0:
-        raise RuntimeError("All-buffer is empty; cannot sample.")
-
-    # target split
-    num_recent = int(round(batch_size * recent_ratio))
-    num_all    = batch_size - num_recent
-
-    # clamp to availability (and fall back to all_buf)
-    num_recent = min(num_recent, n_recent_avail)
-    num_all    = batch_size - num_recent  # fill remainder from all_buf
-
-    states_a, actions_a, rewards_a = all_buf.sample(num_all)
-
-    if num_recent > 0:
-        states_r, actions_r, rewards_r = recent_buf.sample(num_recent)
-        states  = torch.cat([states_r,  states_a],  dim=0)
-        actions = torch.cat([actions_r, actions_a], dim=0)
-        rewards = torch.cat([rewards_r, rewards_a], dim=0)
-    else:
-        states, actions, rewards = states_a, actions_a, rewards_a
-
-    return states, actions, rewards
-
-
-
-def scale(x, lo, hi):
-    """Scale x in [lo, hi] to [-1, 1]."""
-    return 2.0 * (x - lo) / (hi - lo) - 1.0
-
-def scale_state_vec(state_vec):
-    """
-    Scale state vector components to [-1, 1].
-    Assumes state vector layout:
-    [ ball_x, ball_y,
-      hole_x, hole_y,
-      disc1_x, disc1_y, disc1_present,
-      ...
-      discN_x, discN_y, discN_present ]
-    """
-    ball_x, ball_y = state_vec[0], state_vec[1]
-    hole_x, hole_y = state_vec[2], state_vec[3]
-
-    ball_x_scaled = scale(ball_x, MIN_BALL_X, MAX_BALL_X)
-    ball_y_scaled = scale(ball_y, MIN_BALL_Y, MAX_BALL_Y)
-    hole_x_scaled = scale(hole_x, MIN_HOLE_X, MAX_HOLE_X)
-    hole_y_scaled = scale(hole_y, MIN_HOLE_Y, MAX_HOLE_Y)
-
-    disc_data = state_vec[4:]
-    disc_scaled = []
-    for i in range(0, len(disc_data), 3):
-        disc_x, disc_y, disc_present = disc_data[i], disc_data[i+1], disc_data[i+2]
-        if disc_present == 0:
-            disc_x_scaled, disc_y_scaled = -1.0, -1.0  # Default position for absent discs
-        else:
-            disc_x_scaled = scale(disc_x, MIN_HOLE_X - 2.0, MAX_HOLE_X)
-            disc_y_scaled = scale(disc_y, MIN_HOLE_Y, MAX_HOLE_Y)
-        disc_scaled.extend([disc_x_scaled, disc_y_scaled, disc_present])
-
-    return np.array([ball_x_scaled, ball_y_scaled, hole_x_scaled, hole_y_scaled] + disc_scaled)
-# ---------------------------------------------------------
-# Reward and state encoding
-# ---------------------------------------------------------
-def compute_reward(ball_end_pos, hole_pos, in_hole, meta, in_hole_reward=3.0, distance_scale=0.5):
-    """
-    Single-step reward.
-    - If in_hole: large positive reward.
-    - Else: distance-based shaping.
-    """
-    if in_hole:
-        return in_hole_reward
-
-    dist_at_hole = meta.get("dist_at_hole", None)
-    speed_at_hole = meta.get("speed_at_hole", None)
-    if dist_at_hole is not None and speed_at_hole is not None:
-        dist_at_hole_reward = np.exp(-5 * dist_at_hole)
-        speed_at_hole_reward = np.exp(-5 * np.abs(speed_at_hole - 0.5))
-        return 0.5 * dist_at_hole_reward + 0.5 * speed_at_hole_reward
-    
-    final_dist = np.linalg.norm(ball_end_pos - hole_pos)
-    final_dist_reward = np.exp(-distance_scale * final_dist)
-    return final_dist_reward
-
-
-def generate_disc_positions(max_num_discs, x_min, x_max, y_min, y_max, hole_xy):
-    """
-    Randomly place discs around the hole, no overlap and not too close to hole.
-    """
-    hole_x, hole_y = hole_xy
-    num_discs = np.random.randint(0, max_num_discs + 1)
-    disc_positions = []
-    min_dist_from_objects = 0.25
-
-    x_lo = x_min + min_dist_from_objects
-    x_hi = x_max - min_dist_from_objects
-    y_lo = y_min + min_dist_from_objects
-    y_hi = y_max - min_dist_from_objects
-
-    max_tries_per_disc = 100
-
-    for _ in range(num_discs):
-        placed = False
-        for _ in range(max_tries_per_disc):
-            x = np.random.uniform(x_lo, x_hi)
-            y = np.random.uniform(y_lo, y_hi)
-
-            if np.hypot(x - hole_x, y - hole_y) < min_dist_from_objects:
-                continue
-
-            too_close = False
-            for (dx, dy) in disc_positions:
-                if np.hypot(x - dx, y - dy) < min_dist_from_objects:
-                    too_close = True
-                    break
-
-            if too_close:
-                continue
-
-            disc_positions.append((x, y))
-            placed = True
-            break
-
-        if not placed:
-            raise RuntimeError("Could not place all discs without overlap.")
-
-    disc_positions.sort(key=lambda p: np.hypot(p[0] - hole_x, p[1] - hole_y))
-    return disc_positions
-
-
-def encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, max_num_discs):
-    """
-    State layout:
-
-    [ ball_x, ball_y,
-      hole_x, hole_y,
-      disc1_x, disc1_y, disc1_present,
-      ...
-      discN_x, discN_y, discN_present ]
-    """
-    default_value = 0.0
-    disc_coords = []
-
-    for i in range(max_num_discs):
-        if i < len(disc_positions):
-            x, y = disc_positions[i]
-            disc_placed = 1
-        else:
-            x, y = default_value, default_value
-            disc_placed = 0
-
-        disc_coords.extend([x, y, disc_placed])
-
-    return np.concatenate([ball_start_obs, hole_pos_obs, np.array(disc_coords)])
-
-
-
-def sim_init_parameters(mujoco_cfg, max_num_discs):
-    # max_num_discs = np.min([5, episode // 3000])  # Increase discs over time
-    # print(f"Episode {episode + 1}: max_num_discs = {max_num_discs}")
-    ball_start = np.random.uniform(-0.5, 0.5, size=(2,))
-    # ball_start = np.array([0, 0])  # FIXED START FOR DEBUGGING
-    ball_start_obs = ball_start + np.random.normal(0, BALL_OBS_NOISE_STD, size=(2,))
-    mujoco_cfg["ball"]["start_pos"]     = [ball_start[0],     ball_start[1],     0.02135]
-    mujoco_cfg["ball"]["obs_start_pos"] = [ball_start_obs[0], ball_start_obs[1], 0.02135]
-
-    x, y = random_hole_in_rectangle(x_min=MIN_HOLE_X, x_max=MAX_HOLE_X, y_min=MIN_HOLE_Y, y_max=MAX_HOLE_Y)
-    hole_pos = np.array([x, y])
-    hole_pos_obs = hole_pos + np.random.normal(0, HOLE_OBS_NOISE_STD, size=(2,))
-
-    disc_positions = generate_disc_positions(
-        max_num_discs, x - 2.0, x, MIN_HOLE_Y, MAX_HOLE_Y, hole_xy=hole_pos
-    ) # No discs for now
-
-    return ball_start_obs, hole_pos_obs, disc_positions, x, y, hole_pos
-
-
 # ---------------------------------------------------------
 # Training loop (Contextual Bandit)
 # ---------------------------------------------------------
@@ -403,6 +102,10 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
 
     in_hole_reward = rl_cfg["reward"]["in_hole_reward"]
     distance_scale = rl_cfg["reward"]["distance_scale"]
+    w_distance     = rl_cfg["reward"]["w_distance"]
+    optimal_speed  = rl_cfg["reward"]["optimal_speed"]
+    dist_at_hole_scale = rl_cfg["reward"]["dist_at_hole_scale"]
+    optimal_speed_scale = rl_cfg["reward"]["optimal_speed_scale"]
 
     # Linear schedule for exploration noise (policy noise)
     noise_std_start = noise_std
@@ -483,7 +186,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
 
     if env_type == "real":
         episode_log_path = project_root / "log" / "real_episodes" / "episode_logger.jsonl"
-        episode_logger = EpisodeLoggerJson(episode_log_path)
+        episode_logger = EpisodeLoggerJsonl(episode_log_path)
 
         loaded_n = load_replay_from_jsonl(
             episode_log_path,
@@ -577,13 +280,20 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
 
         ball_x, ball_y, in_hole, meta = result
 
+        if env_type == "sim":
+            meta = meta_from_trajectory_xy(meta, hole_pos_obs)
+
         reward = compute_reward(
-            ball_end_pos=np.array([ball_x, ball_y]),
-            hole_pos=hole_pos_obs,
+            ball_end_xy=np.array([ball_x, ball_y]),
+            hole_xy=hole_pos_obs,
             in_hole=in_hole,
             meta=meta,
-            distance_scale=distance_scale,
             in_hole_reward=in_hole_reward,
+            distance_scale=distance_scale,
+            w_distance=w_distance,
+            optimal_speed=optimal_speed,
+            dist_at_hole_scale=dist_at_hole_scale,
+            optimal_speed_scale=optimal_speed_scale,
         )
 
         if env_type == "real" and isinstance(meta, dict):
@@ -905,12 +615,16 @@ def evaluation_policy_short(
             )
 
             reward = compute_reward(
-                ball_end_pos=np.array([ball_x, ball_y]),
-                hole_pos=hole_pos,
+                ball_end_xy=np.array([ball_x, ball_y]),
+                hole_xy=hole_pos,
                 in_hole=in_hole,
                 meta=meta,
                 distance_scale=rl_cfg["reward"]["distance_scale"],
                 in_hole_reward=rl_cfg["reward"]["in_hole_reward"],
+                w_distance=rl_cfg["reward"]["w_distance"],
+                optimal_speed=rl_cfg["reward"]["optimal_speed"],
+                dist_at_hole_scale=rl_cfg["reward"]["dist_at_hole_scale"],
+                optimal_speed_scale=rl_cfg["reward"]["optimal_speed_scale"],
             )
 
             rewards.append(reward)
@@ -921,15 +635,6 @@ def evaluation_policy_short(
     avg_distance_to_hole = float(np.mean(distances_to_hole)) if distances_to_hole else 0.0
     actor.train()
     return successes / num_episodes, float(np.mean(rewards)), avg_distance_to_hole
-
-
-# ---------------------------------------------------------
-# Context sampling helper
-# ---------------------------------------------------------
-def random_hole_in_rectangle(x_min=3.0, x_max=5.0, y_min=-0.5, y_max=0.5):
-    x = np.random.uniform(x_min, x_max)
-    y = np.random.uniform(y_min, y_max)
-    return x, y
 
 
 # ---------------------------------------------------------
@@ -1005,6 +710,10 @@ if __name__ == "__main__":
         cfg = wandb.config
         rl_cfg["reward"]["distance_scale"]   = cfg.get("distance_scale", rl_cfg["reward"]["distance_scale"])
         rl_cfg["reward"]["in_hole_reward"]   = cfg.get("in_hole_reward", rl_cfg["reward"]["in_hole_reward"])
+        rl_cfg["reward"]["w_distance"]       = cfg.get("w_distance", rl_cfg["reward"]["w_distance"])
+        rl_cfg["reward"]["optimal_speed"]    = cfg.get("optimal_speed", rl_cfg["reward"]["optimal_speed"])
+        rl_cfg["reward"]["dist_at_hole_scale"] = cfg.get("dist_at_hole_scale", rl_cfg["reward"]["dist_at_hole_scale"])
+        rl_cfg["reward"]["optimal_speed_scale"] = cfg.get("optimal_speed_scale", rl_cfg["reward"]["optimal_speed_scale"])
 
     # Train contextual bandit policy
     training(

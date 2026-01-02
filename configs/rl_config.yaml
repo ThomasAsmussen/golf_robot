@@ -10,10 +10,10 @@ training:
   eval_interval: 50
   eval_episodes: 20
   target_update_rho: 0.005
-  continue_training: True
+  continue_training: False
   error_hard_stop: True
   do_prints: False
-  env_type: "real"
+  env_type: "sim"
   model_name: "northern_sweep_9.pth"
 
 model:
@@ -28,3 +28,7 @@ model:
 reward:
   distance_scale: 0.5
   in_hole_reward: 3.0
+  w_distance: 0.6
+  optimal_speed: 0.65
+  dist_at_hole_scale: 5.0
+  optimal_speed_scale: 5.0
