@@ -647,40 +647,40 @@ for (size_t i = 0; i < N && keep_running.load(); ++i) {
     mydriver.rt_interface_->addCommandToQueue("stopj(1.0)\n");
     std::this_thread::sleep_for(std::chrono::milliseconds(1500));
 
-    // Return to start pose (even if aborted)
-    std::cout << "[INFO] Performing return-to-start...\n";
-    {
-        const double a_move = 1.2;
-        const double v_move = 0.25;
-        char cmdbuf[512];
-        // snprintf(cmdbuf, sizeof(cmdbuf),
-        //          "movej([%.6f,%.6f,%.6f,%.6f,%.6f,%.6f], a=%.3f, v=%.3f)\n",
-        //          q_start[0], q_start[1], q_start[2], q_start[3], q_start[4], q_start[5],
-        //          a_move, v_move);
-        snprintf(cmdbuf, sizeof(cmdbuf),
-                 "movej([%.6f,%.6f,%.6f,%.6f,%.6f,%.6f], a=%.3f, v=%.3f)\n",
-                 END_POS[0], END_POS[1], END_POS[2], END_POS[3], END_POS[4], END_POS[5],
-                 a_move, v_move);
-        mydriver.rt_interface_->addCommandToQueue(std::string(cmdbuf));
+    // Return to start pose (even if aborted) COMMENT IN IF NEEDED
+    // std::cout << "[INFO] Performing return-to-start...\n";
+    // {
+    //     const double a_move = 1.2;
+    //     const double v_move = 0.25;
+    //     char cmdbuf[512];
+    //     // snprintf(cmdbuf, sizeof(cmdbuf),
+    //     //          "movej([%.6f,%.6f,%.6f,%.6f,%.6f,%.6f], a=%.3f, v=%.3f)\n",
+    //     //          q_start[0], q_start[1], q_start[2], q_start[3], q_start[4], q_start[5],
+    //     //          a_move, v_move);
+    //     snprintf(cmdbuf, sizeof(cmdbuf),
+    //              "movej([%.6f,%.6f,%.6f,%.6f,%.6f,%.6f], a=%.3f, v=%.3f)\n",
+    //              END_POS[0], END_POS[1], END_POS[2], END_POS[3], END_POS[4], END_POS[5],
+    //              a_move, v_move);
+    //     mydriver.rt_interface_->addCommandToQueue(std::string(cmdbuf));
 
-        const double tol = 1e-3;
-        const double timeout_s = 10.0;
-        auto t_wait0 = std::chrono::steady_clock::now();
-        bool reached = false;
+    //     const double tol = 1e-3;
+    //     const double timeout_s = 10.0;
+    //     auto t_wait0 = std::chrono::steady_clock::now();
+    //     bool reached = false;
 
-        while (std::chrono::duration<double>(std::chrono::steady_clock::now() - t_wait0).count() < timeout_s) {
-            std::vector<double> cur = mydriver.rt_interface_->robot_state_->getQActual();
-            if (cur.size() == 6) {
-                double err = 0.0;
-                for (int k = 0; k < 6; ++k) err += std::fabs(cur[k] - q_start[k]);
-                if (err < tol) { reached = true; break; }
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        }
+    //     while (std::chrono::duration<double>(std::chrono::steady_clock::now() - t_wait0).count() < timeout_s) {
+    //         std::vector<double> cur = mydriver.rt_interface_->robot_state_->getQActual();
+    //         if (cur.size() == 6) {
+    //             double err = 0.0;
+    //             for (int k = 0; k < 6; ++k) err += std::fabs(cur[k] - q_start[k]);
+    //             if (err < tol) { reached = true; break; }
+    //         }
+    //         std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    //     }
 
-        if (!reached) std::cerr << "[WARN] return-to-start did not reach target within timeout\n";
-        else          std::cout << "[INFO] Return-to-start reached target\n";
-    }
+    //     if (!reached) std::cerr << "[WARN] return-to-start did not reach target within timeout\n";
+    //     else          std::cout << "[INFO] Return-to-start reached target\n";
+    // }
 
     mydriver.halt();
 

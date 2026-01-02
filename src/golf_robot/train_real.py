@@ -26,6 +26,7 @@ from vision.ball_at_hole_state import process_video
 OPERATING_SYSTEM = "linux"  # "windows" or "linux"
 CAMERA_INDEX_START = 4  # starting camera index for real robot
 CAMERA_INDEX_END   = 2  # ending camera index for real robot
+END_POS = [-2.47, -2.38, -1.55, 1.66, 0.49, -0.26]
 
 
 
@@ -399,6 +400,32 @@ class HumanPrompter:
         except tk.TclError:
             pass
 
+# For return to home position
+def ur_movej(
+    robot_ip,
+    q,
+    a=1.2,
+    v=0.25,
+    wait_time=5.0,
+):
+    """
+    Send a blocking movej command via URScript over port 30002.
+    """
+    assert len(q) == 6
+
+    script = (
+        "def py_move():\n"
+        f"  movej([{','.join(f'{x:.6f}' for x in q)}], a={a}, v={v})\n"
+        "end\n"
+        "py_move()\n"
+    )
+
+    with socket.create_connection((robot_ip, 30002), timeout=5) as s:
+        s.sendall(script.encode("utf-8"))
+
+    # URScript is fire-and-forget → wait conservatively
+    time.sleep(wait_time)
+
 def real_init_parameters(camera_index):
     # Ball
     bx, by, dbg = get_ball_start_position(debug=True, return_debug_image=True, debug_raw=False, use_cam=True, camera_index=camera_index, operating_system=OPERATING_SYSTEM)
@@ -500,24 +527,19 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
     prompter.confirm_or_exit("Ready to execute trajectory. Continue?")
 
     here = Path(__file__).resolve().parent
-    traj_exe = here / "communication"
+    traj_exe = here / "communication" / "traj_streamer"
 
     if OPERATING_SYSTEM == "linux":
-        swing_cmd = traj_exe / "traj_streamer_swing"
-        return_cmd = traj_exe / "traj_streamer_return"
+        traj_cmd = [str(traj_exe)]
+
     elif OPERATING_SYSTEM == "windows":
-        swing_path = traj_exe / "traj_streamer_swing"
-        return_path = traj_exe / "traj_streamer_return"
-        wsl_pathA = subprocess.check_output(
-            ["wsl", "wslpath", "-a", str(swing_path)],
+        win_path = here / "communication" / "traj_streamer"
+        wsl_path = subprocess.check_output(
+            ["wsl", "wslpath", "-a", str(win_path)],
             text=True
         ).strip()
-        traj_cmd = ["wsl", wsl_pathA]
-        wsl_pathB = subprocess.check_output(
-            ["wsl", "wslpath", "-a", str(return_path)],
-            text=True
-        ).strip()
-        return_cmd = ["wsl", wsl_pathB]
+        traj_cmd = ["wsl", wsl_path]
+
     else:
         raise RuntimeError(f"Unsupported OS: {OPERATING_SYSTEM}")
     
@@ -541,9 +563,17 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
     recording_thread.join()
     print("Recording thread joined. Done.")
     
-    # now run return exe
-    subprocess.run([str(return_cmd)], check=True)
+    # Start thread for return to home position
     
+    ur_thread = threading.Thread(
+        target=ur_movej,
+        kwargs={
+            "robot_ip": "192.38.66.227",
+            "q": END_POS,
+        },
+    )
+    ur_thread.start()
+
     # Measure 
     # Deafaults
     dist_at_hole = None
