@@ -37,6 +37,7 @@ def record_from_camera(
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_height)
     cap.set(cv2.CAP_PROP_FPS, fps)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     
     buffer_size = max(1, int(round(fps * keep_last_seconds)))
     frame_buffer = deque(maxlen=buffer_size)
@@ -92,5 +93,4 @@ def record_from_camera(
 
 
 if __name__ == "__main__":
-    # Example: run capture for 10s, but only save the last 5s
-    record_from_camera(camera_index=4, time_length=10.0, keep_last_seconds=5.0, show_preview=False)
+    pass
