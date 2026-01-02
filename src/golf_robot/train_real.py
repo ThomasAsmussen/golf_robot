@@ -56,9 +56,12 @@ class HumanPrompter:
         self._label = tk.Label(self._frame, text="", justify="left", wraplength=420)
         self._label.pack(fill="x", pady=(0, 10))
 
-        self._btn_row = tk.Frame(self._frame)
-        self._btn_row.pack(fill="both", expand=True)   # allow the row to expand vertically too
-        self._btn_row.grid_columnconfigure(0, weight=1)  # center container
+        self._content = tk.Frame(self._frame)
+        self._content.pack(fill="both", expand=True)
+        self._content.grid_columnconfigure(0, weight=1)
+        #self._btn_row = tk.Frame(self._frame)
+        #self._btn_row.pack(fill="both", expand=True)   # allow the row to expand vertically too
+        #self._btn_row.grid_columnconfigure(0, weight=1)  # center container
 
         self._status = tk.Label(self._frame, text="", justify="center")
         self._status.pack(fill="x", pady=(8, 0))
@@ -90,36 +93,36 @@ class HumanPrompter:
     def _set_message(self, text: str):
         self._label.config(text=text)
 
-    def _set_buttons(self, buttons):
-        # buttons: list of (text, value)
-        for w in self._btn_row.winfo_children():
-            w.destroy()
+    # def _set_buttons(self, buttons):
+    #     # buttons: list of (text, value)
+    #     for w in self._btn_row.winfo_children():
+    #         w.destroy()
 
-        # A centered inner frame that holds the buttons
-        inner = tk.Frame(self._btn_row)
-        inner.grid(row=0, column=0, sticky="nsew")  # centered by parent column weight
+    #     # A centered inner frame that holds the buttons
+    #     inner = tk.Frame(self._btn_row)
+    #     inner.grid(row=0, column=0, sticky="nsew")  # centered by parent column weight
 
-        # Make buttons evenly sized
-        btn_font = ("TkDefaultFont", 12)   # bigger text
-        btn_padx = 12
-        btn_pady = 10
-        min_width_chars = 14              # width in "characters" for tk.Button
-        min_height = 2                    # height in text rows
+    #     # Make buttons evenly sized
+    #     btn_font = ("TkDefaultFont", 12)   # bigger text
+    #     btn_padx = 12
+    #     btn_pady = 10
+    #     min_width_chars = 14              # width in "characters" for tk.Button
+    #     min_height = 2                    # height in text rows
 
-        # Configure columns so buttons distribute nicely
-        for i in range(len(buttons)):
-            inner.grid_columnconfigure(i, weight=1)
+    #     # Configure columns so buttons distribute nicely
+    #     for i in range(len(buttons)):
+    #         inner.grid_columnconfigure(i, weight=1)
 
-        for i, (txt, val) in enumerate(buttons):
-            b = tk.Button(
-                inner,
-                text=txt,
-                font=btn_font,
-                width=min_width_chars,
-                height=min_height,
-                command=lambda v=val: self._choose(v),
-            )
-            b.grid(row=0, column=i, padx=btn_padx, pady=btn_pady, sticky="ew")
+    #     for i, (txt, val) in enumerate(buttons):
+    #         b = tk.Button(
+    #             inner,
+    #             text=txt,
+    #             font=btn_font,
+    #             width=min_width_chars,
+    #             height=min_height,
+    #             command=lambda v=val: self._choose(v),
+    #         )
+    #         b.grid(row=0, column=i, padx=btn_padx, pady=btn_pady, sticky="ew")
 
     def _choose(self, value):
         self._result = value
@@ -143,22 +146,43 @@ class HumanPrompter:
         self._spinner_i += 1
         self._spinner_job = self._root.after(300, self._tick_spinner)
 
-        
+    def _clear_content(self):
+        for w in self._content.winfo_children():
+            w.destroy()
+    
+    def _set_buttons(self, buttons):
+        self._clear_content()
+
+        inner = tk.Frame(self._content)
+        inner.grid(row=0, column=0, sticky="nsew")
+
+        btn_font = ("TkDefaultFont", 12)
+        btn_padx = 12
+        btn_pady = 10
+        min_width_chars = 14
+        min_height = 2
+
+        for i in range(len(buttons)):
+            inner.grid_columnconfigure(i, weight=1)
+
+        for i, (txt, val) in enumerate(buttons):
+            b = tk.Button(
+                inner,
+                text=txt,
+                font=btn_font,
+                width=min_width_chars,
+                height=min_height,
+                command=lambda v=val: self._choose(v),
+            )
+            b.grid(row=0, column=i, padx=btn_padx, pady=btn_pady, sticky="ew")
+
+    
     # ---------- Public API ----------
     # Tkinter plot for trajectory, used in GUI mode
-    def show_trajectory_plot(self, xs, ys, hole_xo, hole_yo, bx, by, title="Ball trajectory"):
-        """
-        Pops up a Tk window containing a Matplotlib plot.
-        xs, ys: arrays/lists of filtered trajectory
-        hole_xo, hole_yo: hole position in origo frame
-        bx, by: ball position at crossing (the orange point)
-        """
-        win = tk.Toplevel(self._root)
-        win.title("Trajectory")
-        win.attributes("-topmost", True)
-        win.geometry("700x550")
+    def show_trajectory_plot(self, xs, ys, hole_xo, hole_yo, bx, by):
+        self._clear_content()
 
-        fig = Figure(figsize=(6.5, 5.0), dpi=100)
+        fig = Figure(figsize=(5.8, 4.2), dpi=100)
         ax = fig.add_subplot(111)
 
         ax.plot(xs, ys, marker="o")
@@ -168,16 +192,24 @@ class HumanPrompter:
         ax.set_aspect("equal", "box")
         ax.set_xlabel("X [m]")
         ax.set_ylabel("Y [m]")
-        ax.set_title(title)
+        ax.set_title("Ball trajectory (Kalman filtered)")
         ax.grid(True)
 
-        canvas = FigureCanvasTkAgg(fig, master=win)
+        canvas = FigureCanvasTkAgg(fig, master=self._content)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
 
-        btn = tk.Button(win, text="Close", command=win.destroy)
+        # Optional continue button below plot
+        btn = tk.Button(
+            self._content,
+            text="Continue",
+            font=("TkDefaultFont", 12),
+            command=lambda: self._choose(True),
+        )
         btn.pack(pady=8)
-    
+
+        self._wait()
+
     def show_hole(self, hole_number: int):
         self._headline.config(text=f"HOLE {hole_number}")
         
