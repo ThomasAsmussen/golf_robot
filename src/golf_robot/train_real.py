@@ -407,7 +407,6 @@ def ur_movej(
     q,
     a=1.2,
     v=0.25,
-    wait_time=5.0,
 ):
     """
     Send a blocking movej command via URScript over port 30002.
@@ -423,9 +422,6 @@ def ur_movej(
 
     with socket.create_connection((robot_ip, 30002), timeout=5) as s:
         s.sendall(script.encode("utf-8"))
-
-    # URScript is fire-and-forget → wait conservatively
-    time.sleep(wait_time)
 
 def real_init_parameters(camera_index):
     # Ball
