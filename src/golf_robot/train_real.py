@@ -553,20 +553,18 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
     print("Trajectory streamer output:")
     print(result.stdout)
     
-    # Start thread for return to home position
-    ur_movej(
-        robot_ip="192.38.66.227",
-        q=END_POS,
-    )
-    print("Return to home position command sent.")
-    
     # Stop vision recording
     print("Stopping camera recording...")
     stop_event.set()
     recording_thread.join()
     print("Recording thread joined. Done.")
     
-
+    # Start thread for return to home position
+    ur_movej(
+        robot_ip="192.38.66.227",
+        q=END_POS,
+    )
+    print("Return to home position command sent.")
 
     # Measure 
     # Deafaults
