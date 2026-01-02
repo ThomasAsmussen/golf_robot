@@ -14,7 +14,7 @@ COMMON_SRCS = \
     src/ujac_c.c \
 # 	src/kf_tuning.cpp
 
-# TRAJ_SRCS  = src/traj_streamer.cpp
+TRAJ_SRCS  = src/traj_streamer.cpp
 #TRAJ_SRCS  = src/traj_streamer_swing.cpp
 TRAJ2_SRCS = src/traj_streamer_2.cpp
 TEST_SRCS  = src/test.cpp
