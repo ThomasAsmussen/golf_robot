@@ -39,7 +39,7 @@ class HumanPrompter:
         self._root = tk.Tk()
         self._root.title(title)
         self._root.attributes("-topmost", True)  # keep on top (optional)
-        self._root.geometry("460x220")   # width x height in pixels
+        self._root.geometry("860x640")   # width x height in pixels
         self._root.resizable(False, False)
 
         self._frame = tk.Frame(self._root, padx=12, pady=12)
