@@ -14,8 +14,8 @@ COMMON_SRCS = \
     src/ujac_c.c \
 # 	src/kf_tuning.cpp
 
-TRAJ_SRCS  = src/traj_streamer.cpp
-# TRAJ_SRCS  = src/kf_tuning.cpp
+# TRAJ_SRCS  = src/traj_streamer.cpp
+TRAJ_SRCS  = src/traj_streamer_swing.cpp
 TRAJ2_SRCS = src/traj_streamer_2.cpp
 TEST_SRCS  = src/test.cpp
 
@@ -26,8 +26,8 @@ TRAJ2_OBJS  = $(TRAJ2_SRCS:.cpp=.o)
 TEST_OBJS   = $(TEST_SRCS:.cpp=.o)
 
 DRY_TARGET  = traj_streamer_dry
-TRAJ_TARGET = traj_streamer
-# TRAJ_TARGET = kf_tuning
+# TRAJ_TARGET = traj_streamer
+TRAJ_TARGET = traj_streamer_swing
 TRAJ2_TARGET = traj_streamer2
 TEST_TARGET = test_runner
 

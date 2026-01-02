@@ -500,19 +500,24 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
     prompter.confirm_or_exit("Ready to execute trajectory. Continue?")
 
     here = Path(__file__).resolve().parent
-    traj_exe = here / "communication" / "traj_streamer"
+    traj_exe = here / "communication"
 
     if OPERATING_SYSTEM == "linux":
-        traj_cmd = [str(traj_exe)]
-
+        swing_cmd = traj_exe / "traj_streamer_swing"
+        return_cmd = traj_exe / "traj_streamer_return"
     elif OPERATING_SYSTEM == "windows":
-        win_path = here / "communication" / "traj_streamer"
-        wsl_path = subprocess.check_output(
-            ["wsl", "wslpath", "-a", str(win_path)],
+        swing_path = traj_exe / "traj_streamer_swing"
+        return_path = traj_exe / "traj_streamer_return"
+        wsl_pathA = subprocess.check_output(
+            ["wsl", "wslpath", "-a", str(swing_path)],
             text=True
         ).strip()
-        traj_cmd = ["wsl", wsl_path]
-
+        traj_cmd = ["wsl", wsl_pathA]
+        wsl_pathB = subprocess.check_output(
+            ["wsl", "wslpath", "-a", str(return_path)],
+            text=True
+        ).strip()
+        return_cmd = ["wsl", wsl_pathB]
     else:
         raise RuntimeError(f"Unsupported OS: {OPERATING_SYSTEM}")
     
@@ -535,6 +540,9 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
     stop_event.set()
     recording_thread.join()
     print("Recording thread joined. Done.")
+    
+    # now run return exe
+    subprocess.run([str(return_cmd)], check=True)
     
     # Measure 
     # Deafaults
