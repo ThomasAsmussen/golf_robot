@@ -339,7 +339,8 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
         # TD-style supervised update: Q(s,a) -> r
         # -------------------------------------------------
         if len(replay_buffer_big.data) >= batch_size:
-            print("Updating networks...")
+            if env_type == "real":
+                print("Updating networks...")
             for _ in range(grad_steps):
                 states_b, actions_b, rewards_b = sample_mixed(
                     replay_buffer_recent,
