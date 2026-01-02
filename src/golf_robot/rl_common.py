@@ -29,7 +29,7 @@ import torch
 # =========================================================
 
 # Environment / measurement noise
-SPEED_NOISE_STD: float = 0.1
+SPEED_NOISE_STD: float = 0.05
 ANGLE_NOISE_STD: float = 0.1
 BALL_OBS_NOISE_STD: float = 0.002
 HOLE_OBS_NOISE_STD: float = 0.002
@@ -332,6 +332,7 @@ def compute_reward(
             dist_at_hole = float(dist_at_hole)
             speed_at_hole = float(speed_at_hole)
 
+            print(f"Dist at hole: {dist_at_hole:.4f} m, Speed at hole: {speed_at_hole:.4f} m/s")
             # You can tune these shaping terms globally
             dist_term = np.exp(-dist_at_hole_scale * dist_at_hole)
             speed_term = np.exp(-optimal_speed_scale * abs(speed_at_hole - optimal_speed))  # target ~0.65 m/s near hole
