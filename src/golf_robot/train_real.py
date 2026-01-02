@@ -22,12 +22,11 @@ from vision.ball_start_position import get_ball_start_position
 from planning.generate_trajectory_csv import generate_trajectory_csv
 from vision.record_camera import record_from_camera
 from vision.ball_at_hole_state import process_video
-from vision.record_camera import RollingVideoRecorder
 
 
-OPERATING_SYSTEM = "linux"  # "windows" or "linux"
-CAMERA_INDEX_START = 4  # starting camera index for real robot
-CAMERA_INDEX_END   = 2  # ending camera index for real robot
+OPERATING_SYSTEM = "windows"  # "windows" or "linux"
+CAMERA_INDEX_START = 1  # starting camera index for real robot
+CAMERA_INDEX_END   = 0  # ending camera index for real robot
 END_POS = [-2.47, -2.38, -1.55, 1.66, 0.49, -0.26]
 
 
@@ -461,37 +460,25 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
     print(f"Impact velocity: {impact_velocity} m/s, swing angle: {swing_angle} deg, ball start pos: {ball_start_position} m")
    
     # Start vision recording
-    # stop_event = threading.Event()
+    stop_event = threading.Event()
 
-    # recording_thread = threading.Thread(
-    #     target=record_from_camera,
-    #     kwargs={
-    #         "camera_index": CAMERA_INDEX_END,
-    #         "stop_event": stop_event,       # <-- this is what makes it stop after training
-    #         "keep_last_seconds": 15.0,       # <-- rolling buffer size
-    #         "fps": 30,
-    #         "frame_width": 1920,
-    #         "frame_height": 1080,
-    #         "output_folder": "data",
-    #         "filename_prefix": "trajectory_recording",
-    #         "show_preview": False,
-    #         "operating_system": OPERATING_SYSTEM,
-    #     },
-    #     daemon=True,
-    # )
-    # recording_thread.start()
-
-    rec = RollingVideoRecorder(
-        camera_index=CAMERA_INDEX_END,
-        operating_system=OPERATING_SYSTEM,
-        keep_last_seconds=15.0,
-        fps=30,
-        frame_width=1920,
-        frame_height=1080,
-        output_folder="data",
-        filename_prefix="trajectory_recording",
+    recording_thread = threading.Thread(
+        target=record_from_camera,
+        kwargs={
+            "camera_index": CAMERA_INDEX_END,
+            "stop_event": stop_event,       # <-- this is what makes it stop after training
+            "keep_last_seconds": 15.0,       # <-- rolling buffer size
+            "fps": 30,
+            "frame_width": 1920,
+            "frame_height": 1080,
+            "output_folder": "data",
+            "filename_prefix": "trajectory_recording",
+            "show_preview": False,
+            "operating_system": OPERATING_SYSTEM,
+        },
+        daemon=True,
     )
-    rec.start()
+    recording_thread.start()
 
     time.sleep(2.0)  # optional warm-up
         
@@ -566,21 +553,12 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
     print("Trajectory streamer output:")
     print(result.stdout)
     
-    # # Stop vision recording
-    # print("Stopping camera recording...")
-    # stop_event.set()
-    # recording_thread.join()
-    # print("Recording thread joined. Done.")
+    # Stop vision recording
     print("Stopping camera recording...")
-    status = rec.stop_and_save()
-    print("Recorder status:", status)
-
-    if status and status[0] == "ok":
-        _, video_path, nframes, worst_gap = status
-        print("Saved:", video_path, "frames:", nframes, "worst_gap_ms:", worst_gap * 1000.0)
-    else:
-        print("Recording failed:", status)
-        
+    stop_event.set()
+    recording_thread.join()
+    print("Recording thread joined. Done.")
+    
     # Start thread for return to home position
     ur_movej(
         robot_ip="192.38.66.227",
