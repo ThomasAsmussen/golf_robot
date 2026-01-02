@@ -558,14 +558,11 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
     print(result.stdout)
     
     # Start thread for return to home position
-    ur_thread = threading.Thread(
-        target=ur_movej,
-        kwargs={
-            "robot_ip": "192.38.66.227",
-            "q": END_POS,
-        },
+    ur_movej(
+        robot_ip="192.38.66.227",
+        q=END_POS,
     )
-    ur_thread.start()
+    print("Return to home position command sent.")
     
     # Stop vision recording
     print("Stopping camera recording...")
