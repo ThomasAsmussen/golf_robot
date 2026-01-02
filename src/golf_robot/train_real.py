@@ -11,12 +11,15 @@ import threading
 import time
 import glob
 import tkinter as tk
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
 from contextual_bandit2 import training
 from vision.ball2hole_distance import get_ball_final_position
 from vision.ball_start_position import get_ball_start_position
 from planning.generate_trajectory_csv import generate_trajectory_csv
 from vision.record_camera import record_from_camera
 from vision.ball_at_hole_state import process_video
+
 
 OPERATING_SYSTEM = "linux"  # "windows" or "linux"
 CAMERA_INDEX_START = 2  # starting camera index for real robot
@@ -39,9 +42,16 @@ class HumanPrompter:
         self._root.geometry("460x220")   # width x height in pixels
         self._root.resizable(False, False)
 
-
         self._frame = tk.Frame(self._root, padx=12, pady=12)
         self._frame.pack(fill="both", expand=True)
+        
+        self._headline = tk.Label(
+            self._frame,
+            text="",
+            font=("TkDefaultFont", 28, "bold"),
+            justify="center"
+        )
+        self._headline.pack(fill="x", pady=(0, 8))
 
         self._label = tk.Label(self._frame, text="", justify="left", wraplength=420)
         self._label.pack(fill="x", pady=(0, 10))
@@ -135,6 +145,45 @@ class HumanPrompter:
 
         
     # ---------- Public API ----------
+    # Tkinter plot for trajectory, used in GUI mode
+    def show_trajectory_plot(self, xs, ys, hole_xo, hole_yo, bx, by, title="Ball trajectory"):
+        """
+        Pops up a Tk window containing a Matplotlib plot.
+        xs, ys: arrays/lists of filtered trajectory
+        hole_xo, hole_yo: hole position in origo frame
+        bx, by: ball position at crossing (the orange point)
+        """
+        win = tk.Toplevel(self._root)
+        win.title("Trajectory")
+        win.attributes("-topmost", True)
+        win.geometry("700x550")
+
+        fig = Figure(figsize=(6.5, 5.0), dpi=100)
+        ax = fig.add_subplot(111)
+
+        ax.plot(xs, ys, marker="o")
+        ax.scatter([hole_xo], [hole_yo], s=150, c="black", marker="o")
+        ax.scatter([bx], [by], s=150, c="orange", marker="o")
+
+        ax.set_aspect("equal", "box")
+        ax.set_xlabel("X [m]")
+        ax.set_ylabel("Y [m]")
+        ax.set_title(title)
+        ax.grid(True)
+
+        canvas = FigureCanvasTkAgg(fig, master=win)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        btn = tk.Button(win, text="Close", command=win.destroy)
+        btn.pack(pady=8)
+    
+    def show_hole(self, hole_number: int):
+        self._headline.config(text=f"HOLE {hole_number}")
+        
+    def clear_hole(self):
+        self._headline.config(text="")
+    
     def busy_start(self, text="Working..."):
         """Show an animated 'spinner' text and disable buttons."""
         self._spinner_base = text
@@ -254,7 +303,9 @@ def real_init_parameters(camera_index):
     disc_positions = [] # not used for now in real training
     
     # Confirm
+    prompter.show_hole(chosen_hole) # Show big hole number
     prompter.confirm_or_exit("Trajectory ready. Continue to execute?")
+    prompter.clear_hole() # clear headline
     
     return ball_start_position, hole_position, disc_positions, chosen_hole
     
@@ -404,10 +455,15 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
             files = glob.glob(pattern)
             video_path = max(files, key=os.path.getmtime)
             
-            dist_at_hole, speed_at_hole = process_video(
-                video_path, chosen_hole=chosen_hole,
-                real_time_show=False,   # turn off GUI if running batch
+            dist_at_hole, speed_at_hole, xs, ys, hole_xo, hole_yo, bx, by = process_video(
+                video_path, chosen_hole=chosen_hole, real_time_show=False
             )
+            if dist_at_hole is not None:
+                prompter.show_trajectory_plot(xs, ys, hole_xo, hole_yo, bx, by)
+            #dist_at_hole, speed_at_hole = process_video(
+            #    video_path, chosen_hole=chosen_hole,
+            #    real_time_show=False,   # turn off video if running batch
+            #)
             ball_final_position = np.array([0, 0]) # dummy value
 
     
@@ -485,4 +541,12 @@ def main():
 
 
 if __name__ == "__main__":
+    # Test
+    #global prompter
+    #prompter = HumanPrompter(title="Golf Human Input")
+    #chosen_hole = 3
+    #prompter.show_hole(chosen_hole) # Show big hole number
+    #prompter.confirm_or_exit("Trajectory ready. Continue to execute?")
+    #prompter.clear_hole() # clear headline
+    #prompter.close()
     main()

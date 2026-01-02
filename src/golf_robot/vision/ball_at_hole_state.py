@@ -435,42 +435,46 @@ def process_video(
                         
                         crossed_once = True
                         
-                        if crossed_once:
-                            #load_hole_center_px
-                            fig = plt.figure()
-                            plt.plot(xs, ys, marker="o")
-                            plt.scatter(
-                                hole_xo,
-                                hole_yo,
-                                s=150,
-                                c="black",
-                                marker="o",
-                                edgecolors="white",
-                                linewidths=2,
-                                label="Holes",
-                                zorder=5
-                            )
-                            plt.scatter(
-                                bx,
-                                by,
-                                s=150,
-                                c="orange",
-                                marker="o",
-                                edgecolors="white",
-                                linewidths=1,
-                                label="Holes",
-                                zorder=5
-                            )
-                            plt.gca().set_aspect("equal", "box")
-                            plt.xlabel("X [m]")
-                            plt.ylabel("Y [m]")
-                            plt.title("Ball trajectory on plane (Kalman filtered)")
-                            plt.grid()
-                            plt.draw()
-                            plt.waitforbuttonpress(0)
-                            plt.close(fig)
-                            
-                            return dist, spd
+                        GUI_mode = True
+                        if GUI_mode:
+                            return dist, spd, xs, ys, hole_xo, hole_yo, bx, by
+                        else:
+                            if crossed_once:
+                                #load_hole_center_px
+                                fig = plt.figure()
+                                plt.plot(xs, ys, marker="o")
+                                plt.scatter(
+                                    hole_xo,
+                                    hole_yo,
+                                    s=150,
+                                    c="black",
+                                    marker="o",
+                                    edgecolors="white",
+                                    linewidths=2,
+                                    label="Holes",
+                                    zorder=5
+                                )
+                                plt.scatter(
+                                    bx,
+                                    by,
+                                    s=150,
+                                    c="orange",
+                                    marker="o",
+                                    edgecolors="white",
+                                    linewidths=1,
+                                    label="Holes",
+                                    zorder=5
+                                )
+                                plt.gca().set_aspect("equal", "box")
+                                plt.xlabel("X [m]")
+                                plt.ylabel("Y [m]")
+                                plt.title("Ball trajectory on plane (Kalman filtered)")
+                                plt.grid()
+                                plt.draw()
+                                plt.waitforbuttonpress(0)
+                                plt.close(fig)
+                                
+                                return dist, spd
                         
                     else:
                         # not enough samples for gradient yet; you can delay printing until you have >=3
@@ -533,7 +537,10 @@ def process_video(
     cap.release()
     cv2.destroyAllWindows()
     
-    return None, None
+    if GUI_mode:
+        return None, None, None, None, None, None, None, None
+    else:   
+        return None, None
 
     # # --- Plotting the results ---
     # # --- Convert to arrays and compute velocities ---
