@@ -22,8 +22,8 @@ from vision.ball_at_hole_state import process_video
 
 
 OPERATING_SYSTEM = "linux"  # "windows" or "linux"
-CAMERA_INDEX_START = 2  # starting camera index for real robot
-CAMERA_INDEX_END   = 4  # ending camera index for real robot
+CAMERA_INDEX_START = 4  # starting camera index for real robot
+CAMERA_INDEX_END   = 2  # ending camera index for real robot
 
 
 
@@ -70,6 +70,8 @@ class HumanPrompter:
         self._spinner_base = ""
         self._spinner_i = 0
 
+        # If you want a big center label while busy:
+        self._busy_label = None
 
         # state for current question
         self._event = threading.Event()
@@ -142,7 +144,8 @@ class HumanPrompter:
 
     def _tick_spinner(self):
         dots = "." * (self._spinner_i % 4)  # "", ".", "..", "..."
-        self._status.config(text=f"{self._spinner_base}{dots}")
+        if self._busy_label is not None:
+            self._busy_label.config(text=f"{self._spinner_base}{dots}")
         self._spinner_i += 1
         self._spinner_job = self._root.after(300, self._tick_spinner)
 
@@ -217,29 +220,34 @@ class HumanPrompter:
         self._headline.config(text="")
     
     def busy_start(self, text="Working..."):
-        """Show an animated 'spinner' text and disable buttons."""
+        """Show an animated 'spinner' text inside the main content area."""
         self._spinner_base = text
         self._spinner_i = 0
 
-        # disable any existing buttons
-        for child in self._btn_row.winfo_children():
-            for b in child.winfo_children():
-                if isinstance(b, tk.Button):
-                    b.config(state="disabled")
+        # Replace whatever is in the content area (buttons/plot) with a big label
+        self._clear_content()
+        self._busy_label = tk.Label(
+            self._content,
+            text=text,
+            font=("TkDefaultFont", 18, "bold"),
+            justify="center",
+        )
+        self._busy_label.pack(expand=True)
 
-        # start animation
-        self._status.config(text=text)
         self._tick_spinner()
-        
+
     def busy_stop(self):
-        """Stop spinner and clear status."""
+        """Stop spinner and remove busy UI."""
         if self._spinner_job is not None:
             try:
                 self._root.after_cancel(self._spinner_job)
             except tk.TclError:
                 pass
             self._spinner_job = None
-        self._status.config(text="")
+
+        # Clear busy label (don’t recreate buttons here; next prompt will)
+        self._clear_content()
+        self._busy_label = None
 
     def run_with_spinner(self, text, fn, *args, **kwargs):
         """
@@ -273,7 +281,6 @@ class HumanPrompter:
         if result["err"] is not None:
             raise result["err"]
         return result["value"]
-
 
     def confirm_or_exit(self, text="Press Continue to proceed."):
         ok = self.confirm_continue(text)
