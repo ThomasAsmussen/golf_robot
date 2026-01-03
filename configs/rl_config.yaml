@@ -1,5 +1,5 @@
 training:
-  episodes: 20000
+  episodes: 30000
   actor_lr: 0.001
   critic_lr: 0.001
   noise_std: 0.25
@@ -14,7 +14,7 @@ training:
   error_hard_stop: True
   do_prints: False
   env_type: "sim"
-  model_name: "northern_sweep_9.pth"
+  model_name: "unique_sweep_13.pth"
 
 model:
   state_dim: 19
