@@ -374,7 +374,7 @@ def process_video(
             
         # --- Kalman step ---
         filt_x, filt_y, filt_vx, filt_vy, used_meas = kf.step(meas)
-        t_s = frame_idx / src_fps
+        t_s = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
         
         if filt_x is not None:
             # 1) store filtered positions
@@ -504,7 +504,7 @@ def process_video(
 
         # --- store only after KF has initialized ---
         if filt_x is not None:
-            t_s = frame_idx / src_fps
+            t_s = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
             ball_times.append(t_s)
             ball_world.append((filt_x, filt_y))
             ball_vel.append((filt_vx, filt_vy))
