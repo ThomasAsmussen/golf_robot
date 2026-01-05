@@ -20,15 +20,17 @@ from contextual_bandit2 import training
 from vision.ball2hole_distance import get_ball_final_position
 from vision.ball_start_position import get_ball_start_position
 from planning.generate_trajectory_csv import generate_trajectory_csv
-from vision.record_camera import record_from_camera
+#from vision.record_camera import record_from_camera
 from vision.ball_at_hole_state import process_video
-from vision.ffmpeg_record import start_ffmpeg_record_windows, stop_ffmpeg_record, get_video_frame_count, trim_last_seconds_reencode
+#from vision.ffmpeg_record import start_ffmpeg_record_windows, stop_ffmpeg_record, get_video_frame_count, trim_last_seconds_reencode
 
 
 OPERATING_SYSTEM = "windows"  # "windows" or "linux"
 CAMERA_INDEX_START = 1  # starting camera index for real robot
 CAMERA_INDEX_END   = 0  # ending camera index for real robot
-CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
+CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#7&23aa88cc&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
+#CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
+#CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
 END_POS = [-2.47, -2.38, -1.55, 1.66, 0.49, -0.26]
 
 
@@ -425,6 +427,28 @@ def ur_movej(
     with socket.create_connection((robot_ip, 30002), timeout=5) as s:
         s.sendall(script.encode("utf-8"))
 
+
+# ------ OBS ------ #
+OBS_ENV = {
+    **os.environ,
+    "OBSWS_HOST": "127.0.0.1",
+    "OBSWS_PORT": "4455",
+    #"OBSWS_PASSWORD": "jeff123",
+    #"OBSWS_LOG_LEVEL": "DEBUG",
+}
+
+def obs_replay_start():
+    subprocess.run(["obsws-cli", "replaybuffer", "start"], check=True, env=OBS_ENV)
+
+def obs_replay_save():
+    # Saves last N seconds (as configured in OBS: 15s)
+    subprocess.run(["obsws-cli", "replaybuffer", "save"], check=True, env=OBS_ENV)
+    time.sleep(3)  # finalization cushion
+
+def obs_replay_stop():
+    subprocess.run(["obsws-cli", "replaybuffer", "stop"], check=True, env=OBS_ENV)
+# ----- OBS ----- #
+
 def real_init_parameters(camera_index):
     # Ball
     bx, by, dbg = get_ball_start_position(debug=True, return_debug_image=True, debug_raw=False, use_cam=True, camera_index=camera_index, operating_system=OPERATING_SYSTEM)
@@ -481,11 +505,11 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
     #     daemon=True,
     # )
     # recording_thread.start()
-    camera_name = CAMERA_END #"HD Pro Webcam C920"  # from ffmpeg -list_devices
-    out_path = f"data/trajectory_recording_{time.strftime('%Y%m%d_%H%M%S')}.avi"
+    # camera_name = CAMERA_END #"HD Pro Webcam C920"  # from ffmpeg -list_devices
+    # out_path = f"data/trajectory_recording_{time.strftime('%Y%m%d_%H%M%S')}.avi"
 
-    rec = start_ffmpeg_record_windows(camera_name, out_path, 1920, 1080, 30)
-    time.sleep(2.0)  # optional warmup
+    # rec = start_ffmpeg_record_windows(camera_name, out_path, 1920, 1080, 30)
+    # time.sleep(2.0)  # optional warmup
 
     
     if planner == "quintic":
@@ -553,36 +577,38 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
             text=True,
         )
 
+    # Do not interfere with recording
+    time.sleep(8)
+    
     result = prompter.run_with_spinner("Shooting", run_traj)
 
     print("Trajectory streamer output:")
     print(result.stdout)
     
     # Stop vision recording
-    print("Stopping camera recording...")
+    print("Saving recording from replay buffer")
+    obs_replay_save()
     # stop_event.set()
     # recording_thread.join()
-    stop_ffmpeg_record(rec)
+    #stop_ffmpeg_record(rec)
+    
+    
     print("Recording thread joined. Done.")
 
-    data_dir = "data"
-    prefix ="trajectory_recording"
-    pattern = os.path.join(data_dir, f"{prefix}_*") #_last15s.avi")
+    data_dir = "data/OBS_saved_replay_buffer"
+    prefix ="Replay"
+    pattern = os.path.join(data_dir, f"{prefix}*")
     files = glob.glob(pattern)
     video_path = max(files, key=os.path.getmtime)
-    last15_path = video_path.replace(".avi", "_last15.mp4")  # mp4 is nicer for tools
-    ffmpeg_exe = str(Path(__file__).resolve().parent / "vision" /"ffmpeg.exe")
-    trim_last_seconds_reencode(ffmpeg_exe, video_path, last15_path, seconds=15)
-    print("Saved last 15s:", last15_path)
     
-    print("Recorded video path:", last15_path)
-    frames_captured = get_video_frame_count(last15_path)
-    expected_frames = int(15 * 30)
-    print(frames_captured)
+    print("Recorded video path:", video_path)
+    # frames_captured = get_video_frame_count(video_path)
+    # expected_frames = int(15 * 30)
+    # print(frames_captured)
 
     
-    print(f"Captured {frames_captured}/{expected_frames} frames")
-    print(f"Drop ratio: {(1 - frames_captured/expected_frames)*100:.1f}%")
+    # print(f"Captured {frames_captured}/{expected_frames} frames")
+    # print(f"Drop ratio: {(1 - frames_captured/expected_frames)*100:.1f}%")
     
     # Start thread for return to home position
     ur_movej(
@@ -627,11 +653,11 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
         if on_green:
            ball_final_position = get_ball_final_position(camera_index=CAMERA_INDEX_END, chosen_hole=chosen_hole, use_cam=True, debug=True, operating_system=OPERATING_SYSTEM)
         else: 
-            data_dir = "data"
-            prefix ="trajectory_recording"
-            pattern = os.path.join(data_dir, f"{prefix}_*_last15s.avi")
-            files = glob.glob(pattern)
-            video_path = max(files, key=os.path.getmtime)
+            # data_dir = "data"
+            # prefix ="trajectory_recording"
+            # pattern = os.path.join(data_dir, f"{prefix}_*_last15s.avi")
+            # files = glob.glob(pattern)
+            # video_path = max(files, key=os.path.getmtime)
             
             dist_at_hole, speed_at_hole, xs, ys, hole_xo, hole_yo, bx, by = process_video(
                 video_path, chosen_hole=chosen_hole, real_time_show=False
@@ -683,6 +709,8 @@ def main():
     sim_dir = here / "simulation"
     sys.path.append(str(sim_dir))
 
+    obs_replay_start()
+
     project_root       = here.parents[1]
     mujoco_config_path = project_root / "configs" / "mujoco_config.yaml"
     rl_config_path     = project_root / "configs" / "rl_config.yaml"
@@ -711,6 +739,7 @@ def main():
         # Always close the Tk window (even on exceptions / sys.exit)
         try:
             prompter.close()
+            obs_replay_stop()
         except Exception:
             pass
 

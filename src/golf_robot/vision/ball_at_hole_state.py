@@ -114,6 +114,7 @@ def process_video(
     video_path, 
     chosen_hole=None,
     real_time_show=True,
+    GUI_mode = True,
 ):
     """
     Run ball detection + Kalman tracking on a single video.
@@ -176,7 +177,7 @@ def process_video(
     except RuntimeError as e:
         print("Error in rectify_with_chessboard:", e)
         print("Skip this shot")
-        return None, None
+        return None, None, None, None, None, None, None, None
 
     # Orientation correction (same as ball2hole_distance.py)
     S = np.array([[0, -1, 0],
@@ -250,10 +251,12 @@ def process_video(
     GOLF_BALL_DIAM_M = 0.05
     DIAM_TOL_M = 0.02
     INIT_CONSEC = 2
+    init_streak = 0
 
     while True:
         ret, frame_raw = cap.read()
         if not ret:
+            print(ret)
             break
         
         frame_idx += 1  # count frames processed
@@ -332,8 +335,6 @@ def process_video(
         #DIAM_TOL_M = 0.02     # 10mm tolerance (start here; widen to 0.015 if needed)
         #INIT_CONSEC = 2        # require 2 consecutive ball-sized detections to start
 
-        if "init_streak" not in locals():
-            init_streak = 0
 
         meas = None
         diam_m = None
@@ -435,7 +436,7 @@ def process_video(
                         
                         crossed_once = True
                         
-                        GUI_mode = True
+                        
                         if GUI_mode:
                             return dist, spd, xs, ys, hole_xo, hole_yo, bx, by
                         else:
@@ -509,19 +510,20 @@ def process_video(
             ball_vel.append((filt_vx, filt_vy))
 
         # --- drawing ---
-        if center is not None and radius is not None:
-            col = (0, 255, 0) if (diam_m is not None and abs(diam_m - GOLF_BALL_DIAM_M) <= DIAM_TOL_M) else (0, 0, 255)
-            cv2.circle(debug, center, radius, col, 2)
-            if diam_m is not None:
-                cv2.putText(
-                    debug,
-                    f"{diam_m*1000:.1f}mm",
-                    (center[0] + 10, center[1]),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    col,
-                    1
-                )
+        if not GUI_mode:
+            if center is not None and radius is not None:
+                col = (0, 255, 0) if (diam_m is not None and abs(diam_m - GOLF_BALL_DIAM_M) <= DIAM_TOL_M) else (0, 0, 255)
+                cv2.circle(debug, center, radius, col, 2)
+                if diam_m is not None:
+                    cv2.putText(
+                        debug,
+                        f"{diam_m*1000:.1f}mm",
+                        (center[0] + 10, center[1]),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        col,
+                        1
+                    )
         
         # FPS
         t = time.time()-t_start
@@ -537,6 +539,7 @@ def process_video(
     cap.release()
     cv2.destroyAllWindows()
     
+    print("No returns from video trajectory")
     if GUI_mode:
         return None, None, None, None, None, None, None, None
     else:   
@@ -591,12 +594,12 @@ def process_video(
     # #return ts, xs, ys, vxs, vys, speed, csv_path
     
 if __name__ == "__main__":
-    video_path = "data/trajectory_recording_20251228_181821_last10s.avi"
+    video_path = "data/OBS_saved_replay_buffer/Replay 2026-01-03 20-23-28.mp4"
 
-    dist, spd = process_video(
+    process_video(
         video_path,
         chosen_hole=2,
-        real_time_show=False,   # turn off GUI if running batch
+        real_time_show=True,   # turn off GUI if running batch
     )
 
     #print("Trajectory CSV:", csv_path)

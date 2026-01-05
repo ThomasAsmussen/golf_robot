@@ -11,13 +11,20 @@ def start_ffmpeg_record_windows(camera_alt, out_path, w=1920, h=1080, fps=30):
     cmd = [
         FFMPEG_EXE,
         "-hide_banner", "-loglevel", "error",
+
         "-f", "dshow",
         "-rtbufsize", "1024M",
         "-framerate", str(fps),
         "-video_size", f"{w}x{h}",
-        "-i", f"video={camera_alt}",   # SAFE here
-        "-c:v", "copy",                # IMPORTANT: minimal CPU
-        out_path
+        "-i", f"video={camera_alt}",
+
+        # Intel Quick Sync encoder
+        "-c:v", "h264_qsv",
+        "-global_quality", "23",     # similar to CRF
+        "-look_ahead", "0",
+        "-pix_fmt", "nv12",
+
+        out_path.replace(".avi", ".mp4")
     ]
 
     proc = subprocess.Popen(
@@ -123,19 +130,33 @@ def trim_last_seconds_reencode(ffmpeg_exe, in_path, out_path, seconds=15):
     subprocess.check_call(cmd)
 
 if __name__ == "__main__":
-    import glob
-    data_dir = "data"
-    prefix ="trajectory_recording"
-    pattern = os.path.join(data_dir, f"{prefix}_*") #_last15s.avi")
-    files = glob.glob(pattern)
-    video_path = max(files, key=os.path.getmtime)
-    last15_path = video_path.replace(".avi", "_last15.mp4")  # mp4 is nicer for tools
-    trim_last_seconds_reencode(FFMPEG_EXE, video_path, last15_path, seconds=15)
-    print("Saved last 15s:", last15_path)
+    import subprocess
+    from pathlib import Path
+    #here = os.path
+    here = os.path.dirname(os.path.abspath(__file__))
+    FFMPEG = os.path.join(here, "ffmpeg.exe")
+    camera_alt = "@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global"
+
+    #camera_alt = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
+
+    cmd = [FFMPEG, "-hide_banner", "-loglevel", "error",
+        "-f", "dshow", "-i", f"video={camera_alt}", "-t", "1", "-f", "null", "-"]
+    print(cmd)
+    subprocess.check_call(cmd)
+    print("OK")
+    # import glob
+    # data_dir = "data"
+    # prefix ="trajectory_recording"
+    # pattern = os.path.join(data_dir, f"{prefix}_*") #_last15s.avi")
+    # files = glob.glob(pattern)
+    # video_path = max(files, key=os.path.getmtime)
+    # last15_path = video_path.replace(".avi", "_last15.mp4")  # mp4 is nicer for tools
+    # trim_last_seconds_reencode(FFMPEG_EXE, video_path, last15_path, seconds=15)
+    # print("Saved last 15s:", last15_path)
     
-    print("Recorded video path:", last15_path)
-    frames_captured = get_video_frame_count(last15_path)
-    expected_frames = int(15 * 30)
-    print(frames_captured)
+    # print("Recorded video path:", last15_path)
+    # frames_captured = get_video_frame_count(last15_path)
+    # expected_frames = int(15 * 30)
+    # print(frames_captured)
 
     
