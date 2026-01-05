@@ -22,6 +22,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 
 # =========================================================
@@ -33,6 +35,8 @@ SPEED_NOISE_STD: float = 0.05
 ANGLE_NOISE_STD: float = 0.1
 BALL_OBS_NOISE_STD: float = 0.002
 HOLE_OBS_NOISE_STD: float = 0.002
+
+MAX_DISCS = 3
 
 # Sampling ranges
 MIN_HOLE_X: float = 3.0
@@ -64,6 +68,101 @@ def unscale_from_unit(x_unit: float | np.ndarray, lo: float, hi: float) -> float
     """Inverse of scale_to_unit: map [-1, 1] back to [lo, hi]."""
     return squash_to_range(x_unit, lo, hi)
 
+
+# ---------------------------------------------------------
+# Models
+# ---------------------------------------------------------
+class Actor(nn.Module):
+    """
+    Policy π(s) -> a, deterministic, used as contextual bandit policy.
+    """
+    def __init__(self, state_dim=2, action_dim=2, hidden=128):
+        super().__init__()
+        self.fc1 = nn.Linear(state_dim, hidden)
+        self.fc2 = nn.Linear(hidden, hidden)
+        self.fc3 = nn.Linear(hidden, action_dim)
+
+    def forward(self, state):
+        x = F.relu(self.fc1(state))
+        x = F.relu(self.fc2(x))
+        x = torch.tanh(self.fc3(x))
+        return x
+
+
+class Critic(nn.Module):
+    """
+    Critic Q(s, a) ≈ E[r | s,a], purely single-step / bandit.
+    """
+    def __init__(self, state_dim=2, action_dim=2, hidden=128):
+        super().__init__()
+        self.fc1 = nn.Linear(state_dim + action_dim, hidden)
+        self.fc2 = nn.Linear(hidden, hidden)
+        self.out = nn.Linear(hidden, 1)
+
+    def forward(self, state, action):
+        x = torch.cat([state, action], dim=-1)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.out(x)
+        return x
+
+# ---------------------------------------------------------
+# Loaders (for continue_training or separate evaluation)
+# ---------------------------------------------------------
+def load_actor(model_path, rl_cfg):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    state_dim  = rl_cfg["model"]["state_dim"]
+    action_dim = rl_cfg["model"]["action_dim"]
+    hidden_dim = rl_cfg["model"]["hidden_dim"]
+
+    actor = Actor(state_dim, action_dim, hidden_dim).to(device)
+    actor.load_state_dict(torch.load(model_path, map_location=device))
+    actor.eval()
+    return actor, device
+
+
+def load_critic(model_path, rl_cfg):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    state_dim  = rl_cfg["model"]["state_dim"]
+    action_dim = rl_cfg["model"]["action_dim"]
+    hidden_dim = rl_cfg["model"]["hidden_dim"]
+
+    critic = Critic(state_dim, action_dim, hidden_dim).to(device)
+    critic.load_state_dict(torch.load(model_path, map_location=device))
+    critic.eval()
+    return critic, device
+
+
+def find_latest_ddpg_checkpoint(model_dir: Path, prefix: str | None = None):
+    """
+    Find newest (actor, critic) checkpoint pair.
+    If prefix is given, only match files containing that prefix.
+    """
+    actor_files = list(model_dir.glob("ddpg_actor_*.pth"))
+
+    if prefix is not None:
+        actor_files = [
+            f for f in actor_files
+            if prefix in f.stem
+        ]
+
+    if not actor_files:
+        raise FileNotFoundError("No matching actor checkpoints found.")
+
+    # newest by modification time
+    actor_file = max(actor_files, key=lambda f: f.stat().st_mtime)
+
+    # infer critic path
+    critic_file = actor_file.with_name(
+        actor_file.name.replace("ddpg_actor_", "ddpg_critic_")
+    )
+
+    if not critic_file.exists():
+        raise FileNotFoundError(f"Matching critic not found for {actor_file.name}")
+
+    return actor_file, critic_file
 
 # =========================================================
 # JSON helpers for robust logging
@@ -546,3 +645,100 @@ def action_to_speed_angle(
     speed = float(squash_to_range(speed_norm, speed_low, speed_high))
     angle_deg = float(squash_to_range(angle_norm, angle_low, angle_high))
     return speed, angle_deg
+
+# ---------------------------------------------------------
+# Helper: map normalized actions -> (speed, angle_deg)
+# ---------------------------------------------------------
+def get_input_parameters(a_norm, speed_low, speed_high, angle_low, angle_high):
+    speed_norm, angle_norm = a_norm
+    speed     = squash_to_range(speed_norm,  speed_low,  speed_high)
+    angle_deg = squash_to_range(angle_norm, angle_low, angle_high)
+    return speed, angle_deg
+
+
+# ---------------------------------------------------------
+# Evaluation (greedy policy, contextual bandit)
+# ---------------------------------------------------------
+def evaluation_policy_short(
+    actor,
+    device,
+    mujoco_cfg,
+    rl_cfg,
+    num_episodes,
+    max_num_discs=5,
+    env_step=None, 
+    env_type="sim"
+):
+    
+    if env_step is None:
+        raise ValueError("evaluation_policy_short() requires env_step.")
+    
+    speed_low  = rl_cfg["model"]["speed_low"]
+    speed_high = rl_cfg["model"]["speed_high"]
+    angle_low  = rl_cfg["model"]["angle_low"]
+    angle_high = rl_cfg["model"]["angle_high"]
+
+    successes          = 0
+    rewards            = []
+    distances_to_hole  = []
+    # max_num_discs = 5
+    actor.eval()
+    with torch.no_grad():
+        for _ in range(num_episodes):
+            # New random context each eval episode
+            if env_type == "sim":
+                ball_start_obs, hole_pos_obs, disc_positions, x, y, hole_pos = sim_init_parameters(mujoco_cfg, max_num_discs)
+            
+            if env_type == "real":
+                ball_start_obs, hole_pos_obs, disc_positions = real_init_parameters()
+
+            state_vec = encode_state_with_discs(
+                ball_start_obs, hole_pos_obs, disc_positions, max_num_discs=5
+            )
+
+            # state_vec = np.concatenate([ball_start_obs, hole_pos_obs])  # No discs for now
+
+            state_vec = scale_state_vec(state_vec)
+
+            state = torch.tensor(
+                state_vec, dtype=torch.float32, device=device
+            ).unsqueeze(0)
+
+            a_norm = actor(state).squeeze(0).cpu().numpy()
+            speed, angle_deg = get_input_parameters(
+                a_norm, speed_low, speed_high, angle_low, angle_high
+            )
+
+            # Apply same actuator noise as during training
+            if env_type == "sim":
+                speed_noise     = np.random.normal(0, SPEED_NOISE_STD)
+                angle_deg_noise = np.random.normal(0, ANGLE_NOISE_STD)
+                speed     = np.clip(speed + speed_noise,     speed_low,  speed_high)
+                angle_deg = np.clip(angle_deg + angle_deg_noise, angle_low, angle_high)
+
+
+            ball_x, ball_y, in_hole, meta = env_step(
+                angle_deg, speed, [x, y], mujoco_cfg, disc_positions
+            )
+
+            reward = compute_reward(
+                ball_end_xy=np.array([ball_x, ball_y]),
+                hole_xy=hole_pos,
+                in_hole=in_hole,
+                meta=meta,
+                distance_scale=rl_cfg["reward"]["distance_scale"],
+                in_hole_reward=rl_cfg["reward"]["in_hole_reward"],
+                w_distance=rl_cfg["reward"]["w_distance"],
+                optimal_speed=rl_cfg["reward"]["optimal_speed"],
+                dist_at_hole_scale=rl_cfg["reward"]["dist_at_hole_scale"],
+                optimal_speed_scale=rl_cfg["reward"]["optimal_speed_scale"],
+            )
+
+            rewards.append(reward)
+            successes += int(in_hole == 1)
+            distance_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
+            distances_to_hole.append(distance_to_hole)
+
+    avg_distance_to_hole = float(np.mean(distances_to_hole)) if distances_to_hole else 0.0
+    actor.train()
+    return successes / num_episodes, float(np.mean(rewards)), avg_distance_to_hole
