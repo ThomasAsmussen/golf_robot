@@ -109,6 +109,65 @@ class Critic(nn.Module):
         return x
 
 # ---------------------------------------------------------
+# SAC models (bandit / single-step)
+# ---------------------------------------------------------
+LOG_STD_MIN = -5.0
+LOG_STD_MAX = 2.0
+
+class SACActor(nn.Module):
+    """
+    Stochastic actor: outputs squashed Gaussian action in [-1,1]^action_dim
+    Returns: action, log_prob, mean_action (all in normalized action space)
+    """
+    def __init__(self, state_dim=19, action_dim=2, hidden=256):
+        super().__init__()
+        self.fc1 = nn.Linear(state_dim, hidden)
+        self.fc2 = nn.Linear(hidden, hidden)
+
+        self.mu = nn.Linear(hidden, action_dim)
+        self.log_std = nn.Linear(hidden, action_dim)
+
+    def forward(self, state):
+        x = F.relu(self.fc1(state))
+        x = F.relu(self.fc2(x))
+        mu = self.mu(x)
+        log_std = self.log_std(x)
+        log_std = torch.clamp(log_std, LOG_STD_MIN, LOG_STD_MAX)
+        return mu, log_std
+
+    def sample(self, state, eps: float = 1e-6):
+        mu, log_std = self.forward(state)
+        std = log_std.exp()
+
+        # Reparameterization trick
+        normal = torch.distributions.Normal(mu, std)
+        z = normal.rsample()
+        a = torch.tanh(z)  # squash to [-1,1]
+
+        # Log prob correction for tanh squashing
+        log_prob = normal.log_prob(z).sum(dim=-1, keepdim=True)
+        log_prob -= torch.log(1 - a.pow(2) + eps).sum(dim=-1, keepdim=True)
+
+        mean_action = torch.tanh(mu)
+        return a, log_prob, mean_action
+
+
+class QNetwork(nn.Module):
+    """Q(s,a) network."""
+    def __init__(self, state_dim=19, action_dim=2, hidden=256):
+        super().__init__()
+        self.fc1 = nn.Linear(state_dim + action_dim, hidden)
+        self.fc2 = nn.Linear(hidden, hidden)
+        self.out = nn.Linear(hidden, 1)
+
+    def forward(self, state, action):
+        x = torch.cat([state, action], dim=-1)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        return self.out(x)
+
+
+# ---------------------------------------------------------
 # Loaders (for continue_training or separate evaluation)
 # ---------------------------------------------------------
 def load_actor(model_path, rl_cfg):
@@ -867,11 +926,18 @@ def evaluation_policy_short(
                 state_vec, dtype=torch.float32, device=device
             ).unsqueeze(0)
 
-            a_norm = actor(state).squeeze(0).cpu().numpy()
+            #a_norm = actor(state).squeeze(0).cpu().numpy()
+            # SAC: use deterministic mean action at eval time
+            a_norm = None
+            if hasattr(actor, "sample"):
+                _, _, a_mean = actor.sample(state)
+                a_norm = a_mean.squeeze(0).cpu().numpy()
+            else:
+                a_norm = actor(state).squeeze(0).cpu().numpy()
+                
             speed, angle_deg = get_input_parameters(
                 a_norm, speed_low, speed_high, angle_low, angle_high
             )
-
             # Apply same actuator noise as during training
             if env_type == "sim":
                 speed_noise     = np.random.normal(0, SPEED_NOISE_STD)
