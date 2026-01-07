@@ -18,9 +18,9 @@ echo "Running script..."
 module load python3/3.10.13
 
 # Activate your env
-cd ~/
+cd ~/golf_robot
 source golf_venv/bin/activate
 
 # Run the wandb sweep agent
 # --count controls how many trials this job will run
-wandb agent --count 1 rl_golf/golf_robot-src_golf_robot_reinforcement_learning/3o3u4171
+wandb agent --count 1 rl_golf/golf_robot-src_golf_robot/3o3u4171
