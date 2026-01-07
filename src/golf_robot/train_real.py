@@ -25,10 +25,10 @@ from vision.ball_at_hole_state import process_video
 #from vision.ffmpeg_record import start_ffmpeg_record_windows, stop_ffmpeg_record, get_video_frame_count, trim_last_seconds_reencode
 
 
-OPERATING_SYSTEM = "windows"  # "windows" or "linux"
-CAMERA_INDEX_START = 1  # starting camera index for real robot
-CAMERA_INDEX_END   = 0  # ending camera index for real robot
-CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#7&23aa88cc&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
+OPERATING_SYSTEM = "linux"  # "windows" or "linux"
+CAMERA_INDEX_START = 4  # starting camera index for real robot
+CAMERA_INDEX_END   = 2  # ending camera index for real robot
+# CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#7&23aa88cc&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
 #CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
 #CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
 END_POS = [-2.47, -2.38, -1.55, 1.66, 0.49, -0.26]
@@ -388,9 +388,19 @@ class HumanPrompter:
             ("✓ In hole", "in_hole"),
             ("✘ Out of bounds", "oob"),
             ("/ Neither", "neither"),
+            ("Wrong hole", "wrong_hole"),
         ])
         return self._wait()
 
+    def ask_which_hole(self):
+        self._set_message("Which hole was targeted?")
+        self._set_buttons([
+            ("Hole 1", 1),
+            ("Hole 2", 2),
+            ("Hole 3", 3),
+        ])
+        return self._wait()
+    
     def ask_yes_no(self, question: str, default=False):
         self._set_message(question)
         self._set_buttons([("Yes", True), ("No", False)])
@@ -442,14 +452,35 @@ def obs_replay_start():
 
 def obs_replay_save():
     # Saves last N seconds (as configured in OBS: 15s)
-    subprocess.run(["obsws-cli", "replaybuffer", "save"], check=True, env=OBS_ENV)
-    time.sleep(3)  # finalization cushion
+    # subprocess.run(["obsws-cli", "replaybuffer", "save"], check=True, env=OBS_ENV)
+    # time.sleep(3)  # finalization cushion
+
+    subprocess.run(
+        ["obsws-cli", "hotkey", "trigger", "ReplayBuffer.Save"],
+        check=True,
+        env=OBS_ENV,
+    )
+    time.sleep(3)
+
+def obs_screenshot():
+    print("Taking OBS screenshot")
+    here = Path(__file__).resolve().parents[2]
+    
+    ball_path = f"{glob.glob(os.path.join('data', 'OBS_ball_on_green'))}"
+    ball_path = os.path.join(here, "data", "OBS_ball_on_green", "ball_on_green.png")
+    print(ball_path)
+    subprocess.run(
+        ["obsws-cli", "screenshot", "save", "camera_end", ball_path],
+        check=True,
+        env=OBS_ENV,
+    )
+    time.sleep(3)
 
 def obs_replay_stop():
     subprocess.run(["obsws-cli", "replaybuffer", "stop"], check=True, env=OBS_ENV)
 # ----- OBS ----- #
 
-def real_init_parameters(camera_index):
+def real_init_parameters(camera_index, chosen_hole=None):
     # Ball
     bx, by, dbg = get_ball_start_position(debug=True, return_debug_image=True, debug_raw=False, use_cam=True, camera_index=camera_index, operating_system=OPERATING_SYSTEM)
     ball_start_position = np.array([bx, by])  # in meters
@@ -459,7 +490,9 @@ def real_init_parameters(camera_index):
         prompter.show_image(dbg, title="Ball start detection")
     
     # Holes
-    chosen_hole = random.choice([1,2,3])
+    if chosen_hole is None:
+        chosen_hole = random.choice([1,2,3])
+        # chosen_hole = 1
     # chosen_hole = 1  # for testing purposes
     here = Path(__file__).resolve().parent
     config_dir = here.parents[1] / "configs"
@@ -577,14 +610,14 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
             text=True,
         )
 
-    # Do not interfere with recording
-    time.sleep(8)
     
     result = prompter.run_with_spinner("Shooting", run_traj)
 
     print("Trajectory streamer output:")
     print(result.stdout)
     
+
+    time.sleep(2.0)
     # Stop vision recording
     print("Saving recording from replay buffer")
     obs_replay_save()
@@ -598,7 +631,9 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
     data_dir = "data/OBS_saved_replay_buffer"
     prefix ="Replay"
     pattern = os.path.join(data_dir, f"{prefix}*")
+    # print(pattern)
     files = glob.glob(pattern)
+    # print(files)
     video_path = max(files, key=os.path.getmtime)
     
     print("Recorded video path:", video_path)
@@ -624,6 +659,7 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
     ball_final_position = np.array([0.0, 0.0])  # optional: safe default
     continue_training = False
     
+    wrong_hole = None
     state = prompter.ask_hole_oob(chosen_hole)
 
     if state == "in_hole":
@@ -644,6 +680,14 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
         print("Ball out of bounds confirmed")
         in_hole = False
         out_of_bounds = True
+
+    elif state == "wrong_hole":
+        chosen_hole = prompter.ask_which_hole()
+        print(f"User indicated ball went to wrong hole, new hole is {chosen_hole}")
+        in_hole = True
+        out_of_bounds = False
+        wrong_hole = chosen_hole
+
     else:
         in_hole = False
         out_of_bounds = False
@@ -651,16 +695,18 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
     if not out_of_bounds and not in_hole:
         on_green = prompter.ask_yes_no("Is ball on green?")
         if on_green:
-           ball_final_position = get_ball_final_position(camera_index=CAMERA_INDEX_END, chosen_hole=chosen_hole, use_cam=True, debug=True, operating_system=OPERATING_SYSTEM)
+            obs_screenshot()
+        #   ball_final_position = get_ball_final_position(camera_index=CAMERA_INDEX_END, chosen_hole=chosen_hole, use_cam=True, debug=True, operating_system=OPERATING_SYSTEM)
+            ball_final_position = get_ball_final_position(camera_index=CAMERA_INDEX_END, chosen_hole=chosen_hole, use_cam=False, debug=True, operating_system=OPERATING_SYSTEM)
         else: 
             # data_dir = "data"
             # prefix ="trajectory_recording"
             # pattern = os.path.join(data_dir, f"{prefix}_*_last15s.avi")
             # files = glob.glob(pattern)
             # video_path = max(files, key=os.path.getmtime)
-            
+            compute_all_holes = True
             dist_at_hole, speed_at_hole, xs, ys, hole_xo, hole_yo, bx, by = process_video(
-                video_path, chosen_hole=chosen_hole, real_time_show=False
+                video_path, chosen_hole=chosen_hole, real_time_show=False, compute_all_holes=compute_all_holes
             )
             if dist_at_hole is not None:
                 prompter.show_trajectory_plot(xs, ys, hole_xo, hole_yo, bx, by)
@@ -691,8 +737,10 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
         "speed_at_hole": speed_at_hole,
         "used_for_training": used_for_training,
         "continue_training": continue_training,
+        "out_of_bounds": out_of_bounds,
+        "wrong_hole": wrong_hole,
     }
-
+    print("meta:", meta)
     return ball_final_position[0], ball_final_position[1], in_hole, meta
     
 

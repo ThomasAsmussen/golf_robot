@@ -51,6 +51,8 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
     dist_at_hole_scale = rl_cfg["reward"]["dist_at_hole_scale"]
     optimal_speed_scale = rl_cfg["reward"]["optimal_speed_scale"]
 
+    hole_positions = get_hole_positions()
+
     # Linear schedule for exploration noise (policy noise)
     noise_std_start = noise_std
     noise_std_end   = 0.05
@@ -98,8 +100,8 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
 
     print(f"Using device: {device}")
 
-    actor_optimizer  = torch.optim.Adam(actor.parameters(),  lr=actor_lr)
-    critic_optimizer = torch.optim.Adam(critic.parameters(), lr=critic_lr)
+    actor_optimizer  = torch.optim.SGD(actor.parameters(),  lr=actor_lr)
+    critic_optimizer = torch.optim.SGD(critic.parameters(), lr=critic_lr)
 
     replay_buffer_big = ReplayBuffer(capacity=rl_cfg["training"]["replay_buffer_capacity"])
     replay_buffer_recent = ReplayBuffer(1000)  # Smaller buffer for recent experiences
@@ -121,7 +123,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
     last_last_success_rate = 0.0
     # For now we don't actually place discs, but the state format reserves 5.
     
-    max_num_discs = 0
+    max_num_discs = 2
     stage_start_episode = 0
     noise_std_stage_start = noise_std
 
@@ -148,9 +150,31 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
         # -------------------------------------------------
         # Sample a context (ball start + hole + discs)
         # -------------------------------------------------
+                # Periodic evaluation of greedy policy (no exploration noise)
+        if env_type == "real" and episode_logger.get_length() % 10000 == 0:
+            (
+                success_rate_eval,
+                avg_reward_eval,
+                avg_distance_to_hole_eval,
+            ) = evaluation_policy_short(
+                actor,
+                device,
+                mujoco_cfg=None,
+                rl_cfg=rl_cfg,
+                num_episodes=3,
+                env_step=env_step,
+                env_type=env_type,
+                input_func=input_func,
+                big_episode_logger=episode_logger
+            )
+
+            print(
+                f"[EVAL] Success Rate after {episode + 1} episodes: "
+                f"{success_rate_eval:.2f}, Avg Reward: {avg_reward_eval:.3f}"
+            )
         if env_type == "sim":
 
-            if last_success_rate > 0.9 and last_last_success_rate > 0.9:
+            if last_success_rate > 0.9 and last_last_success_rate > 0.9 and False:
                 max_num_discs = min(MAX_DISCS, max_num_discs + 1)
                 last_success_rate = 0.0
                 last_last_success_rate = 0.0
@@ -227,18 +251,57 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
         if env_type == "sim":
             meta = meta_from_trajectory_xy(meta, hole_pos_obs)
 
-        reward = compute_reward(
-            ball_end_xy=np.array([ball_x, ball_y]),
-            hole_xy=hole_pos_obs,
-            in_hole=in_hole,
-            meta=meta,
-            in_hole_reward=in_hole_reward,
-            distance_scale=distance_scale,
-            w_distance=w_distance,
-            optimal_speed=optimal_speed,
-            dist_at_hole_scale=dist_at_hole_scale,
-            optimal_speed_scale=optimal_speed_scale,
-        )
+        is_out_of_bounds = False
+        using_all_holes = False
+        if env_type == "real" and isinstance(meta, dict):
+            is_out_of_bounds = bool(meta.get("out_of_bounds", False))
+            if meta["wrong_hole"] is not None:
+                chosen_hole = meta["wrong_hole"]
+                hole_pos_obs = np.array([get_hole_positions()[chosen_hole]["x"], get_hole_positions()[chosen_hole]["y"]])
+            elif not in_hole:
+                using_all_holes = True
+                hole1 = np.array([get_hole_positions()[1]["x"], get_hole_positions()[1]["y"]])
+                hole2 = np.array([get_hole_positions()[2]["x"], get_hole_positions()[2]["y"]])
+                hole3 = np.array([get_hole_positions()[3]["x"], get_hole_positions()[3]["y"]])
+
+        if using_all_holes:
+            rewards = []
+            for i, hole_pos_obs_try in enumerate([hole1, hole2, hole3]):
+                dist_at_hole = meta["dist_at_hole"]
+                if dist_at_hole is not None:
+                    dist_at_hole = float(dist_at_hole[i])
+                else:
+                    dist_at_hole = None
+                hole_pos_try = hole_pos_obs_try
+                reward_try = compute_reward(
+                    ball_end_xy=np.array([ball_x, ball_y]),
+                    hole_xy=hole_pos_try,
+                    in_hole=in_hole,
+                    meta=meta,
+                    is_out_of_bounds=is_out_of_bounds,
+                    in_hole_reward=in_hole_reward,
+                    distance_scale=distance_scale,
+                    w_distance=w_distance,
+                    optimal_speed=optimal_speed,
+                    dist_at_hole_scale=dist_at_hole_scale,
+                    optimal_speed_scale=optimal_speed_scale,
+                    multiple_dist_at_hole = dist_at_hole
+                )
+                rewards.append(reward_try)
+        else:
+            reward = compute_reward(
+                ball_end_xy=np.array([ball_x, ball_y]),
+                hole_xy=hole_pos_obs,
+                in_hole=in_hole,
+                meta=meta,
+                is_out_of_bounds=is_out_of_bounds,
+                in_hole_reward=in_hole_reward,
+                distance_scale=distance_scale,
+                w_distance=w_distance,
+                optimal_speed=optimal_speed,
+                dist_at_hole_scale=dist_at_hole_scale,
+                optimal_speed_scale=optimal_speed_scale,
+            )
 
         if env_type == "real" and isinstance(meta, dict):
             used_for_training = bool(meta.get("used_for_training", True))
@@ -249,34 +312,68 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
                 continue
             else:
                 print(f"Storing episode")
-                logging_dict = {
-                    "episode": episode,
-                    "time": time.time(),
-                    "used_for_training": used_for_training,
-                    "ball_start_obs": ball_start_obs.tolist(),
-                    "hole_pos_obs": hole_pos_obs.tolist(),
-                    "disc_positions": disc_positions,
-                    "state_norm": state_norm.tolist(),
-                    "action_norm": a_noisy.cpu().numpy().tolist(),
-                    "speed": speed,
-                    "angle_deg": angle_deg,
-                    "ball_final_pos": [ball_x, ball_y],
-                    "in_hole": in_hole,
-                    "out_of_bounds": out_of_bounds,
-                    "reward": reward,
-                    "chosen_hole": chosen_hole,
-                    "ball_end": [ball_x, ball_y],
-                    "dist_at_hole": meta["dist_at_hole"],
-                    "speed_at_hole": meta["speed_at_hole"],
-                }
-                # print(f"Logging episode data: {logging_dict}")
-                episode_logger.log(logging_dict)
+                if using_all_holes:
+                    for i, hole_pos_obs_try in enumerate([hole1, hole2, hole3]):
+                        hole_pos_try = hole_pos_obs_try
+                        reward = rewards[i]
+                        logging_dict = {
+                            "episode": episode,
+                            "time": time.time(),
+                            "used_for_training": used_for_training,
+                            "ball_start_obs": ball_start_obs.tolist(),
+                            "hole_pos_obs": hole_pos_try.tolist(),
+                            "disc_positions": disc_positions,
+                            "state_norm": state_norm.tolist(),
+                            "action_norm": a_noisy.cpu().numpy().tolist(),
+                            "speed": speed,
+                            "angle_deg": angle_deg,
+                            "ball_final_pos": [ball_x, ball_y],
+                            "in_hole": in_hole,
+                            "out_of_bounds": out_of_bounds,
+                            "reward": reward,
+                            "chosen_hole": i+1,
+                            "dist_at_hole": meta["dist_at_hole"][i] if meta["dist_at_hole"] is not None else None,
+                            "speed_at_hole": meta["speed_at_hole"],
+                            "exploring": True,
+                        }
+                        # print(f"Logging episode data: {logging_dict}")
+                        episode_logger.log(logging_dict)
+                else:
+                    logging_dict = {
+                        "episode": episode,
+                        "time": time.time(),
+                        "used_for_training": used_for_training,
+                        "ball_start_obs": ball_start_obs.tolist(),
+                        "hole_pos_obs": hole_pos_obs.tolist(),
+                        "disc_positions": disc_positions,
+                        "state_norm": state_norm.tolist(),
+                        "action_norm": a_noisy.cpu().numpy().tolist(),
+                        "speed": speed,
+                        "angle_deg": angle_deg,
+                        "ball_final_pos": [ball_x, ball_y],
+                        "in_hole": in_hole,
+                        "out_of_bounds": out_of_bounds,
+                        "reward": reward,
+                        "chosen_hole": chosen_hole,
+                        "dist_at_hole": meta["dist_at_hole"],
+                        "speed_at_hole": meta["speed_at_hole"],
+                        "exploring": True,
+                    }
+                    # print(f"Logging episode data: {logging_dict}")
+                    episode_logger.log(logging_dict)
 
-        # Store (s,a,r) in buffer 
         s_train = s.detach().cpu()
         a_train = a_noisy.detach().cpu()
-        replay_buffer_big.add(s_train, a_train, reward)
-        replay_buffer_recent.add(s_train, a_train, reward)
+
+        if using_all_holes:
+            for i, hole_pos_obs_try in enumerate([hole1, hole2, hole3]):
+                replay_buffer_big.add(s_train, a_train, rewards[i])
+                replay_buffer_recent.add(s_train, a_train, rewards[i])
+                # -------------------------------------------------
+        else:
+        # Store (s,a,r) in buffer 
+            replay_buffer_big.add(s_train, a_train, reward)
+            replay_buffer_recent.add(s_train, a_train, reward)
 
 
         # -------------------------------------------------
@@ -339,7 +436,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
             dist_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
             print(f"  Distance to Hole: {dist_to_hole:.4f}, In Hole: {in_hole}")
 
-        # Periodic evaluation of greedy policy (no exploration noise)
+
         if (episode) % rl_cfg["training"]["eval_interval"] == 24 and env_type == "sim":
             (
                 success_rate_eval,

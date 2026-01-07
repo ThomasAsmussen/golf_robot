@@ -24,6 +24,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import yaml
+import time
 
 
 # =========================================================
@@ -202,12 +204,17 @@ class EpisodeLoggerJsonl:
         self.f.flush()
         os.fsync(self.f.fileno())
 
+    def get_length(self) -> int:
+        """Return number of logged episodes (lines)."""
+        self.f.flush()
+        with open(self.path, "r") as fr:
+            return sum(1 for _ in fr)
+
     def close(self) -> None:
         try:
             self.f.close()
         except Exception:
             pass
-
 
 def load_replay_from_jsonl(
     jsonl_path: Path,
@@ -216,18 +223,28 @@ def load_replay_from_jsonl(
     max_recent: int = 1000,
     state_key: str = "state_norm",
     action_key: str = "action_norm",
-    reward_key: str = "reward",
+    reward_key: str = "reward",              # only used as fallback now
     used_key: str = "used_for_training",
+    *,
+    reward_cfg: Optional[Dict[str, Any]] = None,
+    # Where to read the ingredients from:
+    ball_end_key: str = "ball_end_pos",
+    hole_key: str = "hole_pos_obs",
+    in_hole_key: str = "in_hole",
 ) -> int:
     """
     Load JSONL episodes into replay buffers.
 
-    Expects each line to contain at least:
-        state_key: list[float]
-        action_key: list[float]
-        reward_key: float
+    IMPORTANT: reward is recomputed from JSONL values using compute_reward()
+    (ball end position, hole position, in_hole, and optional meta), rather than
+    using the stored reward field. The stored reward is only used as a fallback
+    if the needed fields are missing.
 
-    Returns number of loaded transitions.
+    reward_cfg should typically be rl_cfg["reward"] and may include:
+      distance_scale, in_hole_reward, w_distance, optimal_speed,
+      dist_at_hole_scale, optimal_speed_scale, use_meta_if_available, etc.
+
+    Returns number of loaded transitions added to the *big* buffer.
     """
     jsonl_path = Path(jsonl_path)
     if not jsonl_path.exists():
@@ -237,34 +254,130 @@ def load_replay_from_jsonl(
     if not text:
         return 0
 
-    lines = text.splitlines()
-    loaded = 0
+    # Default reward config (matches your compute_reward defaults if omitted)
+    reward_cfg = dict(reward_cfg or {})
 
+    lines = text.splitlines()
+    eps: List[Dict[str, Any]] = []
     for line in lines:
-        ep = json.loads(line)
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            eps.append(json.loads(line))
+        except json.JSONDecodeError:
+            # Skip malformed lines rather than crashing training
+            continue
+
+    def _get_ball_end(ep: Dict[str, Any]) -> Optional[np.ndarray]:
+        # primary
+        v = ep.get(ball_end_key, None)
+        # common alternatives
+        if v is None:
+            v = ep.get("ball_final_pos", None)
+        if v is None:
+            v = ep.get("ball_end_xy", None)
+        if v is None:
+            return None
+        arr = np.asarray(v, dtype=float).reshape(-1)
+        if arr.size < 2:
+            return None
+        return arr[:2]
+
+    def _get_hole(ep: Dict[str, Any]) -> Optional[np.ndarray]:
+        v = ep.get(hole_key, None)
+        if v is None:
+            v = ep.get("hole_pos", None)         # sometimes you may log the true hole pos
+        if v is None:
+            v = ep.get("hole_xy", None)
+        if v is None:
+            return None
+        arr = np.asarray(v, dtype=float).reshape(-1)
+        if arr.size < 2:
+            return None
+        return arr[:2]
+
+    def _get_meta(ep: Dict[str, Any]) -> Dict[str, Any]:
+        # You log dist_at_hole/speed_at_hole at top-level; also allow nested "meta"
+        meta = {}
+        if isinstance(ep.get("meta", None), dict):
+            meta.update(ep["meta"])
+        if "dist_at_hole" in ep:
+            meta["dist_at_hole"] = ep.get("dist_at_hole")
+        if "speed_at_hole" in ep:
+            meta["speed_at_hole"] = ep.get("speed_at_hole")
+        if "out_of_bounds" in ep:
+            meta["out_of_bounds"] = ep.get("out_of_bounds")
+        return meta
+
+    def _recompute_reward(ep: Dict[str, Any]) -> Tuple[float, bool]:
+        """
+        Returns (reward, used_fallback).
+        """
+        ball_end = _get_ball_end(ep)
+        hole_xy = _get_hole(ep)
+        in_hole = ep.get(in_hole_key, False)
+
+        if ball_end is None or hole_xy is None:
+            # Fallback to stored reward if we can't recompute
+            r_fallback = float(ep.get(reward_key, 0.0))
+            return r_fallback, True
+
+        meta = _get_meta(ep)
+        r = compute_reward(
+            ball_end_xy=ball_end,
+            hole_xy=hole_xy,
+            in_hole=in_hole,
+            meta=meta,
+            is_out_of_bounds=meta.get("out_of_bounds", False),
+            # pass through your tuning knobs if provided
+            in_hole_reward=float(reward_cfg.get("in_hole_reward", 3.0)),
+            distance_scale=float(reward_cfg.get("distance_scale", 0.5)),
+            w_distance=float(reward_cfg.get("w_distance", 0.6)),
+            optimal_speed=float(reward_cfg.get("optimal_speed", 0.65)),
+            dist_at_hole_scale=float(reward_cfg.get("dist_at_hole_scale", 5.0)),
+            optimal_speed_scale=float(reward_cfg.get("optimal_speed_scale", 5.0)),
+            use_meta_if_available=bool(reward_cfg.get("use_meta_if_available", True)),
+        )
+        return float(r), False
+
+    loaded = 0
+    fallback_count = 0
+
+    # Fill big buffer
+    for ep in eps:
         if not ep.get(used_key, True):
             continue
 
         s = torch.tensor(ep[state_key], dtype=torch.float32)
         a = torch.tensor(ep[action_key], dtype=torch.float32)
-        r = float(ep[reward_key])
+        r, used_fallback = _recompute_reward(ep)
+        fallback_count += int(used_fallback)
 
         replay_buffer_big.add(s, a, r)
         loaded += 1
 
+    # Fill recent buffer
     replay_buffer_recent.clear()
-    for line in lines[-max_recent:]:
-        ep = json.loads(line)
+    for ep in eps[-max_recent:]:
         if not ep.get(used_key, True):
             continue
 
         s = torch.tensor(ep[state_key], dtype=torch.float32)
         a = torch.tensor(ep[action_key], dtype=torch.float32)
-        r = float(ep[reward_key])
+        r, _ = _recompute_reward(ep)
 
         replay_buffer_recent.add(s, a, r)
 
+    if fallback_count > 0:
+        print(
+            f"[load_replay_from_jsonl] Warning: recompute_reward fell back to stored "
+            f"'{reward_key}' for {fallback_count}/{loaded} loaded episodes "
+            f"(missing ball_end/hole in JSONL)."
+        )
+
     return loaded
+
 
 
 # =========================================================
@@ -407,6 +520,9 @@ def compute_reward(
     dist_at_hole_scale: float = 5.0,
     optimal_speed_scale: float = 5.0,
     use_meta_if_available: bool = True,
+    is_out_of_bounds: bool = False,
+    multiple_dist_at_hole = None
+
 ) -> float:
     """
     Single-step reward.
@@ -418,28 +534,45 @@ def compute_reward(
     meta convention:
         meta["dist_at_hole"], meta["speed_at_hole"]
     """
+    # print(in_hole_reward)
     if bool(in_hole):
-        return float(in_hole_reward)
+        reward = float(in_hole_reward)
+        # print("in hole reward:", reward)
+        return reward
+
+    if is_out_of_bounds:
+        reward = 0.0
+        # print("out of bounds reward: ", reward)
+        return reward
+
 
     ball_end_xy = np.asarray(ball_end_xy, dtype=float).reshape(2,)
     hole_xy = np.asarray(hole_xy, dtype=float).reshape(2,)
 
     if use_meta_if_available and isinstance(meta, dict):
-        dist_at_hole = meta.get("dist_at_hole", None)
+        if multiple_dist_at_hole is not None:
+            dist_at_hole = multiple_dist_at_hole
+        else:
+            dist_at_hole = meta.get("dist_at_hole", None)
+
         speed_at_hole = meta.get("speed_at_hole", None)
         if dist_at_hole is not None and speed_at_hole is not None:
             dist_at_hole = float(dist_at_hole)
             speed_at_hole = float(speed_at_hole)
 
-            print(f"Dist at hole: {dist_at_hole:.4f} m, Speed at hole: {speed_at_hole:.4f} m/s")
+            # print(f"Dist at hole: {dist_at_hole:.4f} m, Speed at hole: {speed_at_hole:.4f} m/s")
             # You can tune these shaping terms globally
             dist_term = np.exp(-dist_at_hole_scale * dist_at_hole)
             speed_term = np.exp(-optimal_speed_scale * abs(speed_at_hole - optimal_speed))  # target ~0.65 m/s near hole
             w_speed = 1.0 - w_distance
-            return float(w_distance * dist_term + w_speed * speed_term)
+            reward = float(w_distance * dist_term + w_speed * speed_term)
+            # print(f"Reward from meta: {reward:.4f} (dist_term: {dist_term:.4f}, speed_term: {speed_term:.4f})")
+            return reward
 
     final_dist = float(np.linalg.norm(ball_end_xy - hole_xy))
-    return float(np.exp(-float(distance_scale) * final_dist))
+    reward = float(np.exp(-float(distance_scale) * final_dist))
+    # print(f"Reward from final distance {final_dist:.4f} m: {reward:.4f}")
+    return reward
 
 
 # =========================================================
@@ -463,10 +596,18 @@ def generate_disc_positions(
 
     Returns list[(x,y)] sorted by distance to hole.
     """
+    if max_num_discs <= 0:
+        return []
+    
     rng = rng or np.random.default_rng()
     hole_x, hole_y = float(hole_xy[0]), float(hole_xy[1])
+    p_full = 0.8  # probability of max_num_discs
 
-    num_discs = int(rng.integers(0, max_num_discs + 1))
+
+    if rng.random() < p_full: # use max discs
+        num_discs = max_num_discs
+    else: # uniformly sample fewer discs
+        num_discs = int(rng.integers(0, max_num_discs + 1))
     discs: List[Tuple[float, float]] = []
 
     x_lo = x_min + min_dist_from_objects
@@ -656,6 +797,14 @@ def get_input_parameters(a_norm, speed_low, speed_high, angle_low, angle_high):
     return speed, angle_deg
 
 
+def get_hole_positions():
+    here = Path(__file__).resolve().parent
+    config_dir = here.parents[1] / "configs"
+    with open(config_dir / "hole_config.yaml", "r") as f:
+        hole_positions = yaml.safe_load(f)
+    return hole_positions
+
+
 # ---------------------------------------------------------
 # Evaluation (greedy policy, contextual bandit)
 # ---------------------------------------------------------
@@ -667,7 +816,9 @@ def evaluation_policy_short(
     num_episodes,
     max_num_discs=5,
     env_step=None, 
-    env_type="sim"
+    env_type="sim",
+    input_func=None,
+    big_episode_logger=None,
 ):
     
     if env_step is None:
@@ -678,20 +829,32 @@ def evaluation_policy_short(
     angle_low  = rl_cfg["model"]["angle_low"]
     angle_high = rl_cfg["model"]["angle_high"]
 
+    if env_type == "real":
+        print("[EVAL] Real-world evaluation mode started.")
+        num_episodes = 3
+
+        here = Path(__file__).resolve().parent
+        project_root       = here.parents[1]
+        episode_log_path = project_root / "log" / "real_episodes_eval" / "episode_logger_eval.jsonl"
+        episode_logger = EpisodeLoggerJsonl(episode_log_path)
+    
+    # hole_positions = get_hole_positions()
+
     successes          = 0
     rewards            = []
     distances_to_hole  = []
     # max_num_discs = 5
     actor.eval()
     with torch.no_grad():
-        for _ in range(num_episodes):
+        for i in range(num_episodes):
             # New random context each eval episode
             if env_type == "sim":
                 ball_start_obs, hole_pos_obs, disc_positions, x, y, hole_pos = sim_init_parameters(mujoco_cfg, max_num_discs)
             
             if env_type == "real":
-                ball_start_obs, hole_pos_obs, disc_positions = real_init_parameters()
-
+                ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(camera_index=4, chosen_hole=i+1)
+                hole_pos = np.array(hole_pos_obs)
+    
             state_vec = encode_state_with_discs(
                 ball_start_obs, hole_pos_obs, disc_positions, max_num_discs=5
             )
@@ -717,15 +880,19 @@ def evaluation_policy_short(
                 angle_deg = np.clip(angle_deg + angle_deg_noise, angle_low, angle_high)
 
 
-            ball_x, ball_y, in_hole, meta = env_step(
-                angle_deg, speed, [x, y], mujoco_cfg, disc_positions
-            )
+                ball_x, ball_y, in_hole, meta = env_step(
+                    angle_deg, speed, [x, y], mujoco_cfg, disc_positions
+                )
+            if env_type == "real":
+                result = env_step(impact_velocity=speed, swing_angle=angle_deg, ball_start_position=ball_start_obs, planner="quintic", check_rtt=True, chosen_hole=chosen_hole)
+                ball_x, ball_y, in_hole, meta = result
 
             reward = compute_reward(
                 ball_end_xy=np.array([ball_x, ball_y]),
                 hole_xy=hole_pos,
                 in_hole=in_hole,
                 meta=meta,
+                is_out_of_bounds=meta["out_of_bounds"],
                 distance_scale=rl_cfg["reward"]["distance_scale"],
                 in_hole_reward=rl_cfg["reward"]["in_hole_reward"],
                 w_distance=rl_cfg["reward"]["w_distance"],
@@ -733,7 +900,30 @@ def evaluation_policy_short(
                 dist_at_hole_scale=rl_cfg["reward"]["dist_at_hole_scale"],
                 optimal_speed_scale=rl_cfg["reward"]["optimal_speed_scale"],
             )
-
+            if env_type == "real":
+                logging_record = {
+                    "episode": i,
+                    "time": time.time(),
+                    "used_for_training": meta["used_for_training"],
+                    "ball_start_obs": ball_start_obs,
+                    "hole_pos_obs": hole_pos_obs,
+                    "disc_positions": disc_positions,
+                    "state_norm": state_vec,
+                    "action_norm": a_norm,
+                    "speed": speed,
+                    "angle_deg": angle_deg,
+                    "ball_final_pos": [ball_x, ball_y],
+                    "in_hole": bool(in_hole),
+                    "out_of_bounds": meta["out_of_bounds"],
+                    "reward": reward,
+                    "chosen_hole": chosen_hole,
+                    "dist_at_hole": meta.get("dist_at_hole", None),
+                    "speed_at_hole": meta.get("speed_at_hole", None),
+                    "exploring": False,
+                }
+                episode_logger.log(logging_record)
+            if meta["used_for_training"]:
+                big_episode_logger.log(logging_record)
             rewards.append(reward)
             successes += int(in_hole == 1)
             distance_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
@@ -742,3 +932,7 @@ def evaluation_policy_short(
     avg_distance_to_hole = float(np.mean(distances_to_hole)) if distances_to_hole else 0.0
     actor.train()
     return successes / num_episodes, float(np.mean(rewards)), avg_distance_to_hole
+
+
+if __name__ == "__main__":
+    print(np.array([get_hole_positions()[1]["x"], get_hole_positions()[1]["y"]]))

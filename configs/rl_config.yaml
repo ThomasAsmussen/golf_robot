@@ -2,19 +2,19 @@ training:
   episodes: 30000
   actor_lr: 0.001
   critic_lr: 0.001
-  noise_std: 0.25
-  batch_size: 32
-  grad_steps: 10
+  noise_std: 0.05
+  batch_size: 64
+  grad_steps: 20
   replay_buffer_capacity: 100000
-  use_wandb: True
+  use_wandb: False
   eval_interval: 50
   eval_episodes: 20
   target_update_rho: 0.005
   continue_training: True
   error_hard_stop: True
   do_prints: False
-  env_type: "sim"
-  model_name: "unique_sweep_13.pth"
+  env_type: "real"
+  model_name: "morning_sweep_4.pth"
 
 model:
   state_dim: 19
@@ -26,9 +26,9 @@ model:
   angle_high: 20.0
 
 reward:
-  distance_scale: 0.5
+  distance_scale: 5.0
   in_hole_reward: 3.0
-  w_distance: 0.6
+  w_distance: 0.8
   optimal_speed: 0.65
   dist_at_hole_scale: 5.0
   optimal_speed_scale: 5.0
