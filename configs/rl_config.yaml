@@ -6,7 +6,7 @@ training:
   batch_size: 64
   grad_steps: 4
   replay_buffer_capacity: 100000
-  use_wandb: False
+  use_wandb: True
   eval_interval: 50
   eval_episodes: 20
   target_update_rho: 0.000
