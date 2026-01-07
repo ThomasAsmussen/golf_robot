@@ -7,19 +7,19 @@ metric:
 
 parameters:
   in_hole_reward:
-    values: [1.0, 3.0, 5.0, 7.0]
+    values: [3.0, 5.0]
 
   distance_scale: # exp(-values[n]*distance)
-    values: [0.5, 1.0, 3.0, 5.0]
+    values: [3.0, 5.0]
 
   w_distance: # w_distance = values[n], w_speed = 1-values[n]
-    values: [0.1, 0.2, 0.5, 0.8, 0.9]
+    values: [0.5, 0.8]
 
   optimal_speed: 
-    values: [0.5, 0.65, 0.8, 0.9, 1.0]
+    values: [0.65, 0.9]
 
   dist_at_hole_scale: # exp(-values[n]*dist)
-    values: [0.5, 2.0, 5.0, 10.0]
+    values: [0.5, 5.0]
 
   optimal_speed_scale: # exp(-values[n]*speed)
-    values: [0.5, 2.0, 5.0, 10.0]
+    values: [2.0, 5.0]

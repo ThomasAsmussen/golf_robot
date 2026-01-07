@@ -278,12 +278,13 @@ def training(
         MAX_DISCS_FEATS = 5  # must match encode_state_with_discs call
 
         state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, max_num_discs=MAX_DISCS_FEATS)
-        state_norm = scale_state_vec(state_vec)
+        state_norm = scale_state_vec(state_vec) # 19 states
+        
+        if rl_cfg["model"]["state_dim"] == 37: # 37 states from augmented states
+            aug = augment_state_features(state_vec, max_num_discs=MAX_DISCS_FEATS, dist_clip=5.0)
+            aug_norm = scale_aug_features(aug, max_num_discs=MAX_DISCS_FEATS, dist_clip=5.0)
 
-        aug = augment_state_features(state_vec, max_num_discs=MAX_DISCS_FEATS, dist_clip=5.0)
-        aug_norm = scale_aug_features(aug, max_num_discs=MAX_DISCS_FEATS, dist_clip=5.0)
-
-        state_norm = np.concatenate([state_norm, aug_norm], axis=0)
+            state_norm = np.concatenate([state_norm, aug_norm], axis=0)
 
         s = torch.tensor(state_norm, dtype=torch.float32, device=device)
 

@@ -1011,10 +1011,11 @@ def evaluation_policy_short(
             raw_norm = scale_state_vec(state_vec)
 
             # Optional engineered features
-            aug = augment_state_features(state_vec, max_num_discs=MAX_DISCS_FEATS, dist_clip=5.0)
-            aug_norm = scale_aug_features(aug, max_num_discs=MAX_DISCS_FEATS, dist_clip=5.0)
+            if state_dim_expected == 37:
+                    aug = augment_state_features(state_vec, max_num_discs=MAX_DISCS_FEATS, dist_clip=5.0)
+                    aug_norm = scale_aug_features(aug, max_num_discs=MAX_DISCS_FEATS, dist_clip=5.0)
 
-            raw_plus_aug = np.concatenate([raw_norm, aug_norm], axis=0)
+                    raw_plus_aug = np.concatenate([raw_norm, aug_norm], axis=0)
 
             # Choose what to feed based on expected dim
             if state_dim_expected == raw_norm.shape[0]:
