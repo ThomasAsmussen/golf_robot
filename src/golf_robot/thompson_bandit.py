@@ -13,113 +13,170 @@ import time
 from rl_common import *
 
 
-# ---------------------------------------------------------
-# Small helper: Ensemble actor for evaluation (mean of heads)
-# ---------------------------------------------------------
-class EnsembleMeanActor(nn.Module):
-    """
-    Wrap a list of deterministic Actors and return the mean action.
-    This is useful for evaluation (greedy-ish) without picking a random head.
-    """
-    def __init__(self, actors):
-        super().__init__()
-        self.actors = nn.ModuleList(actors)
-
-    def forward(self, state):
-        # state: [B, state_dim]
-        outs = [a(state) for a in self.actors]
-        return torch.stack(outs, dim=0).mean(dim=0)
+# =========================================================
+# Algorithm: Critic-only Bootstrapped Thompson + CEM planning
+# =========================================================
+# - No actor networks (removes instability)
+# - K bootstrapped critics approximate posterior over Q(s,a)=E[r|s,a]
+# - Each episode: sample head k, use CEM to maximize Q_k(s,a) over action
+# - Train critics by supervised regression Q(s,a)->r
 
 
 # ---------------------------------------------------------
-# Helper: Find newest Thompson checkpoints (head0 as reference)
+# Small helper: Ensemble wrapper to choose actions deterministically for eval
 # ---------------------------------------------------------
-def find_latest_thompson_checkpoint(model_dir: Path, prefix: str | None = None):
+class EnsembleCriticMeanPlanner:
     """
-    Find newest checkpoint set by looking for head0 actor file:
-      ddpg_actor_<something>_h0.pth
-    If prefix is given, only match files containing that prefix.
-    Returns: (actor_h0_path, critic_h0_path, tag_stem)
-    where tag_stem is the stem with "_h0" stripped, so you can load all heads.
+    Deterministic planner for evaluation:
+      - score(a) = mean_k Q_k(s,a)
+      - choose best action via CEM (or random shooting)
     """
-    actor_files = list(model_dir.glob("ddpg_actor_*_h0.pth"))
+    def __init__(self, critics, device):
+        self.critics = critics
+        self.device = device
+
+    @torch.no_grad()
+    def score_actions(self, s_batch, a_batch):
+        # s_batch: [N, state_dim], a_batch: [N, action_dim]
+        qs = []
+        for c in self.critics:
+            qs.append(c(s_batch, a_batch))  # [N,1]
+        q = torch.stack(qs, dim=0).mean(dim=0)  # [N,1]
+        return q.squeeze(-1)  # [N]
+
+    def act(self, s, cfg):
+        return cem_plan_action(
+            s=s,
+            score_fn=self.score_actions,
+            action_dim=cfg["model"]["action_dim"],
+            device=self.device,
+            cem_iters=cfg["training"].get("cem_iters_eval", cfg["training"].get("cem_iters", 3)),
+            cem_pop=cfg["training"].get("cem_pop_eval", cfg["training"].get("cem_pop", 512)),
+            cem_elite_frac=cfg["training"].get("cem_elite_frac", 0.1),
+            action_low=-1.0,
+            action_high=1.0,
+            init_std=cfg["training"].get("cem_init_std", 0.7),
+            min_std=cfg["training"].get("cem_min_std", 0.05),
+        )
+
+
+# ---------------------------------------------------------
+# CEM planner
+# ---------------------------------------------------------
+def cem_plan_action(
+    s,
+    score_fn,
+    action_dim,
+    device,
+    cem_iters=3,
+    cem_pop=512,
+    cem_elite_frac=0.1,
+    action_low=-1.0,
+    action_high=1.0,
+    init_std=0.7,
+    min_std=0.05,
+):
+    """
+    Cross-Entropy Method in normalized action space [-1,1]^action_dim.
+
+    Inputs:
+      s: torch tensor [state_dim] on device
+      score_fn: callable(s_batch, a_batch) -> scores [N] (higher is better)
+    Returns:
+      best_action: torch tensor [action_dim] on device
+    """
+    elite_n = max(1, int(round(cem_pop * cem_elite_frac)))
+
+    mu = torch.zeros(action_dim, device=device)
+    std = torch.ones(action_dim, device=device) * float(init_std)
+
+    s_batch = s.unsqueeze(0).repeat(cem_pop, 1)
+
+    best_a = None
+    best_score = None
+
+    for _ in range(int(cem_iters)):
+        a = mu + std * torch.randn(cem_pop, action_dim, device=device)
+        a = torch.clamp(a, float(action_low), float(action_high))
+
+        scores = score_fn(s_batch, a)  # [N]
+        topk = torch.topk(scores, k=elite_n, largest=True)
+        elite_a = a[topk.indices]
+
+        mu = elite_a.mean(dim=0)
+        std = elite_a.std(dim=0).clamp(min=float(min_std))
+
+        if best_score is None or topk.values[0].item() > best_score:
+            best_score = topk.values[0].item()
+            best_a = elite_a[0].detach()
+
+    return best_a
+
+
+# ---------------------------------------------------------
+# Helper: Find newest checkpoint set (head0 critic as reference)
+# ---------------------------------------------------------
+def find_latest_bootcritic_checkpoint(model_dir: Path, prefix: str | None = None):
+    """
+    Find newest checkpoint set by looking for head0 critic file:
+      ddpg_critic_<something>_h0.pth
+    Returns: (critic_h0_path, tag_stem)
+    where tag_stem is the stem with "_h0" stripped.
+    """
+    critic_files = list(model_dir.glob("ddpg_critic_*_h0.pth"))
     if prefix is not None:
-        actor_files = [f for f in actor_files if prefix in f.stem]
-    if not actor_files:
-        raise FileNotFoundError("No matching Thompson (head0) actor checkpoints found.")
+        critic_files = [f for f in critic_files if prefix in f.stem]
+    if not critic_files:
+        raise FileNotFoundError("No matching bootstrapped critic (head0) checkpoints found.")
 
-    actor_h0 = max(actor_files, key=lambda f: f.stat().st_mtime)
-    critic_h0 = actor_h0.with_name(actor_h0.name.replace("ddpg_actor_", "ddpg_critic_"))
-
-    if not critic_h0.exists():
-        raise FileNotFoundError(f"Matching critic not found for {actor_h0.name}")
-
-    # Strip "_h0" from stem to get the "tag"
-    tag_stem = actor_h0.stem.replace("_h0", "")
-    return actor_h0, critic_h0, tag_stem
+    critic_h0 = max(critic_files, key=lambda f: f.stat().st_mtime)
+    tag_stem = critic_h0.stem.replace("_h0", "")
+    return critic_h0, tag_stem
 
 
-def load_thompson_heads(model_dir: Path, rl_cfg, tag_stem: str, device):
+def load_bootcritics(model_dir: Path, rl_cfg, tag_stem: str, device):
     """
-    Load all heads for Thompson:
+    Load all bootstrapped critics:
       expects files:
-        ddpg_actor_<tag>_h{k}.pth
         ddpg_critic_<tag>_h{k}.pth
-    where <tag> is tag_stem without "ddpg_actor_".
+    where <tag> is tag_stem without "ddpg_critic_".
     """
     K = rl_cfg["training"].get("num_heads", 8)
     state_dim = rl_cfg["model"]["state_dim"]
     action_dim = rl_cfg["model"]["action_dim"]
     hidden_dim = rl_cfg["model"]["hidden_dim"]
 
-    # tag_stem includes "ddpg_actor_..." stem name; we will use it directly
-    # Example tag_stem: "ddpg_actor_runname"
-    # We need its suffix after "ddpg_actor_" to construct filenames.
-    if not tag_stem.startswith("ddpg_actor_"):
+    if not tag_stem.startswith("ddpg_critic_"):
         raise ValueError(f"Unexpected tag_stem format: {tag_stem}")
 
-    tag = tag_stem.replace("ddpg_actor_", "", 1)
+    tag = tag_stem.replace("ddpg_critic_", "", 1)
 
-    actors = []
     critics = []
     for k in range(K):
-        actor_path = model_dir / f"ddpg_actor_{tag}_h{k}.pth"
         critic_path = model_dir / f"ddpg_critic_{tag}_h{k}.pth"
+        if not critic_path.exists():
+            raise FileNotFoundError(f"Missing critic head file for k={k}: {critic_path}")
 
-        if not actor_path.exists() or not critic_path.exists():
-            raise FileNotFoundError(
-                f"Missing Thompson head files for k={k}:\n  {actor_path}\n  {critic_path}"
-            )
-
-        actor = Actor(state_dim, action_dim, hidden_dim).to(device)
         critic = Critic(state_dim, action_dim, hidden_dim).to(device)
-
-        actor.load_state_dict(torch.load(actor_path, map_location=device))
         critic.load_state_dict(torch.load(critic_path, map_location=device))
-
-        actor.train()
         critic.train()
-
-        actors.append(actor)
         critics.append(critic)
 
-    return actors, critics, tag
+    return critics, tag
 
 
-def save_thompson_heads(model_dir: Path, tag: str, actors, critics):
+def save_bootcritics(model_dir: Path, tag: str, critics):
     """
-    Save heads to:
-      ddpg_actor_<tag>_h{k}.pth
+    Save critics to:
       ddpg_critic_<tag>_h{k}.pth
     """
     model_dir.mkdir(parents=True, exist_ok=True)
-    for k, (a, c) in enumerate(zip(actors, critics)):
-        torch.save(a.state_dict(), model_dir / f"ddpg_actor_{tag}_h{k}.pth")
+    for k, c in enumerate(critics):
         torch.save(c.state_dict(), model_dir / f"ddpg_critic_{tag}_h{k}.pth")
 
 
 # ---------------------------------------------------------
-# Training loop (Thompson Sampling via bootstrapped heads)
+# Training loop (Bootstrapped Thompson + CEM planning)
 # ---------------------------------------------------------
 def training(
     rl_cfg,
@@ -133,33 +190,31 @@ def training(
     camera_index_start=None,
 ):
     """
-    Thompson Sampling (bootstrapped ensemble) contextual bandit for golf robot.
+    Good, stable algorithm for your setting:
+      - Critic-only bootstrapped Thompson sampling
+      - Action chosen by planning in action-space (CEM) against sampled critic head
+      - Critics trained by supervised regression Q(s,a)->r
 
-    - context = (ball_start_obs, hole_pos_obs, discs)
-    - action  = (speed, angle) continuous (normalized to [-1,1]^2 inside network)
-    - reward  = compute_reward(...) based on terminal outcome / shaped distance
-
-    One-step bandit:
-      - each episode: sample a head k, act with actor_k(s)
-      - training: each head is trained on a bootstrap mask of minibatches
+    This converges much more reliably than actor-critic for one-step tasks.
     """
     if env_step is None:
         raise ValueError("training() requires env_step (sim or real environment function).")
 
     episodes   = rl_cfg["training"]["episodes"]
     batch_size = rl_cfg["training"]["batch_size"]
-    actor_lr   = rl_cfg["training"]["actor_lr"]
     critic_lr  = rl_cfg["training"]["critic_lr"]
     grad_steps = rl_cfg["training"]["grad_steps"]
 
-    # Thompson controls
+    # Bootstrapped Thompson controls
     K = rl_cfg["training"].get("num_heads", 8)
     bootstrap_p = rl_cfg["training"].get("bootstrap_p", 0.8)  # per-head mask prob
-    ts_action_noise_std = rl_cfg["training"].get("thompson_action_noise_std", 0.0)  # optional tiny noise
 
-    # Old exploration noise in the script (now mostly unnecessary)
-    # Keep it but default it to tiny in config, or we override below.
-    noise_std  = rl_cfg["training"]["noise_std"]
+    # CEM controls
+    cem_pop = rl_cfg["training"].get("cem_pop", 512)
+    cem_iters = rl_cfg["training"].get("cem_iters", 3)
+    cem_elite_frac = rl_cfg["training"].get("cem_elite_frac", 0.1)
+    cem_init_std = rl_cfg["training"].get("cem_init_std", 0.7)
+    cem_min_std = rl_cfg["training"].get("cem_min_std", 0.05)
 
     state_dim  = rl_cfg["model"]["state_dim"]
     action_dim = rl_cfg["model"]["action_dim"]
@@ -176,12 +231,6 @@ def training(
     dist_at_hole_scale = rl_cfg["reward"]["dist_at_hole_scale"]
     optimal_speed_scale = rl_cfg["reward"]["optimal_speed_scale"]
 
-    hole_positions = get_hole_positions()
-
-    # With Thompson, you generally do NOT want large additive Gaussian action noise.
-    # Keep it but make it tiny so it doesn't fight the exploration mechanism.
-    noise_std = min(float(noise_std), 0.05)
-
     if env_type == "sim":
         use_wandb = rl_cfg["training"]["use_wandb"]
     else:
@@ -189,9 +238,6 @@ def training(
 
     model_name = rl_cfg["training"].get("model_name", None)
 
-    # -------------------------
-    # Initialize models (K heads)
-    # -------------------------
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
@@ -200,78 +246,52 @@ def training(
 
     tag_for_saving = None
 
+    # -------------------------
+    # Initialize critics (K heads)
+    # -------------------------
     if continue_training:
-        # Load the newest Thompson checkpoint set (based on head0 timestamp),
-        # or load a specific tag if model_name is provided.
-        if env_type == "real":
-            # For real: load absolutely newest by mtime on head0 (optionally filter by model_name prefix)
-            prefix = model_name if model_name else None
-            actor_h0, critic_h0, tag_stem = find_latest_thompson_checkpoint(model_dir, prefix=prefix)
-            print("Loading latest Thompson checkpoints:")
-            print(f"  Actor0 : {actor_h0.name}")
-            print(f"  Critic0: {critic_h0.name}")
-            actors, critics, loaded_tag = load_thompson_heads(model_dir, rl_cfg, tag_stem, device)
-            tag_for_saving = loaded_tag
+        if model_name is not None:
+            # Load by explicit tag
+            tag_for_saving = model_name
+            tag_stem = f"ddpg_critic_{model_name}"
+            critics, _ = load_bootcritics(model_dir, rl_cfg, tag_stem, device)
+            print(f"Continuing training from tag: {model_name}")
         else:
-            # Sim: if model_name is given, treat it as the tag directly
-            if model_name is None:
-                actor_h0, critic_h0, tag_stem = find_latest_thompson_checkpoint(model_dir, prefix=None)
-                print("Continuing training from latest Thompson checkpoints:")
-                print(f"  Actor0 : {actor_h0.name}")
-                print(f"  Critic0: {critic_h0.name}")
-                actors, critics, loaded_tag = load_thompson_heads(model_dir, rl_cfg, tag_stem, device)
-                tag_for_saving = loaded_tag
-            else:
-                # expected filenames: ddpg_actor_<model_name>_h0.pth etc
-                tag_for_saving = model_name
-                # Construct a "tag_stem" that matches our loader expectations
-                tag_stem = f"ddpg_actor_{model_name}"
-                print(f"Continuing training from tag: {model_name}")
-                actors, critics, _ = load_thompson_heads(model_dir, rl_cfg, tag_stem, device)
-
+            # Load newest by head0 critic timestamp
+            critic_h0, tag_stem = find_latest_bootcritic_checkpoint(model_dir, prefix=None)
+            print("Continuing training from latest bootstrapped critics:")
+            print(f"  Critic0 : {critic_h0.name}")
+            critics, loaded_tag = load_bootcritics(model_dir, rl_cfg, tag_stem, device)
+            tag_for_saving = loaded_tag
     else:
-        # Fresh init
-        actors  = [Actor(state_dim, action_dim, hidden_dim).to(device) for _ in range(K)]
         critics = [Critic(state_dim, action_dim, hidden_dim).to(device) for _ in range(K)]
-        # Tag for saving: use wandb run name or local_run-like
-        tag_for_saving = None
 
-    actor_optimizers  = [torch.optim.SGD(a.parameters(), lr=actor_lr) for a in actors]
-    critic_optimizers = [torch.optim.SGD(c.parameters(), lr=critic_lr) for c in critics]
+    # Use Adam (much more stable than SGD)
+    critic_optimizers = [torch.optim.Adam(c.parameters(), lr=critic_lr) for c in critics]
 
+    # Replay buffers
     replay_buffer_big = ReplayBuffer(capacity=rl_cfg["training"]["replay_buffer_capacity"])
     replay_buffer_recent = ReplayBuffer(1000)
 
+    # wandb
     if use_wandb:
-        # Watch just head0 to avoid noisy logs
-        wandb.watch(actors[0],  log="gradients", log_freq=100)
         wandb.watch(critics[0], log="gradients", log_freq=100)
         run_name = wandb.run.name.replace("-", "_")
     else:
         run_name = "local_run"
 
-    # Decide a stable tag to save
-    # If continuing, keep existing tag; else new tag = run_name (or tmp_name for real if provided)
+    # Choose save tag
     if tag_for_saving is None:
         if env_type == "real" and tmp_name is not None:
             tag_for_saving = tmp_name
         else:
             tag_for_saving = run_name
 
-    # For evaluation we’ll use the mean actor across heads
-    eval_actor = EnsembleMeanActor(actors).to(device)
+    # Evaluation planner: mean critic
+    eval_planner = EnsembleCriticMeanPlanner(critics, device)
 
-    # Logging
-    log_dict = {}
-    last_success_rate = 0.0
-    last_last_success_rate = 0.0
-
-    max_num_discs = 2
-    stage_start_episode = 0
-
+    # Real-robot episode logging + replay load
     episode_logger = None
-    episode_log_path = None
-
     if env_type == "real":
         episode_log_path = project_root / "log" / "real_episodes" / "episode_logger.jsonl"
         episode_logger = EpisodeLoggerJsonl(episode_log_path)
@@ -289,9 +309,31 @@ def training(
         else:
             print(f"No existing episode log found at {episode_log_path}. Starting fresh.")
 
+    # Stats for prints
+    log_dict = {}
+    last_success_rate = 0.0
+    last_last_success_rate = 0.0
+    max_num_discs = 2
+
     for episode in range(episodes):
-        # Periodic evaluation of greedy-ish policy
+        # -------------------------------------------------
+        # Periodic eval (real)
+        # -------------------------------------------------
         if env_type == "real" and episode_logger.get_length() % 10000 == 0:
+            # Use the mean-critic planner: we wrap it as a tiny "actor" with forward()
+            class _EvalActor(nn.Module):
+                def __init__(self, planner, cfg):
+                    super().__init__()
+                    self.planner = planner
+                    self.cfg = cfg
+                def forward(self, state):
+                    # state is [B, state_dim], but evaluation_policy_short feeds [1, state_dim]
+                    s = state.squeeze(0)
+                    a = self.planner.act(s, self.cfg)
+                    return a.unsqueeze(0)
+
+            eval_actor = _EvalActor(eval_planner, rl_cfg).to(device)
+
             (
                 success_rate_eval,
                 avg_reward_eval,
@@ -313,63 +355,56 @@ def training(
             )
 
         # -------------------------------------------------
-        # Sample a context (ball start + hole + discs)
+        # Sample a context
         # -------------------------------------------------
         if env_type == "sim":
-            if last_success_rate > 0.9 and last_last_success_rate > 0.9 and False:
-                max_num_discs = min(MAX_DISCS, max_num_discs + 1)
-                last_success_rate = 0.0
-                last_last_success_rate = 0.0
-                stage_start_episode = episode
-                replay_buffer_recent.clear()
-
             ball_start_obs, hole_pos_obs, disc_positions, x, y, hole_pos = sim_init_parameters(
                 mujoco_cfg, max_num_discs
             )
-
-        if env_type == "real":
+        else:
             ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(
                 camera_index=camera_index_start
             )
+            hole_pos = np.array(hole_pos_obs, dtype=float)
 
         # -------------------------------------------------
-        # Encode + scale state
+        # Encode + scale state (match your original training)
         # -------------------------------------------------
-        # NOTE: keeping your original training state encoding (no engineered aug here),
-        # because you asked to only change where Thompson needs to be.
         state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 5)
         state_norm = scale_state_vec(state_vec)
         s = torch.tensor(state_norm, dtype=torch.float32, device=device)
 
         # -------------------------------------------------
-        # Thompson action selection: sample head k, act with actor_k
+        # Thompson step: sample one critic head, plan action by CEM
         # -------------------------------------------------
         head = int(np.random.randint(K))
 
-        with torch.no_grad():
-            a_norm = actors[head](s.unsqueeze(0)).squeeze(0)
+        @torch.no_grad()
+        def score_fn(s_batch, a_batch):
+            # Use sampled head only
+            q = critics[head](s_batch, a_batch)  # [N,1]
+            return q.squeeze(-1)  # [N]
 
-            # Optional: tiny additive noise (not required)
-            if ts_action_noise_std > 0:
-                a_norm = a_norm + torch.normal(
-                    mean=torch.zeros_like(a_norm),
-                    std=ts_action_noise_std * torch.ones_like(a_norm),
-                )
-
-            # Optional: keep the old noise_std but clipped tiny
-            if noise_std > 0:
-                a_norm = a_norm + torch.normal(
-                    mean=torch.zeros_like(a_norm),
-                    std=noise_std * torch.ones_like(a_norm),
-                )
-
-        a_noisy = torch.clamp(a_norm, -1.0, 1.0)
-
-        speed, angle_deg = get_input_parameters(
-            a_noisy.detach().cpu().numpy(), speed_low, speed_high, angle_low, angle_high
+        a_norm = cem_plan_action(
+            s=s,
+            score_fn=score_fn,
+            action_dim=action_dim,
+            device=device,
+            cem_iters=cem_iters,
+            cem_pop=cem_pop,
+            cem_elite_frac=cem_elite_frac,
+            action_low=-1.0,
+            action_high=1.0,
+            init_std=cem_init_std,
+            min_std=cem_min_std,
         )
 
-        # Environment / actuator noise
+        # Convert to physical action
+        speed, angle_deg = get_input_parameters(
+            a_norm.detach().cpu().numpy(), speed_low, speed_high, angle_low, angle_high
+        )
+
+        # Environment / actuator noise (sim)
         if env_type == "sim":
             speed_noise      = np.random.normal(0, SPEED_NOISE_STD)
             angle_deg_noise  = np.random.normal(0, ANGLE_NOISE_STD)
@@ -377,7 +412,7 @@ def training(
             angle_deg = np.clip(angle_deg + angle_deg_noise, angle_low, angle_high)
 
         # -------------------------------------------------
-        # One-step environment: simulate and get reward
+        # Step environment
         # -------------------------------------------------
         if env_type == "sim":
             result = env_step(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
@@ -404,11 +439,10 @@ def training(
                     check_rtt=True,
                     chosen_hole=chosen_hole,
                 )
-
             if result is None:
                 print(
-                    f"Episode {episode + 1}: Simulation failed twice. "
-                    f"Bad action: speed={speed}, angle={angle_deg}"
+                    f"Episode {episode + 1}: failed twice. "
+                    f"speed={speed}, angle={angle_deg}"
                 )
                 if rl_cfg["training"]["error_hard_stop"] and env_type == "sim" and not mujoco_cfg["sim"]["render"]:
                     raise RuntimeError("Simulation failed twice — aborting training.")
@@ -434,6 +468,7 @@ def training(
                 hole2 = np.array([get_hole_positions()[2]["x"], get_hole_positions()[2]["y"]])
                 hole3 = np.array([get_hole_positions()[3]["x"], get_hole_positions()[3]["y"]])
 
+        # Reward
         if using_all_holes:
             rewards = []
             for i, hole_pos_obs_try in enumerate([hole1, hole2, hole3]):
@@ -454,10 +489,10 @@ def training(
                     optimal_speed_scale=optimal_speed_scale,
                     multiple_dist_at_hole=dist_at_hole,
                 )
-                rewards.append(reward_try)
-            reward = float(max(rewards))  # for printing/logging only
+                rewards.append(float(reward_try))
+            reward = float(max(rewards))
         else:
-            reward = compute_reward(
+            reward = float(compute_reward(
                 ball_end_xy=np.array([ball_x, ball_y]),
                 hole_xy=hole_pos_obs,
                 in_hole=in_hole,
@@ -469,10 +504,10 @@ def training(
                 optimal_speed=optimal_speed,
                 dist_at_hole_scale=dist_at_hole_scale,
                 optimal_speed_scale=optimal_speed_scale,
-            )
+            ))
 
         # -------------------------------------------------
-        # Real-robot logging
+        # Real logging
         # -------------------------------------------------
         if env_type == "real" and isinstance(meta, dict):
             used_for_training = bool(meta.get("used_for_training", True))
@@ -481,39 +516,38 @@ def training(
             if not used_for_training:
                 print("Episode discarded by user; not adding to replay buffer.")
                 continue
-            else:
-                print("Storing episode")
-                logging_dict = {
-                    "episode": episode,
-                    "time": time.time(),
-                    "used_for_training": used_for_training,
-                    "ball_start_obs": ball_start_obs.tolist(),
-                    "hole_pos_obs": hole_pos_obs.tolist(),
-                    "disc_positions": disc_positions,
-                    "state_norm": state_norm.tolist(),
-                    "action_norm": a_noisy.detach().cpu().numpy().tolist(),
-                    "speed": speed,
-                    "angle_deg": angle_deg,
-                    "ball_final_pos": [ball_x, ball_y],
-                    "in_hole": bool(in_hole),
-                    "out_of_bounds": out_of_bounds,
-                    "reward": float(reward),
-                    "chosen_hole": chosen_hole,
-                    "dist_at_hole": meta.get("dist_at_hole", None),
-                    "speed_at_hole": meta.get("speed_at_hole", None),
-                    "exploring": True,
-                    "thompson_head": head,
-                }
-                episode_logger.log(logging_dict)
+
+            logging_dict = {
+                "episode": episode,
+                "time": time.time(),
+                "used_for_training": used_for_training,
+                "ball_start_obs": ball_start_obs.tolist(),
+                "hole_pos_obs": hole_pos_obs.tolist(),
+                "disc_positions": disc_positions,
+                "state_norm": state_norm.tolist(),
+                "action_norm": a_norm.detach().cpu().numpy().tolist(),
+                "speed": float(speed),
+                "angle_deg": float(angle_deg),
+                "ball_final_pos": [float(ball_x), float(ball_y)],
+                "in_hole": bool(in_hole),
+                "out_of_bounds": out_of_bounds,
+                "reward": float(reward),
+                "chosen_hole": chosen_hole,
+                "dist_at_hole": meta.get("dist_at_hole", None),
+                "speed_at_hole": meta.get("speed_at_hole", None),
+                "exploring": True,
+                "thompson_head": head,
+                "planner": "boot_ts_cem",
+            }
+            episode_logger.log(logging_dict)
 
         # -------------------------------------------------
-        # Store transition(s) in replay buffer
+        # Store transition(s)
         # -------------------------------------------------
         s_train = s.detach().cpu()
-        a_train = a_noisy.detach().cpu()
+        a_train = a_norm.detach().cpu()
 
         if using_all_holes:
-            # store all three as separate samples
             for r in rewards:
                 replay_buffer_big.add(s_train, a_train, float(r))
                 replay_buffer_recent.add(s_train, a_train, float(r))
@@ -522,11 +556,11 @@ def training(
             replay_buffer_recent.add(s_train, a_train, float(reward))
 
         # -------------------------------------------------
-        # Thompson training: bootstrapped updates per head
+        # Train critics (supervised regression) with bootstrap masks
         # -------------------------------------------------
         if len(replay_buffer_big.data) >= batch_size:
             if env_type == "real":
-                print("Updating networks...")
+                print("Updating critics...")
 
             for _ in range(grad_steps):
                 states_b, actions_b, rewards_b = sample_mixed(
@@ -538,42 +572,28 @@ def training(
 
                 states_b  = states_b.to(device)
                 actions_b = actions_b.to(device)
-                rewards_b = rewards_b.to(device)
+                rewards_b = rewards_b.to(device)  # [B,1]
 
-                td_target = rewards_b  # one-step bandit target
-
-                # Update each head with its own bootstrap mask
                 for k in range(K):
-                    mask = (torch.rand(td_target.shape[0], device=device) < float(bootstrap_p))
+                    mask = (torch.rand(rewards_b.shape[0], device=device) < float(bootstrap_p))
                     if int(mask.sum().item()) < 2:
                         continue
 
                     sb = states_b[mask]
                     ab = actions_b[mask]
-                    rb = td_target[mask]
+                    rb = rewards_b[mask]
 
-                    # Critic: Q_k(s,a) -> r
                     q_pred = critics[k](sb, ab)
-                    critic_loss = F.mse_loss(q_pred, rb)
+                    loss = F.mse_loss(q_pred, rb)
 
                     critic_optimizers[k].zero_grad()
-                    critic_loss.backward()
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(critics[k].parameters(), 1.0)
                     critic_optimizers[k].step()
 
-                    # Actor: maximize its own critic
-                    a_for_actor = actors[k](sb)
-                    actor_loss = -critics[k](sb, a_for_actor).mean()
-
-                    actor_optimizers[k].zero_grad()
-                    actor_loss.backward()
-                    actor_optimizers[k].step()
-
             # Save periodically for real robot
-            if env_type == "real":
-                if tmp_name is not None:
-                    save_thompson_heads(model_dir, tag_for_saving, actors, critics)
-                else:
-                    print("No tmp_name provided; models not saved during real robot training.")
+            if env_type == "real" and tmp_name is not None:
+                save_bootcritics(model_dir, tag_for_saving, critics)
 
         if env_type == "real" and isinstance(meta, dict):
             if not meta.get("continue_training", True):
@@ -581,24 +601,36 @@ def training(
                 break
 
         # -------------------------------------------------
-        # Prints
+        # Prints + wandb
         # -------------------------------------------------
         if rl_cfg["training"]["do_prints"]:
             print("========================================")
-            print(f"Episode {episode + 1}/{episodes}, Reward: {float(reward):.4f}, TS head: {head}")
-            if env_type == "sim":
-                dist_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
-                print(f"  Distance to Hole: {dist_to_hole:.4f}, In Hole: {bool(in_hole)}")
+            print(f"Episode {episode + 1}/{episodes}, Reward: {reward:.4f}, TS head: {head}")
+
+        if use_wandb:
+            log_dict["reward"] = float(reward)
+            log_dict["thompson_head"] = int(head)
+            wandb.log(log_dict, step=episode)
 
         # -------------------------------------------------
         # Periodic eval (sim)
         # -------------------------------------------------
         if (episode) % rl_cfg["training"]["eval_interval"] == 24 and env_type == "sim":
-            (
-                success_rate_eval,
-                avg_reward_eval,
-                avg_distance_to_hole_eval,
-            ) = evaluation_policy_short(
+
+            # Wrap the mean planner as an "actor" for existing eval function
+            class _EvalActor(nn.Module):
+                def __init__(self, planner, cfg):
+                    super().__init__()
+                    self.planner = planner
+                    self.cfg = cfg
+                def forward(self, state):
+                    s1 = state.squeeze(0)
+                    a = self.planner.act(s1, self.cfg)
+                    return a.unsqueeze(0)
+
+            eval_actor = _EvalActor(eval_planner, rl_cfg).to(device)
+
+            success_rate_eval, avg_reward_eval, avg_distance_to_hole_eval = evaluation_policy_short(
                 eval_actor,
                 device,
                 mujoco_cfg,
@@ -618,26 +650,35 @@ def training(
             )
 
             if use_wandb:
-                log_dict["success_rate"] = success_rate_eval
-                log_dict["avg_reward"] = avg_reward_eval
-                log_dict["avg_distance_to_hole"] = avg_distance_to_hole_eval
-                log_dict["bootstrap_p"] = float(bootstrap_p)
-                log_dict["K_heads"] = int(K)
-
-        # wandb per-step logging
-        if use_wandb:
-            if env_type == "sim":
-                distance_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
-                log_dict["distance_to_hole"] = float(distance_to_hole)
-            log_dict["reward"] = float(reward)
-            log_dict["max_num_discs"] = int(max_num_discs)
-            log_dict["thompson_head"] = int(head)
-            wandb.log(log_dict, step=episode)
+                wandb.log(
+                    {
+                        "success_rate": success_rate_eval,
+                        "avg_reward": avg_reward_eval,
+                        "avg_distance_to_hole": avg_distance_to_hole_eval,
+                        "K_heads": int(K),
+                        "bootstrap_p": float(bootstrap_p),
+                        "cem_pop": int(cem_pop),
+                        "cem_iters": int(cem_iters),
+                    },
+                    step=episode,
+                )
 
     # -------------------------------------------------
     # Final evaluation + saving
     # -------------------------------------------------
     if env_type == "sim":
+        class _EvalActor(nn.Module):
+            def __init__(self, planner, cfg):
+                super().__init__()
+                self.planner = planner
+                self.cfg = cfg
+            def forward(self, state):
+                s1 = state.squeeze(0)
+                a = self.planner.act(s1, self.cfg)
+                return a.unsqueeze(0)
+
+        eval_actor = _EvalActor(eval_planner, rl_cfg).to(device)
+
         final_success_rate, final_avg_reward, final_avg_distance_to_hole = evaluation_policy_short(
             eval_actor,
             device,
@@ -654,15 +695,16 @@ def training(
             f"avg_reward={final_avg_reward:.3f}, avg_dist={final_avg_distance_to_hole:.3f}"
         )
 
-    # Save heads
-    save_thompson_heads(model_dir, tag_for_saving, actors, critics)
+    save_bootcritics(model_dir, tag_for_saving, critics)
 
-    if use_wandb:
-        if env_type == "sim":
-            wandb.log({"final_avg_reward": final_avg_reward})
-            wandb.log({"final_success_rate": final_success_rate})
-            wandb.log({"final_avg_distance_to_hole": final_avg_distance_to_hole})
-        print("Run complete. Thompson models saved.")
+    if use_wandb and env_type == "sim":
+        wandb.log(
+            {
+                "final_avg_reward": final_avg_reward,
+                "final_success_rate": final_success_rate,
+                "final_avg_distance_to_hole": final_avg_distance_to_hole,
+            }
+        )
 
     if episode_logger is not None:
         episode_logger.close()
@@ -686,9 +728,6 @@ if __name__ == "__main__":
     with open(rl_config_path, "r") as f:
         rl_cfg = yaml.safe_load(f)
 
-    # ------------------------------------------------------------------
-    # Select environment: SIM vs REAL
-    # ------------------------------------------------------------------
     env_type = rl_cfg["training"].get("env_type", "sim")
 
     if env_type == "sim":
@@ -705,38 +744,15 @@ if __name__ == "__main__":
     else:
         raise ValueError(f"Unknown env_type: {env_type} (expected 'sim' or 'real')")
 
-    # Optional: wandb sweeps
     if rl_cfg["training"]["use_wandb"]:
-        sweep_config = {
-            "actor_lr": rl_cfg["training"]["actor_lr"],
-            "critic_lr": rl_cfg["training"]["critic_lr"],
-            "noise_std": rl_cfg["training"]["noise_std"],
-            "hidden_dim": rl_cfg["model"]["hidden_dim"],
-            "batch_size": rl_cfg["training"]["batch_size"],
-            "grad_steps": rl_cfg["training"]["grad_steps"],
-            "num_heads": rl_cfg["training"].get("num_heads", 8),
-            "bootstrap_p": rl_cfg["training"].get("bootstrap_p", 0.8),
-        }
-
         wandb.init(
-            project="rl_golf_thompson_bandit",
+            project="rl_golf_boot_ts_cem",
             config={
-                **sweep_config,
                 "rl_config": rl_cfg,
                 "mujoco_config": mujoco_cfg,
             },
         )
 
-        cfg = wandb.config
-        # Keep your reward knobs
-        rl_cfg["reward"]["distance_scale"] = cfg.get("distance_scale", rl_cfg["reward"]["distance_scale"])
-        rl_cfg["reward"]["in_hole_reward"] = cfg.get("in_hole_reward", rl_cfg["reward"]["in_hole_reward"])
-        rl_cfg["reward"]["w_distance"] = cfg.get("w_distance", rl_cfg["reward"]["w_distance"])
-        rl_cfg["reward"]["optimal_speed"] = cfg.get("optimal_speed", rl_cfg["reward"]["optimal_speed"])
-        rl_cfg["reward"]["dist_at_hole_scale"] = cfg.get("dist_at_hole_scale", rl_cfg["reward"]["dist_at_hole_scale"])
-        rl_cfg["reward"]["optimal_speed_scale"] = cfg.get("optimal_speed_scale", rl_cfg["reward"]["optimal_speed_scale"])
-
-    # Train policy
     training(
         rl_cfg,
         mujoco_cfg,
@@ -747,7 +763,6 @@ if __name__ == "__main__":
         tmp_name=tmp_name if env_type == "real" else None,
     )
 
-    # Clean up temporary XML if it exists (sim only)
     if env_type == "sim" and tmp_xml_path is not None:
         try:
             os.remove(tmp_xml_path)
