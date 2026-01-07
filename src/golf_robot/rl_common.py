@@ -1001,21 +1001,34 @@ def evaluation_policy_short(
                 ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(camera_index=4, chosen_hole=i+1)
                 hole_pos = np.array(hole_pos_obs)
     
+            # Build state exactly matching the actor's expected state_dim
+            state_dim_expected = int(rl_cfg["model"]["state_dim"])
+
             MAX_DISCS_FEATS = 5
             state_vec = encode_state_with_discs(
                 ball_start_obs, hole_pos_obs, disc_positions, max_num_discs=MAX_DISCS_FEATS
             )
-            state_norm = scale_state_vec(state_vec)
+            raw_norm = scale_state_vec(state_vec)
 
+            # Optional engineered features
             aug = augment_state_features(state_vec, max_num_discs=MAX_DISCS_FEATS, dist_clip=5.0)
             aug_norm = scale_aug_features(aug, max_num_discs=MAX_DISCS_FEATS, dist_clip=5.0)
 
-            state_norm = np.concatenate([state_norm, aug_norm], axis=0)
+            raw_plus_aug = np.concatenate([raw_norm, aug_norm], axis=0)
 
+            # Choose what to feed based on expected dim
+            if state_dim_expected == raw_norm.shape[0]:
+                state_norm = raw_norm
+            elif state_dim_expected == raw_plus_aug.shape[0]:
+                state_norm = raw_plus_aug
+            else:
+                raise ValueError(
+                    f"State dim mismatch: rl_cfg expects {state_dim_expected}, "
+                    f"but raw_norm is {raw_norm.shape[0]} and raw_plus_aug is {raw_plus_aug.shape[0]}."
+                )
 
-            state = torch.tensor(
-                state_norm, dtype=torch.float32, device=device
-            ).unsqueeze(0)
+            state = torch.tensor(state_norm, dtype=torch.float32, device=device).unsqueeze(0)
+
             
             #a_norm = actor(state).squeeze(0).cpu().numpy()
             # SAC: use deterministic mean action at eval time
