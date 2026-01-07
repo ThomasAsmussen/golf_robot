@@ -18,7 +18,7 @@ echo "Running script..."
 module load python3/3.10.13
 
 # Activate your env
-cd ~/golf_robot
+cd ~/
 source golf_venv/bin/activate
 
 # Run the wandb sweep agent
