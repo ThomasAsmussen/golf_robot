@@ -949,16 +949,21 @@ def evaluation_policy_short(
                 ball_x, ball_y, in_hole, meta = env_step(
                     angle_deg, speed, [x, y], mujoco_cfg, disc_positions
                 )
+                is_out_of_bounds = False
+
+
             if env_type == "real":
                 result = env_step(impact_velocity=speed, swing_angle=angle_deg, ball_start_position=ball_start_obs, planner="quintic", check_rtt=True, chosen_hole=chosen_hole)
                 ball_x, ball_y, in_hole, meta = result
+                is_out_of_bounds = meta["out_of_bounds"]
 
+        
             reward = compute_reward(
                 ball_end_xy=np.array([ball_x, ball_y]),
                 hole_xy=hole_pos,
                 in_hole=in_hole,
                 meta=meta,
-                is_out_of_bounds=meta["out_of_bounds"],
+                is_out_of_bounds=is_out_of_bounds,
                 distance_scale=rl_cfg["reward"]["distance_scale"],
                 in_hole_reward=rl_cfg["reward"]["in_hole_reward"],
                 w_distance=rl_cfg["reward"]["w_distance"],
@@ -988,8 +993,10 @@ def evaluation_policy_short(
                     "exploring": False,
                 }
                 episode_logger.log(logging_record)
-            if meta["used_for_training"]:
-                big_episode_logger.log(logging_record)
+
+                if meta["used_for_training"]:
+                    big_episode_logger.log(logging_record)
+                    
             rewards.append(reward)
             successes += int(in_hole == 1)
             distance_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
