@@ -10,10 +10,10 @@ training:
   eval_interval: 50
   eval_episodes: 20
   target_update_rho: 0.005
-  continue_training: True
+  continue_training: False
   error_hard_stop: True
-  do_prints: False
-  env_type: "real"
+  do_prints: True
+  env_type: "sim"
   model_name: "morning_sweep_4.pth"
 
 model:
