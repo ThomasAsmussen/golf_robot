@@ -17,4 +17,4 @@ echo "Running script..."
 module load cuda/11.8
 module load python3/3.10.13
 source golf_venv/bin/activate
-python3 /zhome/85/0/156431/golf_robot/src/golf_robot/thompson_bandit.py > log/run_sac$(date +"%d-%m-%y")_$(date +'%H:%M:%S').log
+python3 /zhome/85/0/156431/golf_robot/src/golf_robot/thompson_bandit.py > log/run_thompson$(date +"%d-%m-%y")_$(date +'%H:%M:%S').log
