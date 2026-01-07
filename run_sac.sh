@@ -4,8 +4,6 @@
 ### number of core
 #BSUB -n 1
 #BSUB -R "span[hosts=1]"
-### specify that all cores should be on the same host
-#BSUB -gpu "num=1:mode=exclusive_process"
 ### specify the memory needed
 #BSUB -R "rusage[mem=1GB]"
 ### Number of hours needed
