@@ -112,7 +112,7 @@ class Critic(nn.Module):
 # SAC models (bandit / single-step)
 # ---------------------------------------------------------
 LOG_STD_MIN = -5.0
-LOG_STD_MAX = 2.0
+LOG_STD_MAX = 0.0
 
 class SACActor(nn.Module):
     """

@@ -191,7 +191,7 @@ def training(
     alpha_optimizer = torch.optim.Adam([log_alpha], lr=actor_lr)
 
     # Entropy target
-    target_entropy = -float(action_dim)
+    target_entropy = -6.0 #-float(action_dim)
 
     replay_buffer_big = ReplayBuffer(capacity=rl_cfg["training"]["replay_buffer_capacity"])
     replay_buffer_recent = ReplayBuffer(1000)
