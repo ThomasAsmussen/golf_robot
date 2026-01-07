@@ -823,6 +823,93 @@ def sim_init_parameters(
 
     return ball_start_obs, hole_pos_obs, disc_positions, float(x), float(y), hole_pos
 
+# =========================================================
+# Engineered inputs (augmented with raw)
+# =========================================================
+def augment_state_features(
+    state_vec_raw: np.ndarray,
+    max_num_discs: int,
+    *,
+    dist_clip: float = 5.0,
+    eps: float = 1e-8,
+) -> np.ndarray:
+    """
+    Engineered features from raw state:
+      - dist_to_hole
+      - dir_to_hole (unit vector x,y)
+      - for each disc: dist_to_disc_i, dir_to_disc_i (unit vector x,y), masked if not present
+
+    Raw state layout (encode_state_with_discs):
+      [bx, by, hx, hy, d1x, d1y, p1, ..., dNx, dNy, pN]
+    """
+    s = np.asarray(state_vec_raw, dtype=float).reshape(-1)
+    bx, by, hx, hy = s[0], s[1], s[2], s[3]
+
+    feats = []
+
+    # ----- hole: distance + direction -----
+    dxh = hx - bx
+    dyh = hy - by
+    dist_h = np.hypot(dxh, dyh)
+    inv_h = 1.0 / (dist_h + eps)
+    dir_hx = dxh * inv_h
+    dir_hy = dyh * inv_h
+
+    feats.append(np.clip(dist_h, 0.0, dist_clip))
+    feats.append(dir_hx)  # already ~[-1,1]
+    feats.append(dir_hy)
+
+    # ----- discs: distance + direction each (masked) -----
+    disc_data = s[4:]
+    for i in range(int(max_num_discs)):
+        x = disc_data[3*i + 0]
+        y = disc_data[3*i + 1]
+        p = disc_data[3*i + 2]
+
+        if p <= 0.0:
+            # absent disc: make it "far away" + zero direction
+            feats.append(dist_clip)
+            feats.append(0.0)
+            feats.append(0.0)
+        else:
+            dxd = x - bx
+            dyd = y - by
+            dist_d = np.hypot(dxd, dyd)
+            inv_d = 1.0 / (dist_d + eps)
+            dir_dx = dxd * inv_d
+            dir_dy = dyd * inv_d
+
+            feats.append(np.clip(dist_d, 0.0, dist_clip))
+            feats.append(dir_dx)
+            feats.append(dir_dy)
+
+    return np.asarray(feats, dtype=float)
+
+
+def scale_aug_features(
+    feats: np.ndarray,
+    max_num_discs: int,
+    *,
+    dist_clip: float = 5.0,
+) -> np.ndarray:
+    """
+    Scale engineered features to roughly [-1,1]:
+      - distances in [0, dist_clip] -> [-1,1]
+      - directions already in [-1,1], leave unchanged
+
+    Layout:
+      [dist_hole, dir_hx, dir_hy, dist_d1, dir_d1x, dir_d1y, ..., dist_dN, dir_dNx, dir_dNy]
+    """
+    f = np.asarray(feats, dtype=float).copy()
+
+    # indices of distance entries: 0 (hole dist), then every 3 starting at 3
+    dist_idxs = [0] + [3 + 3*i for i in range(int(max_num_discs))]
+    for idx in dist_idxs:
+        f[idx] = scale_to_unit(f[idx], 0.0, dist_clip)
+
+    # direction entries remain as-is
+    return f
+
 
 # =========================================================
 # Action mapping (normalized -> physical)
@@ -914,18 +1001,22 @@ def evaluation_policy_short(
                 ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(camera_index=4, chosen_hole=i+1)
                 hole_pos = np.array(hole_pos_obs)
     
+            MAX_DISCS_FEATS = 5
             state_vec = encode_state_with_discs(
-                ball_start_obs, hole_pos_obs, disc_positions, max_num_discs=5
+                ball_start_obs, hole_pos_obs, disc_positions, max_num_discs=MAX_DISCS_FEATS
             )
+            state_norm = scale_state_vec(state_vec)
 
-            # state_vec = np.concatenate([ball_start_obs, hole_pos_obs])  # No discs for now
+            aug = augment_state_features(state_vec, max_num_discs=MAX_DISCS_FEATS, dist_clip=5.0)
+            aug_norm = scale_aug_features(aug, max_num_discs=MAX_DISCS_FEATS, dist_clip=5.0)
 
-            state_vec = scale_state_vec(state_vec)
+            state_norm = np.concatenate([state_norm, aug_norm], axis=0)
+
 
             state = torch.tensor(
-                state_vec, dtype=torch.float32, device=device
+                state_norm, dtype=torch.float32, device=device
             ).unsqueeze(0)
-
+            
             #a_norm = actor(state).squeeze(0).cpu().numpy()
             # SAC: use deterministic mean action at eval time
             a_norm = None
