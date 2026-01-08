@@ -19,4 +19,4 @@ module load cuda/11.8
 module load python3/3.10.13
 source golf_venv/bin/activate
 
-python3 /zhome/41/d/156422/golf_robot/src/golf_robot/reinforcement_learning/contextual_bandit2.py > log/run_ddpg1step$(date +"%d-%m-%y")_$(date +'%H:%M:%S').log
+python3 /zhome/85/0/156431/golf_robot/src/golf_robot/contextual_bandit2.py > log/run_ddpg1step$(date +"%d-%m-%y")_$(date +'%H:%M:%S').log
