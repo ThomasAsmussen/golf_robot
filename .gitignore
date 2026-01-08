@@ -11,9 +11,11 @@ MUJOCO_LOG.TXT/
 wandb/
 log/
 tuning_results/
-models/rl/ddpg
-models/rl/bandit
+models/rl/ddpg/
+models/rl/bandit/
+models/rl/older/
 data/
+models/mujoco/golf_world_tmp_*
 # Mac OS-specific storage files
 .DS_Store
 
