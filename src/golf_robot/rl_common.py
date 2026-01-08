@@ -439,6 +439,7 @@ def load_replay_from_jsonl(
 
 
 
+
 # =========================================================
 # Replay buffers (bandit-friendly, but useful elsewhere too)
 # =========================================================
@@ -503,6 +504,150 @@ def sample_mixed(
 
     if num_recent > 0:
         states_r, actions_r, rewards_r = recent_buf.sample(num_recent)
+        states = torch.cat([states_r, states_a], dim=0)
+        actions = torch.cat([actions_r, actions_a], dim=0)
+        rewards = torch.cat([rewards_r, rewards_a], dim=0)
+    else:
+        states, actions, rewards = states_a, actions_a, rewards_a
+
+    return states, actions, rewards
+
+
+import math
+from typing import Tuple
+
+def _sample_balanced_quadrants(
+    buf: ReplayBuffer,
+    batch_size: int,
+    *,
+    ball_xy_idx: Tuple[int, int] = (0, 1),
+    oversample: int = 5,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Sample a batch whose (ball_x, ball_y) mean is pushed toward ~[0,0]
+    by balancing quadrants in normalized state space.
+
+    Quadrants are defined by the sign of (ball_x, ball_y):
+      Q00: x<0, y<0
+      Q01: x<0, y>=0
+      Q10: x>=0, y<0
+      Q11: x>=0, y>=0
+
+    If some quadrants are underrepresented, it falls back gracefully.
+    """
+    if len(buf) == 0:
+        raise RuntimeError("ReplayBuffer is empty")
+
+    ix, iy = ball_xy_idx
+    N = len(buf.data)
+
+    # Collect indices per quadrant
+    q = {0: [], 1: [], 2: [], 3: []}
+    for i in range(N):
+        s, _, _ = buf.data[i]
+        bx = float(s[ix].item())
+        by = float(s[iy].item())
+        # map sign to quadrant id
+        # bit0 = bx>=0, bit1 = by>=0
+        qid = (1 if bx >= 0 else 0) + (2 if by >= 0 else 0)
+        q[qid].append(i)
+
+    # Target samples per quadrant
+    base = batch_size // 4
+    rem = batch_size - 4 * base
+    target = [base, base, base, base]
+    # distribute remainder
+    for k in range(rem):
+        target[k] += 1
+
+    chosen = []
+
+    # First pass: draw as evenly as possible from each quadrant
+    for qid in range(4):
+        if len(q[qid]) == 0:
+            continue
+        k = min(target[qid], len(q[qid]))
+        # sample without replacement
+        perm = torch.randperm(len(q[qid]))[:k].tolist()
+        chosen.extend([q[qid][j] for j in perm])
+        target[qid] -= k
+
+    # Second pass: fill remaining from all indices, but bias toward samples
+    # that reduce mean ||[bx,by]|| (i.e., closer to origin).
+    remaining = batch_size - len(chosen)
+    if remaining > 0:
+        # Candidate pool: oversample*remaining random indices
+        cand_k = min(N, oversample * remaining)
+        cand_idx = torch.randint(0, N, (cand_k,)).tolist()
+
+        # Greedy pick: choose samples that keep batch mean near 0
+        mean = torch.zeros(2)
+        if chosen:
+            bxby = torch.stack([buf.data[i][0][[ix, iy]] for i in chosen], dim=0)
+            mean = bxby.mean(dim=0)
+
+        used = set(chosen)
+        for _ in range(remaining):
+            best_i = None
+            best_score = None
+            for i in cand_idx:
+                if i in used:
+                    continue
+                bxby = buf.data[i][0][[ix, iy]]
+                # score: norm of mean if we add this sample
+                new_mean = (mean * max(1, len(used)) + bxby) / (len(used) + 1)
+                score = float(new_mean.pow(2).sum().item())
+                if best_score is None or score < best_score:
+                    best_score = score
+                    best_i = i
+            if best_i is None:
+                # fallback: random fill
+                while True:
+                    i = int(torch.randint(0, N, (1,)).item())
+                    if i not in used:
+                        best_i = i
+                        break
+            used.add(best_i)
+            chosen.append(best_i)
+            mean = (mean * (len(used) - 1) + buf.data[best_i][0][[ix, iy]]) / len(used)
+
+    # Build batch tensors
+    states, actions, rewards = zip(*[buf.data[i] for i in chosen])
+    return (
+        torch.stack(states),
+        torch.stack(actions),
+        torch.tensor(rewards, dtype=torch.float32).unsqueeze(-1),
+    )
+
+
+def sample_mixed_zero_mean(
+    recent_buf: ReplayBuffer,
+    all_buf: ReplayBuffer,
+    recent_ratio: float,
+    batch_size: int,
+    *,
+    ball_xy_idx: Tuple[int, int] = (0, 1),
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Like sample_mixed(), but each component (recent/all) is sampled in a way
+    that pushes batch mean of ball start (x,y) toward ~[0,0] in normalized space.
+    """
+    if len(all_buf) == 0:
+        raise RuntimeError("All-buffer is empty; cannot sample.")
+
+    n_recent_avail = len(recent_buf)
+    num_recent = int(round(batch_size * float(recent_ratio)))
+    num_recent = min(num_recent, n_recent_avail)
+    num_all = batch_size - num_recent
+
+    states_a, actions_a, rewards_a = _sample_balanced_quadrants(
+        all_buf, num_all, ball_xy_idx=ball_xy_idx
+    )
+
+    if num_recent > 0:
+        states_r, actions_r, rewards_r = _sample_balanced_quadrants(
+            recent_buf, num_recent, ball_xy_idx=ball_xy_idx
+        )
         states = torch.cat([states_r, states_a], dim=0)
         actions = torch.cat([actions_r, actions_a], dim=0)
         rewards = torch.cat([rewards_r, rewards_a], dim=0)
@@ -580,8 +725,8 @@ def compute_reward(
     optimal_speed_scale: float = 5.0,
     use_meta_if_available: bool = True,
     is_out_of_bounds: bool = False,
-    multiple_dist_at_hole = None
-
+    multiple_dist_at_hole = None,
+    multiple_speed_at_hole = None
 ) -> float:
     """
     Single-step reward.
@@ -611,10 +756,12 @@ def compute_reward(
     if use_meta_if_available and isinstance(meta, dict):
         if multiple_dist_at_hole is not None:
             dist_at_hole = multiple_dist_at_hole
+            speed_at_hole = multiple_speed_at_hole
+
         else:
             dist_at_hole = meta.get("dist_at_hole", None)
+            speed_at_hole = meta.get("speed_at_hole", None)
 
-        speed_at_hole = meta.get("speed_at_hole", None)
         if dist_at_hole is not None and speed_at_hole is not None:
             dist_at_hole = float(dist_at_hole)
             speed_at_hole = float(speed_at_hole)
@@ -996,7 +1143,7 @@ def evaluation_policy_short(
 
                 if meta["used_for_training"]:
                     big_episode_logger.log(logging_record)
-                    
+
             rewards.append(reward)
             successes += int(in_hole == 1)
             distance_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)

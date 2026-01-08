@@ -135,8 +135,8 @@ if __name__ == "__main__":
     #here = os.path
     here = os.path.dirname(os.path.abspath(__file__))
     FFMPEG = os.path.join(here, "ffmpeg.exe")
-    camera_alt = "@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global"
-
+    # camera_alt = "@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global"
+    camera_alt = "Integrated Camera"
     #camera_alt = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
 
     cmd = [FFMPEG, "-hide_banner", "-loglevel", "error",

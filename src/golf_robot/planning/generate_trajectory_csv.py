@@ -19,7 +19,7 @@ from planning.trajectory import tcp_path_from_Q, generate_trajectory
 
 # Toggle to True to show TCP position and TCP velocity plots after planning
 SAVE_PLOTS = False
-SHOW_PLOTS = False
+SHOW_PLOTS = True
 CSV_OUTPUT_PATH = 'log/trajectory_sim.csv'
 
 
@@ -404,40 +404,40 @@ def main():
 
     results = generate_trajectory_csv(impact_speed, impact_angle, ball_x_offset, ball_y_offset, csv_out)  
 
-    # if results is None:
-    #     return 1
+    if results is None:
+        return 1
 
-    # # Optional TCP plots: 3D path and TCP velocities (vx,vy,vz,|v|)
-    # if SAVE_PLOTS or SHOW_PLOTS:
-    #     # Extract planned trajectory data
-    #     t_plan     = results.get('t_plan')
-    #     Q_all      = results.get('Q_plan')
-    #     dQ_all     = results.get('dQ_plan')
-    #     impact_idx = results["impact_sample_idx"]
+    # Optional TCP plots: 3D path and TCP velocities (vx,vy,vz,|v|)
+    if SAVE_PLOTS or SHOW_PLOTS:
+        # Extract planned trajectory data
+        t_plan     = results.get('t_plan')
+        Q_all      = results.get('Q_plan')
+        dQ_all     = results.get('dQ_plan')
+        impact_idx = results["impact_sample_idx"]
 
-    #     plot_joint_positions(t_plan, Q_all, impact_idx)
-    #     plot_joint_velocities(t_plan, dQ_all, impact_idx)
-    #     P_plan = tcp_path_from_Q(Q_all)  # TCP positions from joint trajectory
+        plot_joint_positions(t_plan, Q_all, impact_idx)
+        plot_joint_velocities(t_plan, dQ_all, impact_idx)
+        P_plan = tcp_path_from_Q(Q_all)  # TCP positions from joint trajectory
         
-    #     # Compute TCP velocities via Jacobian
-    #     tcp_vel_jac = np.zeros_like(P_plan)
+        # Compute TCP velocities via Jacobian
+        tcp_vel_jac = np.zeros_like(P_plan)
         
-    #     for i, (q, dq) in enumerate(zip(Q_all, dQ_all)):
-    #         J = numeric_jacobian(q)
-    #         tcp_vel_jac[i] = J[:3, :] @ dq
+        for i, (q, dq) in enumerate(zip(Q_all, dQ_all)):
+            J = numeric_jacobian(q)
+            tcp_vel_jac[i] = J[:3, :] @ dq
 
-    #     speed = np.linalg.norm(tcp_vel_jac, axis=1)
-    #     plot_trajectory(t_plan, P_plan, tcp_vel_jac, speed, impact_idx)
+        speed = np.linalg.norm(tcp_vel_jac, axis=1)
+        plot_trajectory(t_plan, P_plan, tcp_vel_jac, speed, impact_idx)
 
-    xs, ys, heat = make_angle_reachability_heatmap(
-        impact_speed=1.6,
-        angle_min_deg=-5.0,
-        angle_max_deg=5.0,
-        angle_step_deg=2.0,
-        radius=0.20,
-        grid_step=0.05,
-        show_plot=True,
-    )
+    # xs, ys, heat = make_angle_reachability_heatmap(
+    #     impact_speed=1.6,
+    #     angle_min_deg=-5.0,
+    #     angle_max_deg=5.0,
+    #     angle_step_deg=2.0,
+    #     radius=0.20,
+    #     grid_step=0.05,
+    #     show_plot=True,
+    # )
     return 0
 
 

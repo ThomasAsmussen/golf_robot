@@ -28,16 +28,16 @@ def find_most_circular_blob(mask, min_area=50, circularity_thresh=0.45):
     (cx, cy), radius = cv2.minEnclosingCircle(best_contour)
     return (int(cx), int(cy)), int(radius), best_contour
 
-
 def detect_ball_position(
     image_bgr,
-    low_hue=1,
-    high_hue=10,
-    sat_thresh=150,
+    hue_low=1,
+    hue_high=15,
+    val_low=150,
+    val_high=255,
+    sat_low=150,
+    sat_high=255,
     min_area=50,
     circularity_thresh=0.45,
-    val_thresh = 100,
-    val_thresh_bool=False,
     debug=False
 ):
     """
@@ -53,32 +53,18 @@ def detect_ball_position(
 
     # D) HSV + masks
     hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
-    sat = hsv[:, :, 1]
-    mask_sat = sat >= sat_thresh
-
-    hue = hsv[:, :, 0]
-    mask_hue = (hue >= low_hue) & (hue <= high_hue)
-
-    # Filtered (keep only sat & hue)
-    filtered = blurred.copy()
-    filtered[~(mask_sat & mask_hue)] = (0, 0, 0)
+    mask_hsv = cv2.inRange(hsv, (hue_low, sat_low, val_low), (hue_high, sat_high, val_high))
     
-    # Optional
-    if val_thresh_bool:
-        val = hsv[:, :, 2]
-        mask_val = val >= val_thresh
-        filtered[~(mask_val)] = (0,0,0)
 
     # E) Morphology
     kernel = np.ones((3, 3), np.uint8)
-    opened = cv2.morphologyEx(filtered, cv2.MORPH_OPEN, kernel)
+    opened = cv2.morphologyEx(mask_hsv, cv2.MORPH_OPEN, kernel)
 
     kernel = np.ones((11, 11), np.uint8)
     closed = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, kernel)
 
     # F) Binary + circular blob
-    gray_closed = cv2.cvtColor(closed, cv2.COLOR_BGR2GRAY)
-    _, mask_bin = cv2.threshold(gray_closed, 1, 255, cv2.THRESH_BINARY)
+    _, mask_bin = cv2.threshold(closed, 1, 255, cv2.THRESH_BINARY)
 
     center, radius, _ = find_most_circular_blob(
         mask_bin, min_area=min_area, circularity_thresh=circularity_thresh
@@ -90,7 +76,7 @@ def detect_ball_position(
             cv2.circle(dbg, center, radius, (0, 255, 0), 2)
             cv2.circle(dbg, center, 3, (0, 0, 255), -1)
 
-        cv2.imshow("filtered", cv2.resize(filtered, (800, 600)))
+        cv2.imshow("filtered", cv2.resize(mask_hsv, (800, 600)))
         cv2.imshow("mask_bin", cv2.resize(mask_bin, (800, 600)))
         cv2.imshow("debug", cv2.resize(dbg, (800, 600)))
         cv2.waitKey(0)

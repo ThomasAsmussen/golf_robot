@@ -26,8 +26,8 @@ from vision.ball_at_hole_state import process_video
 
 
 OPERATING_SYSTEM = "linux"  # "windows" or "linux"
-CAMERA_INDEX_START = 4  # starting camera index for real robot
-CAMERA_INDEX_END   = 2  # ending camera index for real robot
+CAMERA_INDEX_START = 2  # starting camera index for real robot
+CAMERA_INDEX_END   = 4  # ending camera index for real robot
 # CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#7&23aa88cc&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
 #CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
 #CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
@@ -484,7 +484,7 @@ def real_init_parameters(camera_index, chosen_hole=None):
     # Ball
     bx, by, dbg = get_ball_start_position(debug=True, return_debug_image=True, debug_raw=False, use_cam=True, camera_index=camera_index, operating_system=OPERATING_SYSTEM)
     ball_start_position = np.array([bx, by])  # in meters
-    print(ball_start_position)
+    print(f"ball_start_position: {ball_start_position}")
     
     if dbg is not None:
         prompter.show_image(dbg, title="Ball start detection")
@@ -658,9 +658,11 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
     speed_at_hole = None
     ball_final_position = np.array([0.0, 0.0])  # optional: safe default
     continue_training = False
+    on_green = False
     
     wrong_hole = None
     state = prompter.ask_hole_oob(chosen_hole)
+
 
     if state == "in_hole":
         print("Ball in hole confirmed")
@@ -705,10 +707,27 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
             # files = glob.glob(pattern)
             # video_path = max(files, key=os.path.getmtime)
             compute_all_holes = True
-            dist_at_hole, speed_at_hole, xs, ys, hole_xo, hole_yo, bx, by = process_video(
-                video_path, chosen_hole=chosen_hole, real_time_show=False, compute_all_holes=compute_all_holes
-            )
-            if dist_at_hole is not None:
+            traj_3_worked = False
+            if compute_all_holes:
+                dist_at_hole = []
+                speed_at_hole = []
+                
+                for i in range(1,4):
+                    dist_at_hole_tmp, speed_at_hole_tmp, xs, ys, hole_xo, hole_yo, bx, by = process_video(
+                        video_path, chosen_hole=i, real_time_show=False, compute_all_holes=False
+                    )
+                    dist_at_hole.append(dist_at_hole_tmp)
+                    speed_at_hole.append(speed_at_hole_tmp)
+                print("Distance at hole list:", dist_at_hole)
+                print("Speed at hole list:", speed_at_hole)
+                if dist_at_hole[2] is not None:
+                    traj_3_worked = True
+
+            else:
+                dist_at_hole, speed_at_hole, xs, ys, hole_xo, hole_yo, bx, by = process_video(
+                    video_path, chosen_hole=chosen_hole, real_time_show=False, compute_all_holes=False
+                )
+            if dist_at_hole is not None and traj_3_worked:
                 prompter.show_trajectory_plot(xs, ys, hole_xo, hole_yo, bx, by)
             #dist_at_hole, speed_at_hole = process_video(
             #    video_path, chosen_hole=chosen_hole,
@@ -739,6 +758,7 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
         "continue_training": continue_training,
         "out_of_bounds": out_of_bounds,
         "wrong_hole": wrong_hole,
+        "on_green": on_green,
     }
     print("meta:", meta)
     return ball_final_position[0], ball_final_position[1], in_hole, meta
