@@ -1,6 +1,6 @@
 #!/bin/sh
 #BSUB -q gpuv100
-#BSUB -J MULT
+#BSUB -J ddpg1step
 ### number of core
 #BSUB -n 4
 #BSUB -R "span[hosts=1]"
@@ -20,4 +20,4 @@ module load cuda/11.8
 module load python3/3.10.13
 source golf_venv/bin/activate
 
-python3 /zhome/41/d/156422/golf_robot/src/golf_robot/reinforcement_learning/ddpg.py > log/run_ddpg$(date +"%d-%m-%y")_$(date +'%H:%M:%S').log
+python3 /zhome/41/d/156422/golf_robot/src/golf_robot/reinforcement_learning/contextual_bandit2.py > log/run_ddpg1step$(date +"%d-%m-%y")_$(date +'%H:%M:%S').log

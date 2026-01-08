@@ -17,5 +17,5 @@ echo "Running script..."
 module load cuda/11.8
 module load python3/3.10.13
 source golf_venv/bin/activate
-export WANDB_PROJECT="rl_golf_thompson_bandit"
+
 python3 /zhome/85/0/156431/golf_robot/src/golf_robot/thompson_bandit.py > log/run_thompson$(date +"%d-%m-%y")_$(date +'%H:%M:%S').log
