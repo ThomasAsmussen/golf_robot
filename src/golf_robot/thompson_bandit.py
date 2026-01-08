@@ -751,7 +751,7 @@ if __name__ == "__main__":
 
     if rl_cfg["training"]["use_wandb"]:
         wandb.init(
-            project="rl_golf_boot_ts_cem",
+            project="rl_golf_ts_doublecritic_cem",
             config={
                 "rl_config": rl_cfg,
                 "mujoco_config": mujoco_cfg,
