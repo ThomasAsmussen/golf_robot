@@ -14,16 +14,55 @@ from rl_common import *
 
 
 # =========================================================
-# Algorithm: Bootstrapped Thompson + CEM planning + Double Critic per head
+# Algorithm: Critic-only Bootstrapped Thompson + CEM planning
 # =========================================================
-# - K heads (bootstrapped)
-# - Each head has TWO critics: Q1_k, Q2_k
-# - Thompson action selection: sample head k, plan with score(a)=min(Q1_k, Q2_k)
-# - Train both critics by supervised regression to reward
-#
-# This is the "TD3-style" anti-overestimation trick, adapted to a one-step bandit.
-# It fixes the "learns then becomes stupid" collapse that comes from CEM exploiting
-# spurious peaks in a single critic.
+# - No actor networks (removes instability)
+# - K bootstrapped critics approximate posterior over Q(s,a)=E[r|s,a]
+# - Each episode: sample head k, use CEM to maximize Q_k(s,a) over action
+# - Train critics by supervised regression Q(s,a)->r
+
+
+# ---------------------------------------------------------
+# Small helper: Ensemble wrapper to choose actions deterministically for eval
+# ---------------------------------------------------------
+class EnsembleCriticMeanPlanner:
+    """
+    Deterministic planner for evaluation:
+      - score(a) = mean_k Q_k(s,a)
+      - choose best action via CEM (or random shooting)
+    """
+    def __init__(self, critics, device):
+        self.critics = critics
+        self.device = device
+
+    @torch.no_grad()
+    def score_actions(self, s_batch, a_batch):
+        # s_batch: [N, state_dim], a_batch: [N, action_dim]
+        qs = []
+        for c in self.critics:
+            qs.append(c(s_batch, a_batch))  # [N,1]
+        q = torch.stack(qs, dim=0).mean(dim=0)  # [N,1]
+        return q.squeeze(-1)  # [N]
+
+    def act(self, s, cfg):
+        cem_pop_val = 256
+        cem_iters_val = 2
+        cem_elite_frac_val = 0.2
+        cem_init_std_val = 0.4
+        cem_min_std_val = 0.1
+        return cem_plan_action(
+            s=s,
+            score_fn=self.score_actions,
+            action_dim=cfg["model"]["action_dim"],
+            device=self.device,
+            cem_iters=cfg["training"].get("cem_iters_eval", cfg["training"].get("cem_iters", cem_iters_val)),
+            cem_pop=cfg["training"].get("cem_pop_eval", cfg["training"].get("cem_pop", cem_pop_val)),
+            cem_elite_frac=cfg["training"].get("cem_elite_frac", cem_elite_frac_val),
+            action_low=-1.0,
+            action_high=1.0,
+            init_std=cfg["training"].get("cem_init_std", cem_init_std_val),
+            min_std=cfg["training"].get("cem_min_std", cem_min_std_val),
+        )
 
 
 # ---------------------------------------------------------
@@ -34,14 +73,13 @@ def cem_plan_action(
     score_fn,
     action_dim,
     device,
-    cem_iters=2,
-    cem_pop=256,
-    cem_elite_frac=0.2,
+    cem_iters=3,
+    cem_pop=512,
+    cem_elite_frac=0.1,
     action_low=-1.0,
     action_high=1.0,
-    init_std=0.4,
-    min_std=0.1,
-    init_mu=None,
+    init_std=0.7,
+    min_std=0.05,
 ):
     """
     Cross-Entropy Method in normalized action space [-1,1]^action_dim.
@@ -49,17 +87,12 @@ def cem_plan_action(
     Inputs:
       s: torch tensor [state_dim] on device
       score_fn: callable(s_batch, a_batch) -> scores [N] (higher is better)
-      init_mu: optional initial mean action (torch [action_dim] on device)
     Returns:
       best_action: torch tensor [action_dim] on device
     """
     elite_n = max(1, int(round(cem_pop * cem_elite_frac)))
 
-    if init_mu is None:
-        mu = torch.zeros(action_dim, device=device)
-    else:
-        mu = init_mu.detach().clone().to(device)
-
+    mu = torch.zeros(action_dim, device=device)
     std = torch.ones(action_dim, device=device) * float(init_std)
 
     s_batch = s.unsqueeze(0).repeat(cem_pop, 1)
@@ -86,82 +119,69 @@ def cem_plan_action(
 
 
 # ---------------------------------------------------------
-# Helper: Find newest checkpoint set (head0 critic1 as reference)
+# Helper: Find newest checkpoint set (head0 critic as reference)
 # ---------------------------------------------------------
-def find_latest_doublecritic_checkpoint(model_dir: Path, prefix: str | None = None):
+def find_latest_bootcritic_checkpoint(model_dir: Path, prefix: str | None = None):
     """
-    Find newest checkpoint set by looking for head0 critic1 file:
-      ddpg_critic1_<tag>_h0.pth
-    Returns: (critic1_h0_path, tag_stem)
+    Find newest checkpoint set by looking for head0 critic file:
+      ddpg_critic_<something>_h0.pth
+    Returns: (critic_h0_path, tag_stem)
     where tag_stem is the stem with "_h0" stripped.
     """
-    critic_files = list(model_dir.glob("ddpg_critic1_*_h0.pth"))
+    critic_files = list(model_dir.glob("ddpg_critic_*_h0.pth"))
     if prefix is not None:
         critic_files = [f for f in critic_files if prefix in f.stem]
     if not critic_files:
-        raise FileNotFoundError("No matching double-critic (head0) checkpoints found.")
+        raise FileNotFoundError("No matching bootstrapped critic (head0) checkpoints found.")
 
-    critic1_h0 = max(critic_files, key=lambda f: f.stat().st_mtime)
-    tag_stem = critic1_h0.stem.replace("_h0", "")
-    return critic1_h0, tag_stem
+    critic_h0 = max(critic_files, key=lambda f: f.stat().st_mtime)
+    tag_stem = critic_h0.stem.replace("_h0", "")
+    return critic_h0, tag_stem
 
 
-def load_doublecritics(model_dir: Path, rl_cfg, tag_stem: str, device):
+def load_bootcritics(model_dir: Path, rl_cfg, tag_stem: str, device):
     """
-    Load all heads for double critics:
+    Load all bootstrapped critics:
       expects files:
-        ddpg_critic1_<tag>_h{k}.pth
-        ddpg_critic2_<tag>_h{k}.pth
-    where <tag> is tag_stem without "ddpg_critic1_".
+        ddpg_critic_<tag>_h{k}.pth
+    where <tag> is tag_stem without "ddpg_critic_".
     """
     K = rl_cfg["training"].get("num_heads", 8)
     state_dim = rl_cfg["model"]["state_dim"]
     action_dim = rl_cfg["model"]["action_dim"]
     hidden_dim = rl_cfg["model"]["hidden_dim"]
 
-    if not tag_stem.startswith("ddpg_critic1_"):
+    if not tag_stem.startswith("ddpg_critic_"):
         raise ValueError(f"Unexpected tag_stem format: {tag_stem}")
 
-    tag = tag_stem.replace("ddpg_critic1_", "", 1)
+    tag = tag_stem.replace("ddpg_critic_", "", 1)
 
-    critics1 = []
-    critics2 = []
+    critics = []
     for k in range(K):
-        c1_path = model_dir / f"ddpg_critic1_{tag}_h{k}.pth"
-        c2_path = model_dir / f"ddpg_critic2_{tag}_h{k}.pth"
+        critic_path = model_dir / f"ddpg_critic_{tag}_h{k}.pth"
+        if not critic_path.exists():
+            raise FileNotFoundError(f"Missing critic head file for k={k}: {critic_path}")
 
-        if not c1_path.exists() or not c2_path.exists():
-            raise FileNotFoundError(f"Missing critic files for head {k}:\n  {c1_path}\n  {c2_path}")
+        critic = Critic(state_dim, action_dim, hidden_dim).to(device)
+        critic.load_state_dict(torch.load(critic_path, map_location=device))
+        critic.train()
+        critics.append(critic)
 
-        c1 = Critic(state_dim, action_dim, hidden_dim).to(device)
-        c2 = Critic(state_dim, action_dim, hidden_dim).to(device)
-
-        c1.load_state_dict(torch.load(c1_path, map_location=device))
-        c2.load_state_dict(torch.load(c2_path, map_location=device))
-
-        c1.train()
-        c2.train()
-
-        critics1.append(c1)
-        critics2.append(c2)
-
-    return critics1, critics2, tag
+    return critics, tag
 
 
-def save_doublecritics(model_dir: Path, tag: str, critics1, critics2):
+def save_bootcritics(model_dir: Path, tag: str, critics):
     """
     Save critics to:
-      ddpg_critic1_<tag>_h{k}.pth
-      ddpg_critic2_<tag>_h{k}.pth
+      ddpg_critic_<tag>_h{k}.pth
     """
     model_dir.mkdir(parents=True, exist_ok=True)
-    for k, (c1, c2) in enumerate(zip(critics1, critics2)):
-        torch.save(c1.state_dict(), model_dir / f"ddpg_critic1_{tag}_h{k}.pth")
-        torch.save(c2.state_dict(), model_dir / f"ddpg_critic2_{tag}_h{k}.pth")
+    for k, c in enumerate(critics):
+        torch.save(c.state_dict(), model_dir / f"ddpg_critic_{tag}_h{k}.pth")
 
 
 # ---------------------------------------------------------
-# Training loop (Double-critic Thompson)
+# Training loop (Bootstrapped Thompson + CEM planning)
 # ---------------------------------------------------------
 def training(
     rl_cfg,
@@ -174,6 +194,14 @@ def training(
     tmp_name=None,
     camera_index_start=None,
 ):
+    """
+    Good, stable algorithm for your setting:
+      - Critic-only bootstrapped Thompson sampling
+      - Action chosen by planning in action-space (CEM) against sampled critic head
+      - Critics trained by supervised regression Q(s,a)->r
+
+    This converges much more reliably than actor-critic for one-step tasks.
+    """
     if env_step is None:
         raise ValueError("training() requires env_step (sim or real environment function).")
 
@@ -182,19 +210,16 @@ def training(
     critic_lr  = rl_cfg["training"]["critic_lr"]
     grad_steps = rl_cfg["training"]["grad_steps"]
 
-    # Heads + bootstrap
+    # Bootstrapped Thompson controls
     K = rl_cfg["training"].get("num_heads", 8)
-    bootstrap_p = rl_cfg["training"].get("bootstrap_p", 0.8)
+    bootstrap_p = rl_cfg["training"].get("bootstrap_p", 0.8)  # per-head mask prob
 
-    # CEM (fast-ish defaults; tune in yaml if you want)
-    cem_pop = rl_cfg["training"].get("cem_pop", 256)
-    cem_iters = rl_cfg["training"].get("cem_iters", 2)
-    cem_elite_frac = rl_cfg["training"].get("cem_elite_frac", 0.2)
-    cem_init_std = rl_cfg["training"].get("cem_init_std", 0.4)
-    cem_min_std = rl_cfg["training"].get("cem_min_std", 0.1)
-
-    # Optional warm-start: makes behavior less jittery and speeds planning
-    use_cem_warm_start = bool(rl_cfg["training"].get("cem_warm_start", True))
+    # CEM controls
+    cem_pop = rl_cfg["training"].get("cem_pop", 512)
+    cem_iters = rl_cfg["training"].get("cem_iters", 3)
+    cem_elite_frac = rl_cfg["training"].get("cem_elite_frac", 0.1)
+    cem_init_std = rl_cfg["training"].get("cem_init_std", 0.7)
+    cem_min_std = rl_cfg["training"].get("cem_min_std", 0.05)
 
     state_dim  = rl_cfg["model"]["state_dim"]
     action_dim = rl_cfg["model"]["action_dim"]
@@ -227,47 +252,50 @@ def training(
     tag_for_saving = None
 
     # -------------------------
-    # Initialize models
+    # Initialize critics (K heads)
     # -------------------------
     if continue_training:
         if model_name is not None:
+            # Load by explicit tag
             tag_for_saving = model_name
-            tag_stem = f"ddpg_critic1_{model_name}"
-            critics1, critics2, _ = load_doublecritics(model_dir, rl_cfg, tag_stem, device)
+            tag_stem = f"ddpg_critic_{model_name}"
+            critics, _ = load_bootcritics(model_dir, rl_cfg, tag_stem, device)
             print(f"Continuing training from tag: {model_name}")
         else:
-            c1_h0, tag_stem = find_latest_doublecritic_checkpoint(model_dir, prefix=None)
-            print("Continuing training from latest double-critic checkpoints:")
-            print(f"  Critic1_0 : {c1_h0.name}")
-            critics1, critics2, loaded_tag = load_doublecritics(model_dir, rl_cfg, tag_stem, device)
+            # Load newest by head0 critic timestamp
+            critic_h0, tag_stem = find_latest_bootcritic_checkpoint(model_dir, prefix=None)
+            print("Continuing training from latest bootstrapped critics:")
+            print(f"  Critic0 : {critic_h0.name}")
+            critics, loaded_tag = load_bootcritics(model_dir, rl_cfg, tag_stem, device)
             tag_for_saving = loaded_tag
     else:
-        critics1 = [Critic(state_dim, action_dim, hidden_dim).to(device) for _ in range(K)]
-        critics2 = [Critic(state_dim, action_dim, hidden_dim).to(device) for _ in range(K)]
+        critics = [Critic(state_dim, action_dim, hidden_dim).to(device) for _ in range(K)]
 
-    # Adam is important for stability here
-    opts1 = [torch.optim.Adam(c.parameters(), lr=critic_lr) for c in critics1]
-    opts2 = [torch.optim.Adam(c.parameters(), lr=critic_lr) for c in critics2]
+    # Use Adam (much more stable than SGD)
+    critic_optimizers = [torch.optim.Adam(c.parameters(), lr=critic_lr) for c in critics]
 
-    # Replay
+    # Replay buffers
     replay_buffer_big = ReplayBuffer(capacity=rl_cfg["training"]["replay_buffer_capacity"])
     replay_buffer_recent = ReplayBuffer(1000)
 
     # wandb
     if use_wandb:
-        wandb.watch(critics1[0], log="gradients", log_freq=100)
-        wandb.watch(critics2[0], log="gradients", log_freq=100)
+        wandb.watch(critics[0], log="gradients", log_freq=100)
         run_name = wandb.run.name.replace("-", "_")
     else:
         run_name = "local_run"
 
+    # Choose save tag
     if tag_for_saving is None:
         if env_type == "real" and tmp_name is not None:
             tag_for_saving = tmp_name
         else:
             tag_for_saving = run_name
 
-    # Real logging + load replay
+    # Evaluation planner: mean critic
+    eval_planner = EnsembleCriticMeanPlanner(critics, device)
+
+    # Real-robot episode logging + replay load
     episode_logger = None
     if env_type == "real":
         episode_log_path = project_root / "log" / "real_episodes" / "episode_logger.jsonl"
@@ -286,15 +314,53 @@ def training(
         else:
             print(f"No existing episode log found at {episode_log_path}. Starting fresh.")
 
-    # Small memory for warm-starting CEM
-    a_prev = None  # torch [action_dim] in [-1,1]
-
+    # Stats for prints
     log_dict = {}
+    last_success_rate = 0.0
+    last_last_success_rate = 0.0
     max_num_discs = 0
 
     for episode in range(episodes):
         # -------------------------------------------------
-        # Sample context
+        # Periodic eval (real)
+        # -------------------------------------------------
+        if env_type == "real" and episode_logger.get_length() % 10000 == 0:
+            # Use the mean-critic planner: we wrap it as a tiny "actor" with forward()
+            class _EvalActor(nn.Module):
+                def __init__(self, planner, cfg):
+                    super().__init__()
+                    self.planner = planner
+                    self.cfg = cfg
+                def forward(self, state):
+                    # state is [B, state_dim], but evaluation_policy_short feeds [1, state_dim]
+                    s = state.squeeze(0)
+                    a = self.planner.act(s, self.cfg)
+                    return a.unsqueeze(0)
+
+            eval_actor = _EvalActor(eval_planner, rl_cfg).to(device)
+
+            (
+                success_rate_eval,
+                avg_reward_eval,
+                avg_distance_to_hole_eval,
+            ) = evaluation_policy_short(
+                eval_actor,
+                device,
+                mujoco_cfg=None,
+                rl_cfg=rl_cfg,
+                num_episodes=3,
+                env_step=env_step,
+                env_type=env_type,
+                input_func=input_func,
+                big_episode_logger=episode_logger,
+            )
+            print(
+                f"[EVAL] Success Rate after {episode + 1} episodes: "
+                f"{success_rate_eval:.2f}, Avg Reward: {avg_reward_eval:.3f}"
+            )
+
+        # -------------------------------------------------
+        # Sample a context
         # -------------------------------------------------
         if env_type == "sim":
             ball_start_obs, hole_pos_obs, disc_positions, x, y, hole_pos = sim_init_parameters(
@@ -307,25 +373,22 @@ def training(
             hole_pos = np.array(hole_pos_obs, dtype=float)
 
         # -------------------------------------------------
-        # Encode + scale state (NOTE: if your eval uses engineered aug features,
-        # you should mirror that here too, otherwise training/eval mismatch.)
+        # Encode + scale state (match your original training)
         # -------------------------------------------------
         state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 5)
         state_norm = scale_state_vec(state_vec)
         s = torch.tensor(state_norm, dtype=torch.float32, device=device)
 
         # -------------------------------------------------
-        # Thompson: sample head k, plan with min(Q1,Q2) for that head
+        # Thompson step: sample one critic head, plan action by CEM
         # -------------------------------------------------
         head = int(np.random.randint(K))
-
+        
         @torch.no_grad()
         def score_fn(s_batch, a_batch):
-            q1 = critics1[head](s_batch, a_batch).squeeze(-1)  # [N]
-            q2 = critics2[head](s_batch, a_batch).squeeze(-1)  # [N]
-            return torch.minimum(q1, q2)
-
-        init_mu = a_prev if (use_cem_warm_start and a_prev is not None) else None
+            # Use sampled head only
+            q = critics[head](s_batch, a_batch)  # [N,1]
+            return q.squeeze(-1)  # [N]
 
         a_norm = cem_plan_action(
             s=s,
@@ -339,16 +402,14 @@ def training(
             action_high=1.0,
             init_std=cem_init_std,
             min_std=cem_min_std,
-            init_mu=init_mu,
         )
 
-        a_prev = a_norm.detach()  # warm-start next time
-
+        # Convert to physical action
         speed, angle_deg = get_input_parameters(
             a_norm.detach().cpu().numpy(), speed_low, speed_high, angle_low, angle_high
         )
 
-        # Actuator noise (sim)
+        # Environment / actuator noise (sim)
         if env_type == "sim":
             speed_noise      = np.random.normal(0, SPEED_NOISE_STD)
             angle_deg_noise  = np.random.normal(0, ANGLE_NOISE_STD)
@@ -384,7 +445,10 @@ def training(
                     chosen_hole=chosen_hole,
                 )
             if result is None:
-                print(f"Episode {episode + 1}: failed twice. speed={speed}, angle={angle_deg}")
+                print(
+                    f"Episode {episode + 1}: failed twice. "
+                    f"speed={speed}, angle={angle_deg}"
+                )
                 if rl_cfg["training"]["error_hard_stop"] and env_type == "sim" and not mujoco_cfg["sim"]["render"]:
                     raise RuntimeError("Simulation failed twice — aborting training.")
                 else:
@@ -447,10 +511,13 @@ def training(
                 optimal_speed_scale=optimal_speed_scale,
             ))
 
+        # -------------------------------------------------
         # Real logging
+        # -------------------------------------------------
         if env_type == "real" and isinstance(meta, dict):
             used_for_training = bool(meta.get("used_for_training", True))
             out_of_bounds = bool(meta.get("out_of_bounds", False))
+
             if not used_for_training:
                 print("Episode discarded by user; not adding to replay buffer.")
                 continue
@@ -475,11 +542,13 @@ def training(
                 "speed_at_hole": meta.get("speed_at_hole", None),
                 "exploring": True,
                 "thompson_head": head,
-                "planner": "ts_doublecritic_cem",
+                "planner": "boot_ts_cem",
             }
             episode_logger.log(logging_dict)
 
-        # Store transitions
+        # -------------------------------------------------
+        # Store transition(s)
+        # -------------------------------------------------
         s_train = s.detach().cpu()
         a_train = a_norm.detach().cpu()
 
@@ -491,8 +560,13 @@ def training(
             replay_buffer_big.add(s_train, a_train, float(reward))
             replay_buffer_recent.add(s_train, a_train, float(reward))
 
-        # Train critics
+        # -------------------------------------------------
+        # Train critics (supervised regression) with bootstrap masks
+        # -------------------------------------------------
         if len(replay_buffer_big.data) >= batch_size:
+            if env_type == "real":
+                print("Updating critics...")
+
             for _ in range(grad_steps):
                 states_b, actions_b, rewards_b = sample_mixed(
                     replay_buffer_recent,
@@ -500,7 +574,8 @@ def training(
                     recent_ratio=0.7,
                     batch_size=batch_size,
                 )
-                states_b = states_b.to(device)
+
+                states_b  = states_b.to(device)
                 actions_b = actions_b.to(device)
                 rewards_b = rewards_b.to(device)  # [B,1]
 
@@ -513,31 +588,26 @@ def training(
                     ab = actions_b[mask]
                     rb = rewards_b[mask]
 
-                    # Critic1
-                    q1 = critics1[k](sb, ab)
-                    loss1 = F.mse_loss(q1, rb)
-                    opts1[k].zero_grad()
-                    loss1.backward()
-                    torch.nn.utils.clip_grad_norm_(critics1[k].parameters(), 1.0)
-                    opts1[k].step()
+                    q_pred = critics[k](sb, ab)
+                    loss = F.mse_loss(q_pred, rb)
 
-                    # Critic2
-                    q2 = critics2[k](sb, ab)
-                    loss2 = F.mse_loss(q2, rb)
-                    opts2[k].zero_grad()
-                    loss2.backward()
-                    torch.nn.utils.clip_grad_norm_(critics2[k].parameters(), 1.0)
-                    opts2[k].step()
+                    critic_optimizers[k].zero_grad()
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(critics[k].parameters(), 1.0)
+                    critic_optimizers[k].step()
 
-            # Save occasionally on real
+            # Save periodically for real robot
             if env_type == "real" and tmp_name is not None:
-                save_doublecritics(model_dir, tag_for_saving, critics1, critics2)
+                save_bootcritics(model_dir, tag_for_saving, critics)
 
         if env_type == "real" and isinstance(meta, dict):
             if not meta.get("continue_training", True):
                 print("Training aborted by user.")
                 break
 
+        # -------------------------------------------------
+        # Prints + wandb
+        # -------------------------------------------------
         if rl_cfg["training"]["do_prints"]:
             print("========================================")
             print(f"Episode {episode + 1}/{episodes}, Reward: {reward:.4f}, TS head: {head}")
@@ -547,8 +617,99 @@ def training(
             log_dict["thompson_head"] = int(head)
             wandb.log(log_dict, step=episode)
 
-    # Save final
-    save_doublecritics(model_dir, tag_for_saving, critics1, critics2)
+        # -------------------------------------------------
+        # Periodic eval (sim)
+        # -------------------------------------------------
+        if (episode) % rl_cfg["training"]["eval_interval"] == 24 and env_type == "sim":
+
+            # Wrap the mean planner as an "actor" for existing eval function
+            class _EvalActor(nn.Module):
+                def __init__(self, planner, cfg):
+                    super().__init__()
+                    self.planner = planner
+                    self.cfg = cfg
+                def forward(self, state):
+                    s1 = state.squeeze(0)
+                    a = self.planner.act(s1, self.cfg)
+                    return a.unsqueeze(0)
+
+            eval_actor = _EvalActor(eval_planner, rl_cfg).to(device)
+
+            success_rate_eval, avg_reward_eval, avg_distance_to_hole_eval = evaluation_policy_short(
+                eval_actor,
+                device,
+                mujoco_cfg,
+                rl_cfg,
+                num_episodes=rl_cfg["training"]["eval_episodes"],
+                max_num_discs=max_num_discs,
+                env_step=env_step,
+                env_type=env_type,
+            )
+
+            last_last_success_rate = last_success_rate
+            last_success_rate = success_rate_eval
+
+            print(
+                f"[EVAL] Success Rate after {episode + 1} episodes: "
+                f"{success_rate_eval:.2f}, Avg Reward: {avg_reward_eval:.3f}"
+            )
+
+            if use_wandb:
+                wandb.log(
+                    {
+                        "success_rate": success_rate_eval,
+                        "avg_reward": avg_reward_eval,
+                        "avg_distance_to_hole": avg_distance_to_hole_eval,
+                        "K_heads": int(K),
+                        "bootstrap_p": float(bootstrap_p),
+                        "cem_pop": int(cem_pop),
+                        "cem_iters": int(cem_iters),
+                    },
+                    step=episode,
+                )
+
+    # -------------------------------------------------
+    # Final evaluation + saving
+    # -------------------------------------------------
+    if env_type == "sim":
+        class _EvalActor(nn.Module):
+            def __init__(self, planner, cfg):
+                super().__init__()
+                self.planner = planner
+                self.cfg = cfg
+            def forward(self, state):
+                s1 = state.squeeze(0)
+                a = self.planner.act(s1, self.cfg)
+                return a.unsqueeze(0)
+
+        eval_actor = _EvalActor(eval_planner, rl_cfg).to(device)
+
+        final_success_rate, final_avg_reward, final_avg_distance_to_hole = evaluation_policy_short(
+            eval_actor,
+            device,
+            mujoco_cfg,
+            rl_cfg,
+            100,
+            max_num_discs=max_num_discs,
+            env_step=env_step,
+            env_type=env_type,
+        )
+
+        print(
+            f"[FINAL EVAL] success={final_success_rate:.2f}, "
+            f"avg_reward={final_avg_reward:.3f}, avg_dist={final_avg_distance_to_hole:.3f}"
+        )
+
+    save_bootcritics(model_dir, tag_for_saving, critics)
+
+    if use_wandb and env_type == "sim":
+        wandb.log(
+            {
+                "final_avg_reward": final_avg_reward,
+                "final_success_rate": final_success_rate,
+                "final_avg_distance_to_hole": final_avg_distance_to_hole,
+            }
+        )
 
     if episode_logger is not None:
         episode_logger.close()
@@ -576,18 +737,21 @@ if __name__ == "__main__":
 
     if env_type == "sim":
         from run_sim_rl import run_sim as env_step
+
         tmp_name = f"golf_world_tmp_{os.getpid()}_{uuid.uuid4().hex}.xml"
         tmp_xml_path = project_root / "models" / "mujoco" / tmp_name
         mujoco_cfg["sim"]["xml_path"] = str(tmp_xml_path)
+
     elif env_type == "real":
         from run_real_rl import run_real as env_step
         tmp_xml_path = None
+
     else:
         raise ValueError(f"Unknown env_type: {env_type} (expected 'sim' or 'real')")
 
     if rl_cfg["training"]["use_wandb"]:
         wandb.init(
-            project="rl_golf_ts_doublecritic_cem",
+            project="rl_golf_boot_ts_cem",
             config={
                 "rl_config": rl_cfg,
                 "mujoco_config": mujoco_cfg,
