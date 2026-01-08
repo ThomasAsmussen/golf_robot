@@ -591,7 +591,8 @@ if __name__ == "__main__":
 
     if rl_cfg["training"].get("use_wandb", False):
         wandb.init(
-            project="rl_golf_ucb_singlecritic_cem",
+            project="rl_golf_best_reward", 
+            group="en-ucb",  
             config={
                 "rl_config": rl_cfg,
                 "mujoco_config": mujoco_cfg,
