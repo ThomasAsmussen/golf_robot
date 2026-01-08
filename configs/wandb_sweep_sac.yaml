@@ -1,5 +1,5 @@
 program: src/golf_robot/SAC_bandit.py  # <-- adjust if filename differs
-method: bayes   # or "random" if you prefer
+method: grid   # bayes or grid or "random" if you prefer
 
 metric:
   name: final_success_rate
