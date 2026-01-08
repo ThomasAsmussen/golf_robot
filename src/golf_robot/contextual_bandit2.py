@@ -586,7 +586,7 @@ if __name__ == "__main__":
 
         wandb.init(
             project="rl_golf_best_reward",
-            group = "ddpg-1step"
+            group = "ddpg-1step",
             config={
                 **sweep_config,
                 "rl_config":     rl_cfg,
