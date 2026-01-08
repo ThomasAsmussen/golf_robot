@@ -45,18 +45,23 @@ class EnsembleCriticMeanPlanner:
         return q.squeeze(-1)  # [N]
 
     def act(self, s, cfg):
+        cem_pop_val = 256
+        cem_iters_val = 2
+        cem_elite_frac_val = 0.2
+        cem_init_std_val = 0.4
+        cem_min_std_val = 0.1
         return cem_plan_action(
             s=s,
             score_fn=self.score_actions,
             action_dim=cfg["model"]["action_dim"],
             device=self.device,
-            cem_iters=cfg["training"].get("cem_iters_eval", cfg["training"].get("cem_iters", 3)),
-            cem_pop=cfg["training"].get("cem_pop_eval", cfg["training"].get("cem_pop", 512)),
-            cem_elite_frac=cfg["training"].get("cem_elite_frac", 0.1),
+            cem_iters=cfg["training"].get("cem_iters_eval", cfg["training"].get("cem_iters", cem_iters_val)),
+            cem_pop=cfg["training"].get("cem_pop_eval", cfg["training"].get("cem_pop", cem_pop_val)),
+            cem_elite_frac=cfg["training"].get("cem_elite_frac", cem_elite_frac_val),
             action_low=-1.0,
             action_high=1.0,
-            init_std=cfg["training"].get("cem_init_std", 0.7),
-            min_std=cfg["training"].get("cem_min_std", 0.05),
+            init_std=cfg["training"].get("cem_init_std", cem_init_std_val),
+            min_std=cfg["training"].get("cem_min_std", cem_min_std_val),
         )
 
 
