@@ -1,18 +1,17 @@
 #!/bin/sh
-#BSUB -q gpuv100
+#BSUB -q hpc
 #BSUB -J ddpg1step
 ### number of core
-#BSUB -n 4
+#BSUB -n 1
 #BSUB -R "span[hosts=1]"
-### specify that all cores should be on the same host
-#BSUB -gpu "num=1:mode=exclusive_process"
 ### specify the memory needed
-#BSUB -R "rusage[mem=10GB]"
+#BSUB -R "rusage[mem=1GB]"
 ### Number of hours needed
-#BSUB -W 11:59
+#BSUB -W 23:59
 ### added outputs and errors to files
 #BSUB -o outputs/Output_%J.out
 #BSUB -e outputs/Error_%J.err
+
 
 echo "Running script..."
 
