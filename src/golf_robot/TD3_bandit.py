@@ -1,3 +1,4 @@
+# td3_bandit.py
 import os
 from pathlib import Path
 import sys
@@ -9,18 +10,18 @@ import wandb
 import uuid
 import time
 
-from rl_common import *  # expects SACActor and QNetwork to exist in rl_common.py
+from rl_common import *  # DO NOT CHANGE (expects Actor, QNetwork, etc.)
 
 
 # ---------------------------------------------------------
-# SAC checkpoint helpers (local to keep changes self-contained)
+# TD3 checkpoint helpers (local to keep changes self-contained)
 # ---------------------------------------------------------
-def _load_sac_actor(model_path: Path, rl_cfg):
+def _load_td3_actor(model_path: Path, rl_cfg):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     state_dim  = rl_cfg["model"]["state_dim"]
     action_dim = rl_cfg["model"]["action_dim"]
     hidden_dim = rl_cfg["model"]["hidden_dim"]
-    actor = SACActor(state_dim, action_dim, hidden_dim).to(device)
+    actor = Actor(state_dim, action_dim, hidden_dim).to(device)
     actor.load_state_dict(torch.load(model_path, map_location=device))
     actor.eval()
     return actor, device
@@ -38,34 +39,41 @@ def _load_q(model_path: Path, rl_cfg, device=None):
     return qnet
 
 
-def find_latest_sac_checkpoint(model_dir: Path, prefix: str | None = None):
+def find_latest_td3_checkpoint(model_dir: Path, prefix: str | None = None):
     """
-    Find newest SAC checkpoint trio: (actor, q1, q2) and optional log_alpha.
+    Find newest TD3 checkpoint trio: (actor, q1, q2).
     If prefix is given, only match files containing that prefix.
     """
-    actor_files = list(model_dir.glob("sac_actor_*.pth"))
+    actor_files = list(model_dir.glob("td3_actor_*.pth"))
     if prefix is not None:
         actor_files = [f for f in actor_files if prefix in f.stem]
 
     if not actor_files:
-        raise FileNotFoundError("No matching SAC actor checkpoints found.")
+        raise FileNotFoundError("No matching TD3 actor checkpoints found.")
 
     actor_file = max(actor_files, key=lambda f: f.stat().st_mtime)
-
-    q1_file = actor_file.with_name(actor_file.name.replace("sac_actor_", "sac_q1_"))
-    q2_file = actor_file.with_name(actor_file.name.replace("sac_actor_", "sac_q2_"))
-    alpha_file = actor_file.with_name(actor_file.name.replace("sac_actor_", "sac_log_alpha_"))
+    q1_file = actor_file.with_name(actor_file.name.replace("td3_actor_", "td3_q1_"))
+    q2_file = actor_file.with_name(actor_file.name.replace("td3_actor_", "td3_q2_"))
 
     if not q1_file.exists():
         raise FileNotFoundError(f"Matching q1 not found for {actor_file.name}")
     if not q2_file.exists():
         raise FileNotFoundError(f"Matching q2 not found for {actor_file.name}")
 
-    return actor_file, q1_file, q2_file, (alpha_file if alpha_file.exists() else None)
+    return actor_file, q1_file, q2_file
 
 
 # ---------------------------------------------------------
-# Training loop (SAC, single-step / contextual bandit)
+# Polyak averaging helper (TD3)
+# ---------------------------------------------------------
+@torch.no_grad()
+def soft_update(target: torch.nn.Module, source: torch.nn.Module, tau: float):
+    for tp, sp in zip(target.parameters(), source.parameters()):
+        tp.data.mul_(1.0 - tau).add_(sp.data, alpha=tau)
+
+
+# ---------------------------------------------------------
+# Training loop (TD3, single-step / contextual bandit)
 # ---------------------------------------------------------
 def training(
     rl_cfg,
@@ -79,13 +87,15 @@ def training(
     camera_index_start=None,
 ):
     """
-    SAC training loop for golf robot (single-step contextual bandit):
+    TD3-style training loop for golf robot (single-step contextual bandit):
       - context = (ball_start_obs, hole_pos_obs, discs)
       - action  = (speed, angle) in normalized [-1,1]^2 then mapped to physical
       - reward  = f(final ball position, hole position, in_hole)
 
-    No next_state, no bootstrapping. Critics regress Q(s,a) ≈ E[r|s,a].
-    Actor maximizes E[Q - alpha*logpi] (equivalently minimize alpha*logpi - Q).
+    Bandit note:
+      - No next_state, no bootstrapping, so critic targets are simply rewards.
+      - TD3 still makes sense as "DDPG + twin critics + delayed actor updates"
+        with exploration noise for data collection.
     """
     if env_step is None:
         raise ValueError("training() requires env_step (sim or real environment function).")
@@ -115,8 +125,15 @@ def training(
     use_wandb = rl_cfg["training"]["use_wandb"] if env_type == "sim" else False
     model_name = rl_cfg["training"].get("model_name", None)
 
+    # TD3 knobs (safe defaults if not in YAML)
+    td3_cfg = rl_cfg["training"].get("td3", {})
+    exploration_noise = float(td3_cfg.get("exploration_noise", 0.10))  # action noise during collection
+    policy_delay      = int(td3_cfg.get("policy_delay", 2))            # actor update every N critic updates
+    tau               = float(td3_cfg.get("tau", 0.005))               # target smoothing (polyak)
+    # Target policy smoothing is irrelevant for pure bandit targets, but we keep targets anyway.
+
     # -------------------------
-    # Initialize models (SAC)
+    # Initialize models (TD3)
     # -------------------------
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -124,74 +141,58 @@ def training(
     model_dir.mkdir(parents=True, exist_ok=True)
 
     if continue_training and env_type == "real":
-        actor_path, q1_path, q2_path, alpha_path = find_latest_sac_checkpoint(model_dir, prefix=None)
-        print("Loading latest SAC checkpoints:")
+        actor_path, q1_path, q2_path = find_latest_td3_checkpoint(model_dir, prefix=None)
+        print("Loading latest TD3 checkpoints:")
         print(f"  Actor: {actor_path.name}")
         print(f"  Q1   : {q1_path.name}")
         print(f"  Q2   : {q2_path.name}")
-        if alpha_path is not None:
-            print(f"  Alpha: {alpha_path.name}")
 
-        actor, device = _load_sac_actor(actor_path, rl_cfg)
+        actor, device = _load_td3_actor(actor_path, rl_cfg)
         q1 = _load_q(q1_path, rl_cfg, device=device)
         q2 = _load_q(q2_path, rl_cfg, device=device)
-
-        # log_alpha (optional)
-        if alpha_path is not None:
-            log_alpha = torch.load(alpha_path, map_location=device)
-            if not torch.is_tensor(log_alpha):
-                log_alpha = torch.tensor(float(log_alpha))
-            log_alpha = log_alpha.to(device).detach().clone().requires_grad_(True)
-        else:
-            log_alpha = torch.tensor(np.log(0.2), device=device, requires_grad=True)
 
         actor.train()
         q1.train()
         q2.train()
 
     elif continue_training:
-        # Expect explicit model_name (kept similar to old behavior)
         if model_name is None:
             raise ValueError("continue_training=True but rl_cfg['training']['model_name'] is None")
 
-        actor_path = model_dir / f"sac_actor_{model_name}"
-        q1_path    = model_dir / f"sac_q1_{model_name}"
-        q2_path    = model_dir / f"sac_q2_{model_name}"
-        alpha_path = model_dir / f"sac_log_alpha_{model_name}"
+        actor_path = model_dir / f"td3_actor_{model_name}"
+        q1_path    = model_dir / f"td3_q1_{model_name}"
+        q2_path    = model_dir / f"td3_q2_{model_name}"
 
-        actor, device = _load_sac_actor(actor_path, rl_cfg)
+        actor, device = _load_td3_actor(actor_path, rl_cfg)
         q1 = _load_q(q1_path, rl_cfg, device=device)
         q2 = _load_q(q2_path, rl_cfg, device=device)
 
-        if alpha_path.exists():
-            log_alpha = torch.load(alpha_path, map_location=device)
-            if not torch.is_tensor(log_alpha):
-                log_alpha = torch.tensor(float(log_alpha))
-            log_alpha = log_alpha.to(device).detach().clone().requires_grad_(True)
-        else:
-            log_alpha = torch.tensor(np.log(0.2), device=device, requires_grad=True)
-
-        print("Continuing SAC training from model:", model_name)
+        print("Continuing TD3 training from model:", model_name)
         actor.train()
         q1.train()
         q2.train()
 
     else:
-        actor = SACActor(state_dim, action_dim, hidden_dim).to(device)
+        actor = Actor(state_dim, action_dim, hidden_dim).to(device)
         q1    = QNetwork(state_dim, action_dim, hidden_dim).to(device)
         q2    = QNetwork(state_dim, action_dim, hidden_dim).to(device)
-        log_alpha = torch.tensor(np.log(0.2), device=device, requires_grad=True)
+
+    # Target networks (kept to be faithful to TD3 style)
+    actor_t = Actor(state_dim, action_dim, hidden_dim).to(device)
+    q1_t    = QNetwork(state_dim, action_dim, hidden_dim).to(device)
+    q2_t    = QNetwork(state_dim, action_dim, hidden_dim).to(device)
+    actor_t.load_state_dict(actor.state_dict())
+    q1_t.load_state_dict(q1.state_dict())
+    q2_t.load_state_dict(q2.state_dict())
+    actor_t.eval()
+    q1_t.eval()
+    q2_t.eval()
 
     print(f"Using device: {device}")
 
-    # SAC optimizers (Adam is strongly recommended)
     actor_optimizer = torch.optim.Adam(actor.parameters(), lr=actor_lr)
     q1_optimizer    = torch.optim.Adam(q1.parameters(), lr=critic_lr)
     q2_optimizer    = torch.optim.Adam(q2.parameters(), lr=critic_lr)
-    alpha_optimizer = torch.optim.Adam([log_alpha], lr=actor_lr)
-
-    # Entropy target
-    target_entropy = -6.0 #-float(action_dim)
 
     replay_buffer_big = ReplayBuffer(capacity=rl_cfg["training"]["replay_buffer_capacity"])
     replay_buffer_recent = ReplayBuffer(1000)
@@ -233,6 +234,8 @@ def training(
     # ---------------------------------------------------------
     # Main loop
     # ---------------------------------------------------------
+    global_grad_step = 0
+
     for episode in range(episodes):
 
         # Periodic eval (real): keep your existing trigger logic
@@ -278,28 +281,28 @@ def training(
         MAX_DISCS_FEATS = 5  # must match encode_state_with_discs call
 
         state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, max_num_discs=MAX_DISCS_FEATS)
-        state_norm = scale_state_vec(state_vec) # 19 states
-        
-        if rl_cfg["model"]["state_dim"] == 37: # 37 states from augmented states
+        state_norm = scale_state_vec(state_vec)  # 19 states
+
+        if rl_cfg["model"]["state_dim"] == 37:  # 37 states from augmented states
             aug = augment_state_features(state_vec, max_num_discs=MAX_DISCS_FEATS, dist_clip=5.0)
             aug_norm = scale_aug_features(aug, max_num_discs=MAX_DISCS_FEATS, dist_clip=5.0)
-
             state_norm = np.concatenate([state_norm, aug_norm], axis=0)
 
         s = torch.tensor(state_norm, dtype=torch.float32, device=device)
 
         # -------------------------------------------------
-        # SAC policy action: sample a_norm in [-1,1]^2
+        # TD3 policy action: deterministic + exploration noise in [-1,1]^2
         # -------------------------------------------------
         with torch.no_grad():
-            a_noisy, _, _ = actor.sample(s.unsqueeze(0))
-            a_noisy = a_noisy.squeeze(0)
+            a = actor(s.unsqueeze(0)).squeeze(0)  # in [-1,1]
+            noise = torch.randn_like(a) * exploration_noise
+            a_noisy = torch.clamp(a + noise, -1.0, 1.0)
 
         speed, angle_deg = get_input_parameters(
             a_noisy.cpu().numpy(), speed_low, speed_high, angle_low, angle_high
         )
 
-        # Keep actuator noise for sim (optional)
+        # Keep actuator noise for sim (optional, your original behavior)
         if env_type == "sim":
             speed_noise     = np.random.normal(0, SPEED_NOISE_STD)
             angle_deg_noise = np.random.normal(0, ANGLE_NOISE_STD)
@@ -406,7 +409,7 @@ def training(
                 optimal_speed_scale=optimal_speed_scale,
             )
 
-        # Real logging behavior kept
+        # Real logging behavior kept (unchanged, but now action comes from TD3)
         if env_type == "real" and isinstance(meta, dict):
             used_for_training = bool(meta.get("used_for_training", True))
             out_of_bounds = bool(meta.get("out_of_bounds", False))
@@ -475,7 +478,7 @@ def training(
             replay_buffer_recent.add(s_train, a_train, reward)
 
         # -------------------------------------------------
-        # SAC update (single-step)
+        # TD3 update (bandit)
         # -------------------------------------------------
         critic_loss_value = None
         actor_loss_value = None
@@ -484,7 +487,10 @@ def training(
             if env_type == "real":
                 print("Updating networks...")
 
-            for _ in range(grad_steps):
+            # TD3 delayed policy update counter
+            for g in range(grad_steps):
+                global_grad_step += 1
+
                 states_b, actions_b, rewards_b = sample_mixed(
                     replay_buffer_recent,
                     replay_buffer_big,
@@ -496,9 +502,10 @@ def training(
                 actions_b = actions_b.to(device)
                 rewards_b = rewards_b.to(device)
 
-                # Critic targets are just rewards (bandit)
+                # Bandit target: y = r
                 y = rewards_b
 
+                # Critic updates (twin)
                 q1_pred = q1(states_b, actions_b)
                 q2_pred = q2(states_b, actions_b)
                 q1_loss = F.mse_loss(q1_pred, y)
@@ -512,34 +519,30 @@ def training(
                 q2_loss.backward()
                 q2_optimizer.step()
 
-                # Actor update
-                a_new, logp, _ = actor.sample(states_b)
-                q_new = torch.min(q1(states_b, a_new), q2(states_b, a_new))
+                # Delayed actor update
+                if (global_grad_step % policy_delay) == 0:
+                    a_pi = actor(states_b)
+                    q_pi = torch.min(q1(states_b, a_pi), q2(states_b, a_pi))
+                    actor_loss = (-q_pi).mean()
 
-                alpha = log_alpha.exp().detach()
-                actor_loss = (alpha * logp - q_new).mean()
+                    actor_optimizer.zero_grad()
+                    actor_loss.backward()
+                    actor_optimizer.step()
 
-                actor_optimizer.zero_grad()
-                actor_loss.backward()
-                actor_optimizer.step()
-
-                # Temperature update (auto alpha)
-                alpha_loss = -(log_alpha * (logp + target_entropy).detach()).mean()
-
-                alpha_optimizer.zero_grad()
-                alpha_loss.backward()
-                alpha_optimizer.step()
+                    # Soft-update target nets (kept TD3-style)
+                    soft_update(actor_t, actor, tau)
+                    soft_update(q1_t, q1, tau)
+                    soft_update(q2_t, q2, tau)
 
             critic_loss_value = 0.5 * (q1_loss.item() + q2_loss.item())
-            actor_loss_value  = actor_loss.item()
+            actor_loss_value  = actor_loss.item() if "actor_loss" in locals() else None
 
             # Save during real training
             if env_type == "real":
                 if tmp_name is not None:
-                    torch.save(actor.state_dict(), model_dir / f"sac_actor_{tmp_name}.pth")
-                    torch.save(q1.state_dict(),    model_dir / f"sac_q1_{tmp_name}.pth")
-                    torch.save(q2.state_dict(),    model_dir / f"sac_q2_{tmp_name}.pth")
-                    torch.save(log_alpha.detach().cpu(), model_dir / f"sac_log_alpha_{tmp_name}.pth")
+                    torch.save(actor.state_dict(), model_dir / f"td3_actor_{tmp_name}.pth")
+                    torch.save(q1.state_dict(),    model_dir / f"td3_q1_{tmp_name}.pth")
+                    torch.save(q2.state_dict(),    model_dir / f"td3_q2_{tmp_name}.pth")
                 else:
                     print("No tmp_name provided; models not saved during real robot training.")
 
@@ -554,7 +557,6 @@ def training(
         if rl_cfg["training"]["do_prints"]:
             print("========================================")
             if using_all_holes:
-                # show best of the three
                 best_r = float(max(rewards)) if rewards else 0.0
                 print(f"Episode {episode + 1}/{episodes}, Reward(best): {best_r:.4f}")
             else:
@@ -587,13 +589,11 @@ def training(
                 log_dict["success_rate"]         = success_rate_eval
                 log_dict["avg_reward"]           = avg_reward_eval
                 log_dict["avg_distance_to_hole"] = avg_distance_to_hole_eval
-                log_dict["alpha"]                = float(log_alpha.exp().detach().cpu().item())
 
         if use_wandb:
             if env_type == "sim":
                 distance_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
             else:
-                # best effort (hole_pos not defined in real path)
                 distance_to_hole = float(np.linalg.norm(np.array([ball_x, ball_y]) - np.array(hole_pos_obs)))
 
             log_dict["reward"]           = float(max(rewards)) if using_all_holes else float(reward)
@@ -602,7 +602,7 @@ def training(
             if critic_loss_value is not None:
                 log_dict["critic_loss"] = critic_loss_value
             if actor_loss_value is not None:
-                log_dict["actor_loss"]  = actor_loss_value
+                log_dict["actor_loss"]  = float(actor_loss_value)
 
             wandb.log(log_dict, step=episode)
 
@@ -626,25 +626,23 @@ def training(
             wandb.log({"final_success_rate": final_success_rate})
             wandb.log({"final_avg_distance_to_hole": final_avg_distance_to_hole})
 
-            torch.save(actor.state_dict(), model_dir / f"sac_actor_{run_name}.pth")
-            torch.save(q1.state_dict(),    model_dir / f"sac_q1_{run_name}.pth")
-            torch.save(q2.state_dict(),    model_dir / f"sac_q2_{run_name}.pth")
-            torch.save(log_alpha.detach().cpu(), model_dir / f"sac_log_alpha_{run_name}.pth")
-            print("Sweep complete. SAC models saved.")
+            torch.save(actor.state_dict(), model_dir / f"td3_actor_{run_name}.pth")
+            torch.save(q1.state_dict(),    model_dir / f"td3_q1_{run_name}.pth")
+            torch.save(q2.state_dict(),    model_dir / f"td3_q2_{run_name}.pth")
+            print("Sweep complete. TD3 models saved.")
 
     if episode_logger is not None:
         episode_logger.close()
 
     elif tmp_name is not None:
-        torch.save(actor.state_dict(), model_dir / f"sac_actor_{tmp_name}.pth")
-        torch.save(q1.state_dict(),    model_dir / f"sac_q1_{tmp_name}.pth")
-        torch.save(q2.state_dict(),    model_dir / f"sac_q2_{tmp_name}.pth")
-        torch.save(log_alpha.detach().cpu(), model_dir / f"sac_log_alpha_{tmp_name}.pth")
-        print("Training complete. SAC models saved.")
+        torch.save(actor.state_dict(), model_dir / f"td3_actor_{tmp_name}.pth")
+        torch.save(q1.state_dict(),    model_dir / f"td3_q1_{tmp_name}.pth")
+        torch.save(q2.state_dict(),    model_dir / f"td3_q2_{tmp_name}.pth")
+        print("Training complete. TD3 models saved.")
 
 
 # ---------------------------------------------------------
-# Main (kept the same structure)
+# Main (same structure as your SAC script)
 # ---------------------------------------------------------
 if __name__ == "__main__":
     here    = Path(__file__).resolve().parent
@@ -673,7 +671,7 @@ if __name__ == "__main__":
     elif env_type == "real":
         from run_real_rl import run_real as env_step
         tmp_xml_path = None
-        tmp_name = f"real_sac_{os.getpid()}_{uuid.uuid4().hex}"
+        tmp_name = f"real_td3_{os.getpid()}_{uuid.uuid4().hex}"
     else:
         raise ValueError(f"Unknown env_type: {env_type} (expected 'sim' or 'real')")
 

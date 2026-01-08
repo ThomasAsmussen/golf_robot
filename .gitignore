@@ -13,6 +13,7 @@ log/
 tuning_results/
 models/rl/ddpg/
 models/rl/bandit/
+models/rl/older/
 data/
 models/
 srs/golf_robot/vision/

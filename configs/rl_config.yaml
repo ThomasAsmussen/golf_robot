@@ -1,16 +1,16 @@
 training:
-  episodes: 30000
-  actor_lr: 0.0001
-  critic_lr: 0.0001
-  noise_std: 0.05
+  episodes: 15000
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  noise_std: 0.00
   batch_size: 64
-  grad_steps: 5
+  grad_steps: 4
   replay_buffer_capacity: 100000
-  use_wandb: False
+  use_wandb: True
   eval_interval: 50
   eval_episodes: 20
-  target_update_rho: 0.005
-  continue_training: True
+  target_update_rho: 0.000
+  continue_training: False
   error_hard_stop: True
   do_prints: False
   env_type: "sim"
@@ -19,15 +19,15 @@ training:
 model:
   state_dim: 19
   action_dim: 2
-  hidden_dim: 128
+  hidden_dim: 256
   speed_low: 1.0
   speed_high: 2.0
   angle_low: -20.0
   angle_high: 20.0
 
 reward:
-  distance_scale: 5.0
-  in_hole_reward: 3.0
+  distance_scale: 3.0
+  in_hole_reward: 5.0
   w_distance: 0.8
   optimal_speed: 0.65
   dist_at_hole_scale: 5.0
