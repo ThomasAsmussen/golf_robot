@@ -123,7 +123,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
     last_last_success_rate = 0.0
     # For now we don't actually place discs, but the state format reserves 5.
     
-    max_num_discs = 0
+    max_num_discs = 5
     stage_start_episode = 0
     noise_std_stage_start = noise_std
 
@@ -174,7 +174,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
             )
         if env_type == "sim":
 
-            if last_success_rate > 0.9 and last_last_success_rate > 0.9 and False:
+            if last_success_rate > 0.9 and last_last_success_rate > 0.9 and True:
                 max_num_discs = min(MAX_DISCS, max_num_discs + 1)
                 last_success_rate = 0.0
                 last_last_success_rate = 0.0
@@ -585,7 +585,7 @@ if __name__ == "__main__":
         }
 
         wandb.init(
-            project="rl_golf_best_reward",
+            project="rl_golf_best_reward_discs",
             group = "ddpg-1step",
             config={
                 **sweep_config,
