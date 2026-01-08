@@ -287,7 +287,7 @@ def training(
     # Warm-start memory
     a_prev = None
 
-    max_num_discs = 0
+    max_num_discs = 5
     last_success_rate = 0.0
 
     for episode in range(episodes):
@@ -600,7 +600,7 @@ if __name__ == "__main__":
 
     if rl_cfg["training"].get("use_wandb", False):
         wandb.init(
-            project="rl_golf_best_reward", 
+            project="rl_golf_best_reward_discs", 
             group="en-ucb",  
             config={
                 "rl_config": rl_cfg,
