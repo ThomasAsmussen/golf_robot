@@ -208,7 +208,7 @@ def training(
     last_success_rate = 0.0
     last_last_success_rate = 0.0
 
-    max_num_discs = 0
+    max_num_discs = 2
     stage_start_episode = 0
 
     episode_logger = None
