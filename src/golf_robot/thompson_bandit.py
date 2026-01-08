@@ -383,12 +383,23 @@ def training(
         # Thompson step: sample one critic head, plan action by CEM
         # -------------------------------------------------
         head = int(np.random.randint(K))
+        lcb_lambda_val = 0.5 # bigger means more conservative
+        lcb_lambda = rl_cfg["training"].get("lcb_lambda", lcb_lambda_val) 
 
         @torch.no_grad()
         def score_fn(s_batch, a_batch):
-            # Use sampled head only
-            q = critics[head](s_batch, a_batch)  # [N,1]
-            return q.squeeze(-1)  # [N]
+            qs = []
+            for c in critics:
+                qs.append(c(s_batch, a_batch))  # [N,1]
+            q = torch.stack(qs, dim=0).squeeze(-1)  # [K,N]
+            mu = q.mean(dim=0)                      # [N]
+            std = q.std(dim=0, unbiased=False)      # [N]
+            return mu - float(lcb_lambda) * std     # LCB score
+
+        # def score_fn(s_batch, a_batch):
+        #     # Use sampled head only
+        #     q = critics[head](s_batch, a_batch)  # [N,1]
+        #     return q.squeeze(-1)  # [N]
 
         a_norm = cem_plan_action(
             s=s,
