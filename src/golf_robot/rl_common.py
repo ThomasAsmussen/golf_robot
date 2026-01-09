@@ -38,7 +38,7 @@ ANGLE_NOISE_STD: float = 0.1
 BALL_OBS_NOISE_STD: float = 0.002
 HOLE_OBS_NOISE_STD: float = 0.002
 
-MAX_DISCS = 1
+MAX_DISCS = 2
 
 # Sampling ranges
 MIN_HOLE_X: float = 3.0
