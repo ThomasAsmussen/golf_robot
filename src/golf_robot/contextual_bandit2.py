@@ -174,11 +174,11 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
             )
         if env_type == "sim":
 
-            if last_success_rate > 0.9 and last_last_success_rate > 0.9 and False:
+            if last_success_rate > 0.9 and last_last_success_rate > 0.9:
                 max_num_discs = min(MAX_DISCS, max_num_discs + 1)
                 last_success_rate = 0.0
                 last_last_success_rate = 0.0
-                noise_std = 0.2
+                noise_std = 0.15
                 noise_std_stage_start = noise_std
                 stage_start_episode = episode
                 replay_buffer_recent.clear()
