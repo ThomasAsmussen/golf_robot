@@ -292,7 +292,7 @@ def training(
     # Warm-start memory
     a_prev = None
 
-    max_num_discs = 5
+    max_num_discs = 0
     last_success_rate = 0.0
     last_last_success_rate = 0.0
     log_dict = {}
@@ -318,7 +318,7 @@ def training(
                 last_success_rate = success_rate_eval
                 
                 # Increment num_discs
-                if last_success_rate > 0.9 and last_last_success_rate > 0.9 and True:
+                if last_success_rate > 0.9 and last_last_success_rate > 0.9 and False:
                     max_num_discs = min(MAX_DISCS, max_num_discs + 1)
                     last_success_rate = 0.0
                     last_last_success_rate = 0.0
@@ -605,7 +605,7 @@ if __name__ == "__main__":
 
     if rl_cfg["training"].get("use_wandb", False):
         wandb.init(
-            project="rl_golf_best_reward_discs", 
+            project="rl_golf_dump", 
             group="dqn-bts",  
             config={
                 "rl_config": rl_cfg,

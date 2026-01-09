@@ -4,7 +4,7 @@ sim:
   nsubsteps": 1
   safe_substep: 5e-05
   max_duration_sec: 10
-  render: False
+  render: True
   stop_sim_at_still: True
   start_immediately: True 
   csv_path: "log/mujoco_sim/out.csv"

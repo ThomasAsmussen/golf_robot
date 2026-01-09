@@ -688,7 +688,7 @@ if __name__ == "__main__":
         }
 
         wandb.init(
-            project="rl_golf_best_reward_discs", 
+            project="rl_golf_dump", 
             group="sac",  
             config={
                 **sweep_config,

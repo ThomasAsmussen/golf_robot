@@ -1,6 +1,6 @@
 <mujoco model="golf_world">
   <compiler angle="degree"/>
-  <option timestep="0.002" gravity="0 0 -9.81" integrator="RK4"/>
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="RK4" cone="elliptic"/>
 
   <!-- Defaults: enable 6D friction and make contacts crisp -->
   <default>
