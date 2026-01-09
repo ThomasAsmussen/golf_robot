@@ -123,7 +123,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
     last_last_success_rate = 0.0
     # For now we don't actually place discs, but the state format reserves 5.
     
-    max_num_discs = 2
+    max_num_discs = 0
     stage_start_episode = 0
     noise_std_stage_start = noise_std
 
@@ -470,7 +470,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
             print(f"  Distance to Hole: {dist_to_hole:.4f}, In Hole: {in_hole}")
 
 
-        if (episode) % rl_cfg["training"]["eval_interval"] == 2 and env_type == "sim" and False:
+        if (episode) % rl_cfg["training"]["eval_interval"] == 2 and env_type == "sim":
             (
                 success_rate_eval,
                 avg_reward_eval,
