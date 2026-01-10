@@ -605,7 +605,7 @@ if __name__ == "__main__":
 
     if rl_cfg["training"].get("use_wandb", False):
         wandb.init(
-            project="rl_golf_dump", 
+            project="rl_golf_conefix", 
             group="dqn-bts",  
             config={
                 "rl_config": rl_cfg,
