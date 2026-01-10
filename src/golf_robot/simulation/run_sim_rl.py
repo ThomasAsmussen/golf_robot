@@ -372,17 +372,14 @@ def run_loop(model, data, cfg,
     csv_file = None
     csv_writer = None
     next_csv_t = 0.0
-
     if csv_path:
         try:
             dir_ = os.path.dirname(csv_path)
             if dir_:
                 os.makedirs(dir_, exist_ok=True)
-            csv_file = open(csv_path, "w", newline="", encoding="utf-8")
+            csv_file = open(csv_path, "w", newline="")
             csv_writer = csv.writer(csv_file)
             csv_writer.writerow(["time", "ball_x", "ball_y", "ball_z", "in_hole"])
-            csv_file.flush()
-            print("CSV Path:", csv_path)
         except Exception as e:
             print(f"[warn] Could not open CSV '{csv_path}': {e}")
             csv_file = None
@@ -655,15 +652,12 @@ def main():
     if args.no_render and not args.render:
         render = False
 
-    if args.csv is not None:
-        cfg["sim"]["csv_path"] = args.csv
-
     if render is not None:
         cfg["sim"]["render"] = bool(render)
 
     cfg["sim"]["csv_period"] = args.csv_period
     aim_yaw = 0
-    vx_des =  1.0
+    vx_des =  1.2
     hole_pos_xy = [3.12, 0]
     # disc_positions = generate_disc_positions(5, -3.0, 3.0, -2.0, 2.0, hole_pos_xy)
     # disc_positions = [(1.4956361419452078, -0.29096378977334414), (-0.20827146563258125, -0.5665742751926417), (-1.1686851660689785, -0.7053216711723784), (-2.1658353815296345, -0.6954762744879543)]
