@@ -209,7 +209,7 @@ def training(
     last_success_rate = 0.0
     last_last_success_rate = 0.0
 
-    max_num_discs = 5
+    max_num_discs = 0
     stage_start_episode = 0
 
     episode_logger = None
@@ -686,7 +686,7 @@ if __name__ == "__main__":
         }
 
         wandb.init(
-            project="rl_golf_dump", 
+            project="rl_golf_conefix", 
             group="td3",  
             config={
                 **sweep_config,
