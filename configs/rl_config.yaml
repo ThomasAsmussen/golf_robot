@@ -2,7 +2,7 @@ training:
   episodes: 15000
   actor_lr: 0.0003
   critic_lr: 0.0003
-  noise_std: 0.00
+  noise_std: 0.005
   batch_size: 64
   grad_steps: 4
   replay_buffer_capacity: 100000
