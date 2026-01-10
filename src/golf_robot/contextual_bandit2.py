@@ -123,7 +123,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
     last_last_success_rate = 0.0
     # For now we don't actually place discs, but the state format reserves 5.
     
-    max_num_discs = 5
+    max_num_discs = 0
     stage_start_episode = 0
     noise_std_stage_start = noise_std
 
@@ -585,7 +585,7 @@ if __name__ == "__main__":
         }
 
         wandb.init(
-            project="rl_golf_dump",
+            project="rl_golf_conefix",
             group = "ddpg-1step",
             config={
                 **sweep_config,
