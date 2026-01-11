@@ -33,7 +33,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
     batch_size = rl_cfg["training"]["batch_size"]
     actor_lr   = rl_cfg["training"]["actor_lr"]
     critic_lr  = rl_cfg["training"]["critic_lr"]
-    noise_std  = rl_cfg["training"]["noise_std"]     # policy exploration noise
+    noise_std  = rl_cfg["training"]["noise_std_ddpg"]     # policy exploration noise
     grad_steps = rl_cfg["training"]["grad_steps"]
 
     state_dim  = rl_cfg["model"]["state_dim"]
