@@ -100,8 +100,10 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
 
     print(f"Using device: {device}")
 
-    actor_optimizer  = torch.optim.SGD(actor.parameters(),  lr=actor_lr)
-    critic_optimizer = torch.optim.SGD(critic.parameters(), lr=critic_lr)
+    actor_optimizer  = torch.optim.Adam(actor.parameters(),  lr=actor_lr)
+    critic_optimizer = torch.optim.Adam(critic.parameters(), lr=critic_lr)
+    # actor_optimizer  = torch.optim.SGD(actor.parameters(),  lr=actor_lr)
+    # critic_optimizer = torch.optim.SGD(critic.parameters(), lr=critic_lr)
 
     replay_buffer_big = ReplayBuffer(capacity=rl_cfg["training"]["replay_buffer_capacity"])
     replay_buffer_recent = ReplayBuffer(1000)  # Smaller buffer for recent experiences
@@ -174,7 +176,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
             )
         if env_type == "sim":
 
-            if last_success_rate > 0.9 and last_last_success_rate > 0.9 and True:
+            if last_success_rate > 0.9 and last_last_success_rate > 0.9 and False:
                 max_num_discs = min(MAX_DISCS, max_num_discs + 1)
                 last_success_rate = 0.0
                 last_last_success_rate = 0.0
@@ -584,8 +586,9 @@ if __name__ == "__main__":
             "grad_steps":        rl_cfg["training"]["grad_steps"],
         }
 
+        project_name = rl_cfg["training"].get("project_name", "rl_golf_wandb")
         wandb.init(
-            project="rl_golf_conefix",
+            project=project_name,
             group = "ddpg-1step",
             config={
                 **sweep_config,

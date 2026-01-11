@@ -599,8 +599,9 @@ if __name__ == "__main__":
         raise ValueError(f"Unknown env_type: {env_type} (expected 'sim' or 'real')")
 
     if rl_cfg["training"].get("use_wandb", False):
+        project_name = rl_cfg["training"].get("project_name", "rl_golf_wandb")
         wandb.init(
-            project="rl_golf_conefix", 
+            project=project_name, 
             group="en-ucb",  
             config={
                 "rl_config": rl_cfg,

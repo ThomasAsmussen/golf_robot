@@ -1,12 +1,13 @@
 training:
-  episodes: 15000
+  episodes: 20000
   actor_lr: 0.0003
   critic_lr: 0.0003
-  noise_std: 0.00
+  noise_std: 0.1
   batch_size: 64
   grad_steps: 4
   replay_buffer_capacity: 100000
   use_wandb: True
+  project_name: "rl_golf_best"
   eval_interval: 50
   eval_episodes: 20
   target_update_rho: 0.000

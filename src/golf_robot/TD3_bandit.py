@@ -263,7 +263,7 @@ def training(
 
         # Sample context
         if env_type == "sim":
-            if last_success_rate > 0.9 and last_last_success_rate > 0.9 and True:
+            if last_success_rate > 0.9 and last_last_success_rate > 0.9 and False:
                 max_num_discs = min(MAX_DISCS, max_num_discs + 1)
                 last_success_rate = 0.0
                 last_last_success_rate = 0.0
@@ -684,9 +684,10 @@ if __name__ == "__main__":
             "batch_size":        rl_cfg["training"]["batch_size"],
             "grad_steps":        rl_cfg["training"]["grad_steps"],
         }
-
+        
+        project_name = rl_cfg["training"].get("project_name", "rl_golf_wandb")
         wandb.init(
-            project="rl_golf_conefix", 
+            project=project_name, 
             group="td3",  
             config={
                 **sweep_config,
