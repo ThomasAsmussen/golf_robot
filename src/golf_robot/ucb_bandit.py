@@ -287,7 +287,7 @@ def training(
     # Warm-start memory
     a_prev = None
 
-    max_num_discs = 0
+    max_num_discs = 5
     last_success_rate = 0.0
 
     for episode in range(episodes):
@@ -310,7 +310,7 @@ def training(
                 last_last_success_rate = last_success_rate
                 last_success_rate = success_rate_eval
                 # Increment discs:
-                if last_success_rate > 0.9 and last_last_success_rate > 0.9 and False:
+                if last_success_rate > 0.9 and last_last_success_rate > 0.9 and True:
                     max_num_discs = min(MAX_DISCS, max_num_discs + 1)
                     last_success_rate = 0.0
                     last_last_success_rate = 0.0
