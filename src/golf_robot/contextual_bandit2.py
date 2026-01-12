@@ -29,6 +29,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
     if env_step is None:
         raise ValueError("training() requires env_step (sim or real environment function).")
 
+    print("Starting training with Contextual Bandit 2...")
     episodes   = rl_cfg["training"]["episodes"]
     batch_size = rl_cfg["training"]["batch_size"]
     actor_lr   = rl_cfg["training"]["actor_lr"]

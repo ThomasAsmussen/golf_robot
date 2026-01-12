@@ -92,6 +92,7 @@ def training(
     if env_step is None:
         raise ValueError("training() requires env_step (sim or real environment function).")
 
+    print("Starting training with SAC Bandit...")
     episodes   = rl_cfg["training"]["episodes"]
     batch_size = rl_cfg["training"]["batch_size"]
     actor_lr   = rl_cfg["training"]["actor_lr"]
