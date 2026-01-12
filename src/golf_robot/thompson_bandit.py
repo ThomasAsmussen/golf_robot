@@ -203,7 +203,7 @@ def maybe_init_wandb(rl_cfg, mujoco_cfg):
 # ---------------------------------------------------------
 # Training loop
 # ---------------------------------------------------------
-def training(
+def training2(
     rl_cfg,
     mujoco_cfg,
     project_root,
@@ -219,6 +219,7 @@ def training(
     if env_step is None:
         raise ValueError("training() requires env_step.")
 
+    print("Starting training with Thompson + CEM + Double Critic per head")
     episodes   = rl_cfg["training"]["episodes"]
     batch_size = rl_cfg["training"]["batch_size"]
     critic_lr  = rl_cfg["training"]["critic_lr"]
@@ -257,7 +258,7 @@ def training(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    model_dir = project_root / "models" / "rl" / "bandit"
+    model_dir = project_root / "models" / "rl" / "dqn-bts"
     model_dir.mkdir(parents=True, exist_ok=True)
 
     tag_for_saving = None
@@ -267,7 +268,9 @@ def training(
         if model_name is not None:
             tag_for_saving = model_name
             tag_stem = f"ddpg_critic1_{model_name}"
+            print(f"Loading double-critic models from tag: {model_name}")
             critics1, critics2, _ = load_doublecritics(model_dir, rl_cfg, tag_stem, device)
+            
             print(f"Continuing training from tag: {model_name}")
         else:
             c1_h0, tag_stem = find_latest_doublecritic_checkpoint(model_dir, prefix=None)
