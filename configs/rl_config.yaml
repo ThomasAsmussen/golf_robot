@@ -1,5 +1,5 @@
 training:
-  episodes: 15000
+  episodes: 20000
   actor_lr: 0.0003
   critic_lr: 0.0003
   noise_std: 0.15
@@ -7,6 +7,7 @@ training:
   grad_steps: 4
   replay_buffer_capacity: 100000
   use_wandb: True
+  project_name: "rl_golf_best"
   eval_interval: 50
   eval_episodes: 20
   target_update_rho: 0.000
@@ -31,4 +32,4 @@ reward:
   w_distance: 0.8
   optimal_speed: 0.8
   dist_at_hole_scale: 5.0
-  optimal_speed_scale: 5.0
+  optimal_speed_scale: 2.0

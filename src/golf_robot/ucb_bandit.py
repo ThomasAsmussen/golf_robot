@@ -287,7 +287,7 @@ def training(
     # Warm-start memory
     a_prev = None
 
-    max_num_discs = 0
+    max_num_discs = 5
     last_success_rate = 0.0
 
     for episode in range(episodes):
@@ -307,7 +307,16 @@ def training(
                     env_step=env_step,
                     env_type=env_type,
                 )
+                last_last_success_rate = last_success_rate
                 last_success_rate = success_rate_eval
+                # Increment discs:
+                if last_success_rate > 0.9 and last_last_success_rate > 0.9 and True:
+                    max_num_discs = min(MAX_DISCS, max_num_discs + 1)
+                    last_success_rate = 0.0
+                    last_last_success_rate = 0.0
+                    replay_buffer_recent.clear()
+                    a_prev = None  # optional: reset CEM warm-start
+                    print(f"[CURRICULUM] Increased max_num_discs -> {max_num_discs}")
                 print(
                     f"[EVAL] Ep {episode}: success={success_rate_eval:.2f}, "
                     f"avg_reward={avg_reward_eval:.3f}, avg_dist={avg_distance_eval:.3f}"
@@ -590,8 +599,10 @@ if __name__ == "__main__":
         raise ValueError(f"Unknown env_type: {env_type} (expected 'sim' or 'real')")
 
     if rl_cfg["training"].get("use_wandb", False):
+        project_name = rl_cfg["training"].get("project_name", "rl_golf_wandb")
         wandb.init(
-            project="rl_golf_ucb_singlecritic_cem",
+            project=project_name, 
+            group="en-ucb",  
             config={
                 "rl_config": rl_cfg,
                 "mujoco_config": mujoco_cfg,

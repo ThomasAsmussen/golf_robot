@@ -37,7 +37,7 @@ def cem_plan_action(
     action_low=-1.0,
     action_high=1.0,
     init_std=0.4,
-    min_std=0.1,
+    min_std=0.1, #0.1
     init_mu=None,
 ):
     elite_n = max(1, int(round(cem_pop * cem_elite_frac)))
@@ -97,7 +97,7 @@ class MeanPlannerActor(nn.Module):
         cem_iters = self.rl_cfg["training"].get("cem_iters_eval", self.rl_cfg["training"].get("cem_iters", 2))
         cem_elite_frac = self.rl_cfg["training"].get("cem_elite_frac", 0.2)
         cem_init_std = self.rl_cfg["training"].get("cem_init_std", 0.4)
-        cem_min_std = self.rl_cfg["training"].get("cem_min_std", 0.1)
+        cem_min_std = self.rl_cfg["training"].get("cem_min_std", 0.1) #0.1
 
         action_dim = self.rl_cfg["model"]["action_dim"]
 
@@ -203,7 +203,7 @@ def training(
     cem_iters = rl_cfg["training"].get("cem_iters", 2)
     cem_elite_frac = rl_cfg["training"].get("cem_elite_frac", 0.2)
     cem_init_std = rl_cfg["training"].get("cem_init_std", 0.4)
-    cem_min_std = rl_cfg["training"].get("cem_min_std", 0.1)
+    cem_min_std = rl_cfg["training"].get("cem_min_std", 0.1) #0.1
     use_cem_warm_start = bool(rl_cfg["training"].get("cem_warm_start", True))
 
     state_dim  = rl_cfg["model"]["state_dim"]
@@ -292,7 +292,7 @@ def training(
     # Warm-start memory
     a_prev = None
 
-    max_num_discs = 0
+    max_num_discs = 5
     last_success_rate = 0.0
     last_last_success_rate = 0.0
     log_dict = {}
@@ -316,6 +316,16 @@ def training(
                 )
                 last_last_success_rate = last_success_rate
                 last_success_rate = success_rate_eval
+                
+                # Increment num_discs
+                if last_success_rate > 0.9 and last_last_success_rate > 0.9 and True:
+                    max_num_discs = min(MAX_DISCS, max_num_discs + 1)
+                    last_success_rate = 0.0
+                    last_last_success_rate = 0.0
+                    replay_buffer_recent.clear()
+                    a_prev = None  # optional: reset CEM warm-start
+                    print(f"[CURRICULUM] Increased max_num_discs -> {max_num_discs}")
+                
                 print(
                     f"[EVAL] Ep {episode}: success={success_rate_eval:.2f}, "
                     f"avg_reward={avg_reward_eval:.3f}, avg_dist={avg_distance_eval:.3f}"
@@ -594,8 +604,10 @@ if __name__ == "__main__":
         raise ValueError(f"Unknown env_type: {env_type} (expected 'sim' or 'real')")
 
     if rl_cfg["training"].get("use_wandb", False):
+        project_name = rl_cfg["training"].get("project_name", "rl_golf_wandb")
         wandb.init(
-            project="rl_golf_ts_doublecritic_cem",
+            project=project_name, 
+            group="dqn-bts",  
             config={
                 "rl_config": rl_cfg,
                 "mujoco_config": mujoco_cfg,

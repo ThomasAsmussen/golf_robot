@@ -212,7 +212,7 @@ def training(
     last_success_rate = 0.0
     last_last_success_rate = 0.0
 
-    max_num_discs = 0
+    max_num_discs = 5
     stage_start_episode = 0
 
     episode_logger = None
@@ -264,7 +264,7 @@ def training(
 
         # Sample context
         if env_type == "sim":
-            if last_success_rate > 0.9 and last_last_success_rate > 0.9 and False:
+            if last_success_rate > 0.9 and last_last_success_rate > 0.9 and True:
                 max_num_discs = min(MAX_DISCS, max_num_discs + 1)
                 last_success_rate = 0.0
                 last_last_success_rate = 0.0
@@ -719,8 +719,10 @@ if __name__ == "__main__":
             "grad_steps":        rl_cfg["training"]["grad_steps"],
         }
 
+        project_name = rl_cfg["training"].get("project_name", "rl_golf_wandb")
         wandb.init(
-            project="rl_golf_contextual_bandit",
+            project=project_name, 
+            group="sac",  
             config={
                 **sweep_config,
                 "rl_config":     rl_cfg,
