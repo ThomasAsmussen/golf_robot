@@ -15,7 +15,8 @@ training:
   error_hard_stop: True
   do_prints: False
   env_type: "sim"
-  model_name: "morning_sweep_4.pth"
+  model_name: "revived_flower_8"
+  wandb_run_id: "real_robot_12_01"
 
 model:
   state_dim: 19

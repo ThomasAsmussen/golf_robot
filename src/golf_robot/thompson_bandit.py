@@ -174,6 +174,29 @@ def save_doublecritics(model_dir: Path, tag: str, critics1, critics2):
         torch.save(c2.state_dict(), model_dir / f"ddpg_critic2_{tag}_h{k}.pth")
 
 
+# Wandb helper
+def maybe_init_wandb(rl_cfg, mujoco_cfg):
+    if not rl_cfg["training"].get("use_wandb", False):
+        return
+    if wandb.run is not None:
+        return
+    run_id = rl_cfg["training"].get("wandb_run_id")
+    if not run_id:
+        raise ValueError(
+            "wandb_run_id must be explicitly set in rl_config.yaml when use_wandb=True"
+        )
+
+    wandb.init(
+        project=rl_cfg["training"].get("project_name", "rl_golf_no_name"),
+        id=run_id,
+        resume="allow",
+        group="dqn-bts",
+        config={
+            "rl_config": rl_cfg,
+            "mujoco_config": mujoco_cfg,
+        },
+    )
+
 # ---------------------------------------------------------
 # Training loop
 # ---------------------------------------------------------
@@ -188,6 +211,8 @@ def training2(
     tmp_name=None,
     camera_index_start=None,
 ):
+    if env_type == "real":
+        maybe_init_wandb(rl_cfg, mujoco_cfg)
     if env_step is None:
         raise ValueError("training() requires env_step.")
 
@@ -223,10 +248,7 @@ def training2(
     dist_at_hole_scale = rl_cfg["reward"]["dist_at_hole_scale"]
     optimal_speed_scale = rl_cfg["reward"]["optimal_speed_scale"]
 
-    if env_type == "sim":
-        use_wandb = rl_cfg["training"]["use_wandb"]
-    else:
-        use_wandb = False
+    use_wandb = bool(rl_cfg["training"].get("use_wandb", False))
 
     model_name = rl_cfg["training"].get("model_name", None)
 
@@ -279,6 +301,8 @@ def training2(
     eval_actor = MeanPlannerActor(critics1, critics2, rl_cfg, device).to(device)
 
     # ---- real logging + load replay
+    global_ep0 = 0
+    episode_log_path = None
     episode_logger = None
     if env_type == "real":
         episode_log_path = project_root / "log" / "real_episodes" / "episode_logger.jsonl"
@@ -291,6 +315,12 @@ def training2(
             reward_cfg=rl_cfg.get("reward", None),
         )
         print(f"Loaded {loaded_n} episodes from {episode_log_path} into replay buffer.")
+        if episode_log_path.exists():
+            with episode_log_path.open("r") as f:
+                global_ep0 = sum(1 for _ in f)
+    
+    
+
 
     # Warm-start memory
     a_prev = None
@@ -540,7 +570,9 @@ def training2(
             print(f"Episode {episode + 1}/{episodes}, Reward: {reward:.4f}, TS head: {head}")
 
         if use_wandb:
-            wandb.log({"reward": float(reward), "thompson_head": int(head)}, step=episode)
+            step = (global_ep0 + episode) if env_type == "real" else episode
+            wandb.log({"reward": float(reward), "thompson_head": int(head)}, step=step)
+
 
     # -------------------------------------------------
     # Final evaluation + save
@@ -605,12 +637,12 @@ if __name__ == "__main__":
         tmp_xml_path = None
     else:
         raise ValueError(f"Unknown env_type: {env_type} (expected 'sim' or 'real')")
-
-    if rl_cfg["training"].get("use_wandb", False):
+    
+    if env_type == "sim" and rl_cfg["training"].get("use_wandb", False):
         project_name = rl_cfg["training"].get("project_name", "rl_golf_wandb")
         wandb.init(
-            project=project_name, 
-            group="dqn-bts",  
+            project=project_name,
+            group="dqn-bts",
             config={
                 "rl_config": rl_cfg,
                 "mujoco_config": mujoco_cfg,
