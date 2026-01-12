@@ -1358,7 +1358,7 @@ def evaluation_policy_hand_tuned(
             is_out_of_bounds = False
 
         if env_type == "real":
-            result = env_step(impact_velocity=speed, swing_angle=angle_deg, ball_start_position=ball_start_obs, planner="quintic", check_rtt=True, chosen_hole=chosen_hole)
+            result = env_step(impact_velocity=speed, swing_angle=angle_deg, ball_start_position=ball_start_obs, planner="linear", check_rtt=True, chosen_hole=chosen_hole)
             ball_x, ball_y, in_hole, meta = result
             is_out_of_bounds = meta["out_of_bounds"]
 

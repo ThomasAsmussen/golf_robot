@@ -21,6 +21,7 @@ from SAC_bandit import training
 from vision.ball2hole_distance import get_ball_final_position
 from vision.ball_start_position import get_ball_start_position
 from planning.generate_trajectory_csv import generate_trajectory_csv
+from planning_linear import send_swing
 #from vision.record_camera import record_from_camera
 from vision.ball_at_hole_state import process_video
 from gui.gui import *
@@ -81,70 +82,117 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
         if results is None:
             print("Trajectory not feasible, aborting.")
             sys.exit(0)
+            
+            if OPERATING_SYSTEM == "windows":
+                if check_rtt:
+                    out = subprocess.check_output(
+                        ["wsl", "ping", "-c", "3", "192.38.66.227"],
+                        text=True
+                    )
+
+                    rtts = [
+                        float(m.group(1))
+                        for m in re.finditer(r'time=([\d.]+)\s*ms', out)
+                    ]
+
+                    print("RTTs (ms):", rtts)
+                    print("avg:", sum(rtts)/len(rtts))
+            elif OPERATING_SYSTEM == "linux":
+                if check_rtt:
+                    out = subprocess.check_output(
+                        ["ping", "-c", "3", "192.38.66.227"], text=True
+                    )
+
+                    rtts = [
+                        float(m.group(1))
+                        for m in re.finditer(r'time=([\d.]+)\s*ms', out)
+                    ]
+
+                    print("RTTs (ms):", rtts)
+                    print("avg:", sum(rtts)/len(rtts))
+            
+            
+            prompter.confirm_or_exit("Ready to execute trajectory. Continue?")
+
+            here = Path(__file__).resolve().parent
+            traj_exe = here / "communication" / "traj_streamer"
+
+            if OPERATING_SYSTEM == "linux":
+                traj_cmd = [str(traj_exe)]
+
+            elif OPERATING_SYSTEM == "windows":
+                win_path = here / "communication" / "traj_streamer"
+                wsl_path = subprocess.check_output(
+                    ["wsl", "wslpath", "-a", str(win_path)],
+                    text=True
+                ).strip()
+                traj_cmd = ["wsl", wsl_path]
+
+            else:
+                raise RuntimeError(f"Unsupported OS: {OPERATING_SYSTEM}")
+            
+            def run_traj():
+                return subprocess.run(
+                    traj_cmd,
+                    check=False,
+                    capture_output=False,
+                    text=True,
+                )
+
+            result = prompter.run_with_spinner("Shooting", run_traj)
+
+            print("Trajectory streamer output:")
+            print(result.stdout)
+
 
     if planner == "linear":
-        sys.exit("Linear planner not implemented for real robot yet.")
-    
-    if OPERATING_SYSTEM == "windows":
-        if check_rtt:
-            out = subprocess.check_output(
-                ["wsl", "ping", "-c", "3", "192.38.66.227"],
-                text=True
-            )
+        HOST = "192.38.66.227"   # UR10
+        #PORT_logger = 30003
+        PORT_cmd = 30002
+        time_sleep = 10.0
 
-            rtts = [
-                float(m.group(1))
-                for m in re.finditer(r'time=([\d.]+)\s*ms', out)
-            ]
+        # 1) Set up your logger on its own socket/connection
+        # logger = UR10Logger(HOST, port=PORT_logger, log_folder="log")
+        # logger.connect()
+        # logger.start_logging()
 
-            print("RTTs (ms):", rtts)
-            print("avg:", sum(rtts)/len(rtts))
-    elif OPERATING_SYSTEM == "linux":
-        if check_rtt:
-            out = subprocess.check_output(
-                ["ping", "-c", "3", "192.38.66.227"], text=True
-            )
+        # 2) Open a separate socket for sending the program
+        traj_cmd = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        traj_cmd.connect((HOST, PORT_cmd))
 
-            rtts = [
-                float(m.group(1))
-                for m in re.finditer(r'time=([\d.]+)\s*ms', out)
-            ]
+        print("Sending swing...")
+        x_ball_origo=-0.64026
+        ball_radius=0.021335
+        offset = 0.25 # 0.33 max
+        z_buffer = 0.015
+        x_start=x_ball_origo+ball_radius-offset   + ball_start_position[0]
+        x_end=x_ball_origo+ball_radius+offset   + ball_start_position[0]
+        y_ball_origo=-0.59278 #-0.546
+        y_ball = y_ball_origo + ball_start_position[1]
+        z_ball=0.15512+z_buffer #-0.006
+        # swing_meta = send_swing(traj_cmd, x_start=x_start, x_end=x_end,
+        #     y_ball=y_ball_origo, z_ball=z_ball,#0.01+Z_PALLET, #-0.040 old
+        #     path_angle_deg=swing_angle, attack_angle_deg=0.0,
+        #     vel=impact_velocity, acc=5.0)
 
-            print("RTTs (ms):", rtts)
-            print("avg:", sum(rtts)/len(rtts))
-    
-    
-    prompter.confirm_or_exit("Ready to execute trajectory. Continue?")
+        swing_meta = prompter.run_with_spinner("Shooting", 
+            send_swing(traj_cmd, x_start=x_start, x_end=x_end,
+            y_ball=y_ball_origo, z_ball=z_ball,#0.01+Z_PALLET, #-0.040 old
+            path_angle_deg=swing_angle, attack_angle_deg=0.0,
+            vel=impact_velocity, acc=5.0))
+        
+        # 3) Let the swing run and the logger collect a bit extra
+        time.sleep(time_sleep)   # 8.0 adjust to cover your full motion
 
-    here = Path(__file__).resolve().parent
-    traj_exe = here / "communication" / "traj_streamer"
+        # 4) Clean up
+        try:
+            traj_cmd.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        traj_cmd.close()
+        
+        
 
-    if OPERATING_SYSTEM == "linux":
-        traj_cmd = [str(traj_exe)]
-
-    elif OPERATING_SYSTEM == "windows":
-        win_path = here / "communication" / "traj_streamer"
-        wsl_path = subprocess.check_output(
-            ["wsl", "wslpath", "-a", str(win_path)],
-            text=True
-        ).strip()
-        traj_cmd = ["wsl", wsl_path]
-
-    else:
-        raise RuntimeError(f"Unsupported OS: {OPERATING_SYSTEM}")
-    
-    def run_traj():
-        return subprocess.run(
-            traj_cmd,
-            check=False,
-            capture_output=False,
-            text=True,
-        )
-
-    result = prompter.run_with_spinner("Shooting", run_traj)
-
-    print("Trajectory streamer output:")
-    print(result.stdout)
     if LOG_SHOTS:
 
         time.sleep(2.0)
