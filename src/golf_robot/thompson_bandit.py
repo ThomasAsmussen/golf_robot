@@ -37,7 +37,7 @@ def cem_plan_action(
     action_low=-1.0,
     action_high=1.0,
     init_std=0.4,
-    min_std=0.1,
+    min_std=0.02, #0.1
     init_mu=None,
 ):
     elite_n = max(1, int(round(cem_pop * cem_elite_frac)))
@@ -97,7 +97,7 @@ class MeanPlannerActor(nn.Module):
         cem_iters = self.rl_cfg["training"].get("cem_iters_eval", self.rl_cfg["training"].get("cem_iters", 2))
         cem_elite_frac = self.rl_cfg["training"].get("cem_elite_frac", 0.2)
         cem_init_std = self.rl_cfg["training"].get("cem_init_std", 0.4)
-        cem_min_std = self.rl_cfg["training"].get("cem_min_std", 0.1)
+        cem_min_std = self.rl_cfg["training"].get("cem_min_std", 0.02) #0.1
 
         action_dim = self.rl_cfg["model"]["action_dim"]
 
@@ -203,7 +203,7 @@ def training(
     cem_iters = rl_cfg["training"].get("cem_iters", 2)
     cem_elite_frac = rl_cfg["training"].get("cem_elite_frac", 0.2)
     cem_init_std = rl_cfg["training"].get("cem_init_std", 0.4)
-    cem_min_std = rl_cfg["training"].get("cem_min_std", 0.1)
+    cem_min_std = rl_cfg["training"].get("cem_min_std", 0.02) #0.1
     use_cem_warm_start = bool(rl_cfg["training"].get("cem_warm_start", True))
 
     state_dim  = rl_cfg["model"]["state_dim"]
@@ -607,7 +607,7 @@ if __name__ == "__main__":
         project_name = rl_cfg["training"].get("project_name", "rl_golf_wandb")
         wandb.init(
             project=project_name, 
-            group="dqn-bts",  
+            group="dqn-bts-low-std",  
             config={
                 "rl_config": rl_cfg,
                 "mujoco_config": mujoco_cfg,
