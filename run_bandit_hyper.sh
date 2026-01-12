@@ -1,16 +1,20 @@
-#!/bin/bash
-#BSUB -q hpc          # or a CPU queue if you don't use GPU
-#BSUB -J bandit_sweep
-#BSUB -n 2
+#!/bin/sh
+#BSUB -q hpc
+#BSUB -J bandit
+### number of core
+#BSUB -n 1
 #BSUB -R "span[hosts=1]"
-#BSUB -R "rusage[mem=2GB]"
-#BSUB -W 23:59            # walltime (hh:mm)
-#BSUB -o outputs/bandit_sweep_%J.out
-#BSUB -e outputs/bandit_sweep_%J.err
-#BSUB -N
-# Load modules
+### specify the memory needed
+#BSUB -R "rusage[mem=1GB]"
+### Number of hours needed
+#BSUB -W 23:59
+### added outputs and errors to files
+#BSUB -o outputs/Output_%J.out
+#BSUB -e outputs/Error_%J.err
 
-module load cuda/11.8
+echo "Running script..."
+
+#module load cuda/11.8
 module load python3/3.10.13
 
 # Activate your env
@@ -19,4 +23,4 @@ source golf_venv/bin/activate
 
 # Run the wandb sweep agent
 # --count controls how many trials this job will run
-wandb agent --count 1 rl_golf/golf_robot-src_golf_robot_reinforcement_learning/s76sco45
+wandb agent --count 1 rl_golf/golf_robot-src_golf_robot/uh5mkq1a

@@ -100,8 +100,12 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
 
     print(f"Using device: {device}")
 
-    actor_optimizer  = torch.optim.SGD(actor.parameters(),  lr=actor_lr)
-    critic_optimizer = torch.optim.SGD(critic.parameters(), lr=critic_lr)
+    actor_optimizer  = torch.optim.Adam(actor.parameters(),  lr=actor_lr)
+    critic_optimizer = torch.optim.Adam(critic.parameters(), lr=critic_lr)
+    actor_optimizer  = torch.optim.Adam(actor.parameters(),  lr=actor_lr)
+    critic_optimizer = torch.optim.Adam(critic.parameters(), lr=critic_lr)
+    # actor_optimizer  = torch.optim.SGD(actor.parameters(),  lr=actor_lr)
+    # critic_optimizer = torch.optim.SGD(critic.parameters(), lr=critic_lr)
 
     replay_buffer_big = ReplayBuffer(capacity=rl_cfg["training"]["replay_buffer_capacity"])
     replay_buffer_recent = ReplayBuffer(1000)  # Smaller buffer for recent experiences
@@ -123,7 +127,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
     last_last_success_rate = 0.0
     # For now we don't actually place discs, but the state format reserves 5.
     
-    max_num_discs = 2
+    max_num_discs = 0
     stage_start_episode = 0
     noise_std_stage_start = noise_std
 
@@ -174,11 +178,11 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
             )
         if env_type == "sim":
 
-            if last_success_rate > 0.9 and last_last_success_rate > 0.9 and False:
+            if last_success_rate > 0.9 and last_last_success_rate > 0.9:
                 max_num_discs = min(MAX_DISCS, max_num_discs + 1)
                 last_success_rate = 0.0
                 last_last_success_rate = 0.0
-                noise_std = 0.2
+                noise_std = 0.15
                 noise_std_stage_start = noise_std
                 stage_start_episode = episode
                 replay_buffer_recent.clear()
@@ -187,6 +191,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
 
         if env_type == "real":
             ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(camera_index=camera_index_start)
+            original_hole_num = chosen_hole
 
 
         state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 5)
@@ -258,7 +263,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
             if meta["wrong_hole"] is not None:
                 chosen_hole = meta["wrong_hole"]
                 hole_pos_obs = np.array([get_hole_positions()[chosen_hole]["x"], get_hole_positions()[chosen_hole]["y"]])
-            elif not in_hole:
+            elif not in_hole and not is_out_of_bounds and not meta["on_green"]:
                 using_all_holes = True
                 hole1 = np.array([get_hole_positions()[1]["x"], get_hole_positions()[1]["y"]])
                 hole2 = np.array([get_hole_positions()[2]["x"], get_hole_positions()[2]["y"]])
@@ -268,10 +273,13 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
             rewards = []
             for i, hole_pos_obs_try in enumerate([hole1, hole2, hole3]):
                 dist_at_hole = meta["dist_at_hole"]
-                if dist_at_hole is not None:
+                speed_at_hole = meta["speed_at_hole"]
+                if dist_at_hole is not None and dist_at_hole[i] is not None:
                     dist_at_hole = float(dist_at_hole[i])
+                    speed_at_hole = float(speed_at_hole[i])
                 else:
-                    dist_at_hole = None
+                    continue
+
                 hole_pos_try = hole_pos_obs_try
                 reward_try = compute_reward(
                     ball_end_xy=np.array([ball_x, ball_y]),
@@ -285,7 +293,8 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
                     optimal_speed=optimal_speed,
                     dist_at_hole_scale=dist_at_hole_scale,
                     optimal_speed_scale=optimal_speed_scale,
-                    multiple_dist_at_hole = dist_at_hole
+                    multiple_dist_at_hole = dist_at_hole,
+                    multiple_speed_at_hole = speed_at_hole
                 )
                 rewards.append(reward_try)
         else:
@@ -313,9 +322,17 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
             else:
                 print(f"Storing episode")
                 if using_all_holes:
+                    reward_count = 0
                     for i, hole_pos_obs_try in enumerate([hole1, hole2, hole3]):
+                        if meta["dist_at_hole"] is not None:
+                            dist_at_hole = meta["dist_at_hole"][i]
+                            speed_at_hole = meta["speed_at_hole"][i]
+                        if dist_at_hole is None:
+                            continue
+                        
                         hole_pos_try = hole_pos_obs_try
-                        reward = rewards[i]
+                        reward = rewards[reward_count]
+                        reward_count += 1
                         logging_dict = {
                             "episode": episode,
                             "time": time.time(),
@@ -332,8 +349,9 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
                             "out_of_bounds": out_of_bounds,
                             "reward": reward,
                             "chosen_hole": i+1,
-                            "dist_at_hole": meta["dist_at_hole"][i] if meta["dist_at_hole"] is not None else None,
-                            "speed_at_hole": meta["speed_at_hole"],
+                            "aimed_hole": original_hole_num,
+                            "dist_at_hole": dist_at_hole,
+                            "speed_at_hole": speed_at_hole,
                             "exploring": True,
                         }
                         # print(f"Logging episode data: {logging_dict}")
@@ -355,6 +373,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
                         "out_of_bounds": out_of_bounds,
                         "reward": reward,
                         "chosen_hole": chosen_hole,
+                        "aimed_hole": original_hole_num,
                         "dist_at_hole": meta["dist_at_hole"],
                         "speed_at_hole": meta["speed_at_hole"],
                         "exploring": True,
@@ -367,6 +386,11 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
 
         if using_all_holes:
             for i, hole_pos_obs_try in enumerate([hole1, hole2, hole3]):
+                if meta["dist_at_hole"] is not None:
+                    dist_at_hole = meta["dist_at_hole"][i]
+                    speed_at_hole = meta["speed_at_hole"][i]
+                if dist_at_hole is None:
+                    continue
                 replay_buffer_big.add(s_train, a_train, rewards[i])
                 replay_buffer_recent.add(s_train, a_train, rewards[i])
                 # -------------------------------------------------
@@ -380,15 +404,26 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
         # TD-style supervised update: Q(s,a) -> r
         # -------------------------------------------------
         if len(replay_buffer_big.data) >= batch_size:
+            update_actor = True
             if env_type == "real":
                 print("Updating networks...")
+                update_actor = False
+                if episode_logger.get_length() % 10 == 0:
+                    print(f"Updating actor")
+                    update_actor = True
+
             for _ in range(grad_steps):
-                states_b, actions_b, rewards_b = sample_mixed(
+                states_b, actions_b, rewards_b = sample_mixed_zero_mean(
                     replay_buffer_recent,
                     replay_buffer_big,
                     recent_ratio=0.7,
                     batch_size=batch_size,
+                    ball_xy_idx=(0, 1),
                 )
+
+                bxby_mean = states_b[:, [0,1]].mean(dim=0).cpu().numpy()
+                print("batch mean ball_xy (norm):", bxby_mean)
+
 
                 states_b  = states_b.to(device)
                 actions_b = actions_b.to(device)
@@ -398,22 +433,24 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
                 td_target = rewards_b
 
                 q_pred = critic(states_b, actions_b)
-                critic_loss = F.mse_loss(q_pred, td_target)
+                # critic_loss = F.mse_loss(q_pred, td_target)
+                critic_loss = F.smooth_l1_loss(q_pred, td_target)
 
                 critic_optimizer.zero_grad()
                 critic_loss.backward()
                 critic_optimizer.step()
 
                 # Actor tries to maximize Q(s, π(s))
-                a_for_actor = actor(states_b)
-                actor_loss  = -critic(states_b, a_for_actor).mean()
+                if update_actor:
+                    a_for_actor = actor(states_b)
+                    actor_loss  = -critic(states_b, a_for_actor).mean()
 
-                actor_optimizer.zero_grad()
-                actor_loss.backward()
-                actor_optimizer.step()
+                    actor_optimizer.zero_grad()
+                    actor_loss.backward()
+                    actor_optimizer.step()
 
-            critic_loss_value = critic_loss.item()
-            actor_loss_value  = actor_loss.item()
+            # critic_loss_value = critic_loss.item()
+            # actor_loss_value  = actor_loss.item()
 
             if env_type == "real":
                 if tmp_name is not None: 
@@ -437,7 +474,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
             print(f"  Distance to Hole: {dist_to_hole:.4f}, In Hole: {in_hole}")
 
 
-        if (episode) % rl_cfg["training"]["eval_interval"] == 24 and env_type == "sim":
+        if (episode) % rl_cfg["training"]["eval_interval"] == 2 and env_type == "sim":
             (
                 success_rate_eval,
                 avg_reward_eval,
@@ -584,8 +621,10 @@ if __name__ == "__main__":
             "grad_steps":        rl_cfg["training"]["grad_steps"],
         }
 
+        project_name = rl_cfg["training"].get("project_name", "rl_golf_wandb")
         wandb.init(
-            project="rl_golf_contextual_bandit",
+            project=project_name,
+            group = "ddpg-1step",
             config={
                 **sweep_config,
                 "rl_config":     rl_cfg,

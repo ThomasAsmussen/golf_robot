@@ -37,8 +37,12 @@ SPEED_NOISE_STD: float = 0.05
 ANGLE_NOISE_STD: float = 0.1
 BALL_OBS_NOISE_STD: float = 0.002
 HOLE_OBS_NOISE_STD: float = 0.002
+# SPEED_NOISE_STD: float = 0.0
+# ANGLE_NOISE_STD: float = 0.0
+# BALL_OBS_NOISE_STD: float = 0.0
+# HOLE_OBS_NOISE_STD: float = 0.02
 
-MAX_DISCS = 3
+MAX_DISCS = 2
 
 # Sampling ranges
 MIN_HOLE_X: float = 3.0
@@ -112,7 +116,7 @@ class Critic(nn.Module):
 # SAC models (bandit / single-step)
 # ---------------------------------------------------------
 LOG_STD_MIN = -5.0
-LOG_STD_MAX = 2.0
+LOG_STD_MAX = 0.0
 
 class SACActor(nn.Module):
     """
@@ -439,6 +443,7 @@ def load_replay_from_jsonl(
 
 
 
+
 # =========================================================
 # Replay buffers (bandit-friendly, but useful elsewhere too)
 # =========================================================
@@ -503,6 +508,150 @@ def sample_mixed(
 
     if num_recent > 0:
         states_r, actions_r, rewards_r = recent_buf.sample(num_recent)
+        states = torch.cat([states_r, states_a], dim=0)
+        actions = torch.cat([actions_r, actions_a], dim=0)
+        rewards = torch.cat([rewards_r, rewards_a], dim=0)
+    else:
+        states, actions, rewards = states_a, actions_a, rewards_a
+
+    return states, actions, rewards
+
+
+import math
+from typing import Tuple
+
+def _sample_balanced_quadrants(
+    buf: ReplayBuffer,
+    batch_size: int,
+    *,
+    ball_xy_idx: Tuple[int, int] = (0, 1),
+    oversample: int = 5,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Sample a batch whose (ball_x, ball_y) mean is pushed toward ~[0,0]
+    by balancing quadrants in normalized state space.
+
+    Quadrants are defined by the sign of (ball_x, ball_y):
+      Q00: x<0, y<0
+      Q01: x<0, y>=0
+      Q10: x>=0, y<0
+      Q11: x>=0, y>=0
+
+    If some quadrants are underrepresented, it falls back gracefully.
+    """
+    if len(buf) == 0:
+        raise RuntimeError("ReplayBuffer is empty")
+
+    ix, iy = ball_xy_idx
+    N = len(buf.data)
+
+    # Collect indices per quadrant
+    q = {0: [], 1: [], 2: [], 3: []}
+    for i in range(N):
+        s, _, _ = buf.data[i]
+        bx = float(s[ix].item())
+        by = float(s[iy].item())
+        # map sign to quadrant id
+        # bit0 = bx>=0, bit1 = by>=0
+        qid = (1 if bx >= 0 else 0) + (2 if by >= 0 else 0)
+        q[qid].append(i)
+
+    # Target samples per quadrant
+    base = batch_size // 4
+    rem = batch_size - 4 * base
+    target = [base, base, base, base]
+    # distribute remainder
+    for k in range(rem):
+        target[k] += 1
+
+    chosen = []
+
+    # First pass: draw as evenly as possible from each quadrant
+    for qid in range(4):
+        if len(q[qid]) == 0:
+            continue
+        k = min(target[qid], len(q[qid]))
+        # sample without replacement
+        perm = torch.randperm(len(q[qid]))[:k].tolist()
+        chosen.extend([q[qid][j] for j in perm])
+        target[qid] -= k
+
+    # Second pass: fill remaining from all indices, but bias toward samples
+    # that reduce mean ||[bx,by]|| (i.e., closer to origin).
+    remaining = batch_size - len(chosen)
+    if remaining > 0:
+        # Candidate pool: oversample*remaining random indices
+        cand_k = min(N, oversample * remaining)
+        cand_idx = torch.randint(0, N, (cand_k,)).tolist()
+
+        # Greedy pick: choose samples that keep batch mean near 0
+        mean = torch.zeros(2)
+        if chosen:
+            bxby = torch.stack([buf.data[i][0][[ix, iy]] for i in chosen], dim=0)
+            mean = bxby.mean(dim=0)
+
+        used = set(chosen)
+        for _ in range(remaining):
+            best_i = None
+            best_score = None
+            for i in cand_idx:
+                if i in used:
+                    continue
+                bxby = buf.data[i][0][[ix, iy]]
+                # score: norm of mean if we add this sample
+                new_mean = (mean * max(1, len(used)) + bxby) / (len(used) + 1)
+                score = float(new_mean.pow(2).sum().item())
+                if best_score is None or score < best_score:
+                    best_score = score
+                    best_i = i
+            if best_i is None:
+                # fallback: random fill
+                while True:
+                    i = int(torch.randint(0, N, (1,)).item())
+                    if i not in used:
+                        best_i = i
+                        break
+            used.add(best_i)
+            chosen.append(best_i)
+            mean = (mean * (len(used) - 1) + buf.data[best_i][0][[ix, iy]]) / len(used)
+
+    # Build batch tensors
+    states, actions, rewards = zip(*[buf.data[i] for i in chosen])
+    return (
+        torch.stack(states),
+        torch.stack(actions),
+        torch.tensor(rewards, dtype=torch.float32).unsqueeze(-1),
+    )
+
+
+def sample_mixed_zero_mean(
+    recent_buf: ReplayBuffer,
+    all_buf: ReplayBuffer,
+    recent_ratio: float,
+    batch_size: int,
+    *,
+    ball_xy_idx: Tuple[int, int] = (0, 1),
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Like sample_mixed(), but each component (recent/all) is sampled in a way
+    that pushes batch mean of ball start (x,y) toward ~[0,0] in normalized space.
+    """
+    if len(all_buf) == 0:
+        raise RuntimeError("All-buffer is empty; cannot sample.")
+
+    n_recent_avail = len(recent_buf)
+    num_recent = int(round(batch_size * float(recent_ratio)))
+    num_recent = min(num_recent, n_recent_avail)
+    num_all = batch_size - num_recent
+
+    states_a, actions_a, rewards_a = _sample_balanced_quadrants(
+        all_buf, num_all, ball_xy_idx=ball_xy_idx
+    )
+
+    if num_recent > 0:
+        states_r, actions_r, rewards_r = _sample_balanced_quadrants(
+            recent_buf, num_recent, ball_xy_idx=ball_xy_idx
+        )
         states = torch.cat([states_r, states_a], dim=0)
         actions = torch.cat([actions_r, actions_a], dim=0)
         rewards = torch.cat([rewards_r, rewards_a], dim=0)
@@ -580,8 +729,8 @@ def compute_reward(
     optimal_speed_scale: float = 5.0,
     use_meta_if_available: bool = True,
     is_out_of_bounds: bool = False,
-    multiple_dist_at_hole = None
-
+    multiple_dist_at_hole = None,
+    multiple_speed_at_hole = None
 ) -> float:
     """
     Single-step reward.
@@ -611,10 +760,12 @@ def compute_reward(
     if use_meta_if_available and isinstance(meta, dict):
         if multiple_dist_at_hole is not None:
             dist_at_hole = multiple_dist_at_hole
+            speed_at_hole = multiple_speed_at_hole
+
         else:
             dist_at_hole = meta.get("dist_at_hole", None)
+            speed_at_hole = meta.get("speed_at_hole", None)
 
-        speed_at_hole = meta.get("speed_at_hole", None)
         if dist_at_hole is not None and speed_at_hole is not None:
             dist_at_hole = float(dist_at_hole)
             speed_at_hole = float(speed_at_hole)
@@ -768,6 +919,42 @@ def scale_state_vec(state_vec: Sequence[float]) -> np.ndarray:
     return np.array([ball_x_scaled, ball_y_scaled, hole_x_scaled, hole_y_scaled] + disc_scaled, dtype=float)
 
 
+def unscale_state_vec(state_norm: np.ndarray, *, max_num_discs: int) -> np.ndarray:
+    """
+    Inverse of scale_state_vec(): map normalized raw state back to meters.
+    Returns raw state layout:
+      [bx, by, hx, hy, d1x, d1y, p1, ..., dNx, dNy, pN]
+    """
+    s = np.asarray(state_norm, dtype=float).reshape(-1)
+
+    # --- ball + hole ---
+    bx = unscale_from_unit(s[0], MIN_BALL_X, MAX_BALL_X)
+    by = unscale_from_unit(s[1], MIN_BALL_Y, MAX_BALL_Y)
+    hx = unscale_from_unit(s[2], MIN_HOLE_X, MAX_HOLE_X)
+    hy = unscale_from_unit(s[3], MIN_HOLE_Y, MAX_HOLE_Y)
+
+    out = [bx, by, hx, hy]
+
+    # --- discs (x,y use the heuristic bounds you used when scaling) ---
+    disc_data = s[4:]
+    for i in range(int(max_num_discs)):
+        dxn = disc_data[3*i + 0]
+        dyn = disc_data[3*i + 1]
+        p   = float(disc_data[3*i + 2])
+
+        if p <= 0.0:
+            # absent disc: you encoded (-1,-1,p=0). There's no real x/y to recover.
+            dx, dy = 0.0, 0.0
+            p = 0.0
+        else:
+            dx = unscale_from_unit(dxn, MIN_HOLE_X - 2.0, MAX_HOLE_X)
+            dy = unscale_from_unit(dyn, MIN_HOLE_Y,      MAX_HOLE_Y)
+            p = 1.0
+
+        out.extend([dx, dy, p])
+
+    return np.asarray(out, dtype=float)
+
 # =========================================================
 # Context sampling (sim) — algorithm independent
 # =========================================================
@@ -822,6 +1009,93 @@ def sim_init_parameters(
     )
 
     return ball_start_obs, hole_pos_obs, disc_positions, float(x), float(y), hole_pos
+
+# =========================================================
+# Engineered inputs (augmented with raw)
+# =========================================================
+def augment_state_features(
+    state_vec_raw: np.ndarray,
+    max_num_discs: int,
+    *,
+    dist_clip: float = 5.0,
+    eps: float = 1e-8,
+) -> np.ndarray:
+    """
+    Engineered features from raw state:
+      - dist_to_hole
+      - dir_to_hole (unit vector x,y)
+      - for each disc: dist_to_disc_i, dir_to_disc_i (unit vector x,y), masked if not present
+
+    Raw state layout (encode_state_with_discs):
+      [bx, by, hx, hy, d1x, d1y, p1, ..., dNx, dNy, pN]
+    """
+    s = np.asarray(state_vec_raw, dtype=float).reshape(-1)
+    bx, by, hx, hy = s[0], s[1], s[2], s[3]
+
+    feats = []
+
+    # ----- hole: distance + direction -----
+    dxh = hx - bx
+    dyh = hy - by
+    dist_h = np.hypot(dxh, dyh)
+    inv_h = 1.0 / (dist_h + eps)
+    dir_hx = dxh * inv_h
+    dir_hy = dyh * inv_h
+
+    feats.append(np.clip(dist_h, 0.0, dist_clip))
+    feats.append(dir_hx)  # already ~[-1,1]
+    feats.append(dir_hy)
+
+    # ----- discs: distance + direction each (masked) -----
+    disc_data = s[4:]
+    for i in range(int(max_num_discs)):
+        x = disc_data[3*i + 0]
+        y = disc_data[3*i + 1]
+        p = disc_data[3*i + 2]
+
+        if p <= 0.0:
+            # absent disc: make it "far away" + zero direction
+            feats.append(dist_clip)
+            feats.append(0.0)
+            feats.append(0.0)
+        else:
+            dxd = x - bx
+            dyd = y - by
+            dist_d = np.hypot(dxd, dyd)
+            inv_d = 1.0 / (dist_d + eps)
+            dir_dx = dxd * inv_d
+            dir_dy = dyd * inv_d
+
+            feats.append(np.clip(dist_d, 0.0, dist_clip))
+            feats.append(dir_dx)
+            feats.append(dir_dy)
+
+    return np.asarray(feats, dtype=float)
+
+
+def scale_aug_features(
+    feats: np.ndarray,
+    max_num_discs: int,
+    *,
+    dist_clip: float = 5.0,
+) -> np.ndarray:
+    """
+    Scale engineered features to roughly [-1,1]:
+      - distances in [0, dist_clip] -> [-1,1]
+      - directions already in [-1,1], leave unchanged
+
+    Layout:
+      [dist_hole, dir_hx, dir_hy, dist_d1, dir_d1x, dir_d1y, ..., dist_dN, dir_dNx, dir_dNy]
+    """
+    f = np.asarray(feats, dtype=float).copy()
+
+    # indices of distance entries: 0 (hole dist), then every 3 starting at 3
+    dist_idxs = [0] + [3 + 3*i for i in range(int(max_num_discs))]
+    for idx in dist_idxs:
+        f[idx] = scale_to_unit(f[idx], 0.0, dist_clip)
+
+    # direction entries remain as-is
+    return f
 
 
 # =========================================================
@@ -903,6 +1177,7 @@ def evaluation_policy_short(
     rewards            = []
     distances_to_hole  = []
     # max_num_discs = 5
+    print("Actor: ", actor)
     actor.eval()
     with torch.no_grad():
         for i in range(num_episodes):
@@ -914,18 +1189,36 @@ def evaluation_policy_short(
                 ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(camera_index=4, chosen_hole=i+1)
                 hole_pos = np.array(hole_pos_obs)
     
+            # Build state exactly matching the actor's expected state_dim
+            state_dim_expected = int(rl_cfg["model"]["state_dim"])
+
+            MAX_DISCS_FEATS = 5
             state_vec = encode_state_with_discs(
-                ball_start_obs, hole_pos_obs, disc_positions, max_num_discs=5
+                ball_start_obs, hole_pos_obs, disc_positions, max_num_discs=MAX_DISCS_FEATS
             )
+            raw_norm = scale_state_vec(state_vec)
 
-            # state_vec = np.concatenate([ball_start_obs, hole_pos_obs])  # No discs for now
+            # Optional engineered features
+            if state_dim_expected == 37:
+                    aug = augment_state_features(state_vec, max_num_discs=MAX_DISCS_FEATS, dist_clip=5.0)
+                    aug_norm = scale_aug_features(aug, max_num_discs=MAX_DISCS_FEATS, dist_clip=5.0)
 
-            state_vec = scale_state_vec(state_vec)
+                    raw_plus_aug = np.concatenate([raw_norm, aug_norm], axis=0)
 
-            state = torch.tensor(
-                state_vec, dtype=torch.float32, device=device
-            ).unsqueeze(0)
+            # Choose what to feed based on expected dim
+            if state_dim_expected == raw_norm.shape[0]:
+                state_norm = raw_norm
+            elif state_dim_expected == raw_plus_aug.shape[0]:
+                state_norm = raw_plus_aug
+            else:
+                raise ValueError(
+                    f"State dim mismatch: rl_cfg expects {state_dim_expected}, "
+                    f"but raw_norm is {raw_norm.shape[0]} and raw_plus_aug is {raw_plus_aug.shape[0]}."
+                )
 
+            state = torch.tensor(state_norm, dtype=torch.float32, device=device).unsqueeze(0)
+
+            
             #a_norm = actor(state).squeeze(0).cpu().numpy()
             # SAC: use deterministic mean action at eval time
             a_norm = None
@@ -996,7 +1289,7 @@ def evaluation_policy_short(
 
                 if meta["used_for_training"]:
                     big_episode_logger.log(logging_record)
-                    
+
             rewards.append(reward)
             successes += int(in_hole == 1)
             distance_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
@@ -1006,6 +1299,108 @@ def evaluation_policy_short(
     actor.train()
     return successes / num_episodes, float(np.mean(rewards)), avg_distance_to_hole
 
+
+def evaluation_policy_hand_tuned(
+    actor,
+    mujoco_cfg,
+    rl_cfg,
+    num_episodes,
+    max_num_discs=5,
+    env_step=None, 
+    env_type="sim",
+    input_func=None,
+):
+    
+    if env_step is None:
+        raise ValueError("evaluation_policy_hand_tuned() requires env_step.")
+    
+    speed_low  = rl_cfg["model"]["speed_low"]
+    speed_high = rl_cfg["model"]["speed_high"]
+    angle_low  = rl_cfg["model"]["angle_low"]
+    angle_high = rl_cfg["model"]["angle_high"]
+
+    here = Path(__file__).resolve().parent
+    project_root       = here.parents[1]
+    episode_log_path = project_root / "log" / f"{env_type}_episodes_eval" / f"episode_logger_eval_hand_tuned_{env_type}.jsonl"
+    episode_logger = EpisodeLoggerJsonl(episode_log_path)
+ 
+    successes          = 0
+    rewards            = []
+    distances_to_hole  = []
+
+    for i in range(num_episodes):
+        # New random context each eval episode
+        if env_type == "sim":
+            ball_start_obs, hole_pos_obs, disc_positions, x, y, hole_pos = sim_init_parameters(mujoco_cfg, max_num_discs)
+        
+        if env_type == "real":
+            ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(camera_index=4)
+            hole_pos = np.array(hole_pos_obs)
+
+        state = encode_state_with_discs(
+            ball_start_obs, hole_pos_obs, disc_positions, max_num_discs=max_num_discs
+        )
+        
+        speed, angle_deg = actor(state)
+        print(f"[EVAL] Hand-tuned action for episode {i}: speed={speed:.4f}, angle_deg={angle_deg:.4f}")
+  
+        # Apply same actuator noise as during training
+        if env_type == "sim":
+            speed_noise     = np.random.normal(0, SPEED_NOISE_STD)
+            angle_deg_noise = np.random.normal(0, ANGLE_NOISE_STD)
+            speed     = np.clip(speed + speed_noise,     speed_low,  speed_high)
+            angle_deg = np.clip(angle_deg + angle_deg_noise, angle_low, angle_high)
+
+
+            ball_x, ball_y, in_hole, meta = env_step(
+                angle_deg, speed, [x, y], mujoco_cfg, disc_positions
+            )
+            is_out_of_bounds = False
+
+        if env_type == "real":
+            result = env_step(impact_velocity=speed, swing_angle=angle_deg, ball_start_position=ball_start_obs, planner="quintic", check_rtt=True, chosen_hole=chosen_hole)
+            ball_x, ball_y, in_hole, meta = result
+            is_out_of_bounds = meta["out_of_bounds"]
+
+    
+        reward = compute_reward(
+            ball_end_xy=np.array([ball_x, ball_y]),
+            hole_xy=hole_pos,
+            in_hole=in_hole,
+            meta=meta,
+            is_out_of_bounds=is_out_of_bounds,
+            distance_scale=rl_cfg["reward"]["distance_scale"],
+            in_hole_reward=rl_cfg["reward"]["in_hole_reward"],
+            w_distance=rl_cfg["reward"]["w_distance"],
+            optimal_speed=rl_cfg["reward"]["optimal_speed"],
+            dist_at_hole_scale=rl_cfg["reward"]["dist_at_hole_scale"],
+            optimal_speed_scale=rl_cfg["reward"]["optimal_speed_scale"],
+        )
+
+        logging_record = {
+            "episode": i,
+            "time": time.time(),
+            "ball_start_obs": ball_start_obs,
+            "hole_pos_obs": hole_pos_obs,
+            "disc_positions": disc_positions,
+            "speed": speed,
+            "angle_deg": angle_deg,
+            "ball_final_pos": [ball_x, ball_y],
+            "in_hole": bool(in_hole),
+            "reward": reward,
+            # "dist_at_hole": meta.get("dist_at_hole", None),
+            # "speed_at_hole": meta.get("speed_at_hole", None),
+        }
+        episode_logger.log(logging_record)
+
+
+        rewards.append(reward)
+        successes += int(in_hole == 1)
+        distance_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
+        distances_to_hole.append(distance_to_hole)
+
+    avg_distance_to_hole = float(np.mean(distances_to_hole)) if distances_to_hole else 0.0
+    return successes / num_episodes, float(np.mean(rewards)), avg_distance_to_hole
 
 if __name__ == "__main__":
     print(np.array([get_hole_positions()[1]["x"], get_hole_positions()[1]["y"]]))

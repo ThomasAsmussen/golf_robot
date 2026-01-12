@@ -83,7 +83,7 @@ def get_ball_final_position(camera_index=0, chosen_hole=None, use_cam=True, debu
             frame_height=frame_height,
         )
     else:
-        img = cv2.imread("data/hole_test_50x30.jpg")
+        img = cv2.imread("data/OBS_ball_on_green/ball_on_green.png")
     h, w = img.shape[:2]
 
     # ------ DO ONCE (START) ------- #
@@ -265,6 +265,8 @@ def get_ball_final_position(camera_index=0, chosen_hole=None, use_cam=True, debu
     ball_final_position = np.array([bx, by])
     return ball_final_position
  
+
+
 if __name__ == "__main__":
-    ball_final_position = get_ball_final_position(camera_index=2, chosen_hole=1, use_cam=True, debug=True, operating_system="linux")
+    ball_final_position = get_ball_final_position(camera_index=2, chosen_hole=1, use_cam=False, debug=True, operating_system="linux")
     print("Ball final position (bx, by) from origo:", ball_final_position)

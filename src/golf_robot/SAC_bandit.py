@@ -60,6 +60,8 @@ def find_latest_sac_checkpoint(model_dir: Path, prefix: str | None = None):
         raise FileNotFoundError(f"Matching q1 not found for {actor_file.name}")
     if not q2_file.exists():
         raise FileNotFoundError(f"Matching q2 not found for {actor_file.name}")
+    
+    print(f"loaded sac actor from {actor_file}")
 
     return actor_file, q1_file, q2_file, (alpha_file if alpha_file.exists() else None)
 
@@ -111,6 +113,8 @@ def training(
     dist_at_hole_scale = rl_cfg["reward"]["dist_at_hole_scale"]
     optimal_speed_scale = rl_cfg["reward"]["optimal_speed_scale"]
 
+    hole_positions = get_hole_positions()
+
     # Wandb only in sim by default
     use_wandb = rl_cfg["training"]["use_wandb"] if env_type == "sim" else False
     model_name = rl_cfg["training"].get("model_name", None)
@@ -120,7 +124,7 @@ def training(
     # -------------------------
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    model_dir = project_root / "models" / "rl" / "bandit"
+    model_dir = project_root / "models" / "rl" / "sac"
     model_dir.mkdir(parents=True, exist_ok=True)
 
     if continue_training and env_type == "real":
@@ -191,7 +195,7 @@ def training(
     alpha_optimizer = torch.optim.Adam([log_alpha], lr=actor_lr)
 
     # Entropy target
-    target_entropy = -float(action_dim)
+    target_entropy = -6.0 #-float(action_dim)
 
     replay_buffer_big = ReplayBuffer(capacity=rl_cfg["training"]["replay_buffer_capacity"])
     replay_buffer_recent = ReplayBuffer(1000)
@@ -208,14 +212,14 @@ def training(
     last_success_rate = 0.0
     last_last_success_rate = 0.0
 
-    max_num_discs = 2
+    max_num_discs = 5
     stage_start_episode = 0
 
     episode_logger = None
     episode_log_path = None
 
     if env_type == "real":
-        episode_log_path = project_root / "log" / "real_episodes" / "episode_logger.jsonl"
+        episode_log_path = project_root / "log" / "sac" / "real_episodes" / "episode_logger.jsonl"
         episode_logger = EpisodeLoggerJsonl(episode_log_path)
 
         loaded_n = load_replay_from_jsonl(
@@ -236,7 +240,7 @@ def training(
     for episode in range(episodes):
 
         # Periodic eval (real): keep your existing trigger logic
-        if env_type == "real" and episode_logger.get_length() % 10000 == 0:
+        if env_type == "real" and episode_logger.get_length() % 1 == 0:
             (
                 success_rate_eval,
                 avg_reward_eval,
@@ -260,7 +264,7 @@ def training(
 
         # Sample context
         if env_type == "sim":
-            if last_success_rate > 0.9 and last_last_success_rate > 0.9 and False:
+            if last_success_rate > 0.9 and last_last_success_rate > 0.9 and True:
                 max_num_discs = min(MAX_DISCS, max_num_discs + 1)
                 last_success_rate = 0.0
                 last_last_success_rate = 0.0
@@ -274,9 +278,18 @@ def training(
             ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(
                 camera_index=camera_index_start
             )
+            original_hole_num = chosen_hole
 
-        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 5)
-        state_norm = scale_state_vec(state_vec)
+        MAX_DISCS_FEATS = 5  # must match encode_state_with_discs call
+
+        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, max_num_discs=MAX_DISCS_FEATS)
+        state_norm = scale_state_vec(state_vec) # 19 states
+        
+        if rl_cfg["model"]["state_dim"] == 37: # 37 states from augmented states
+            aug = augment_state_features(state_vec, max_num_discs=MAX_DISCS_FEATS, dist_clip=5.0)
+            aug_norm = scale_aug_features(aug, max_num_discs=MAX_DISCS_FEATS, dist_clip=5.0)
+
+            state_norm = np.concatenate([state_norm, aug_norm], axis=0)
 
         s = torch.tensor(state_norm, dtype=torch.float32, device=device)
 
@@ -362,15 +375,18 @@ def training(
         if using_all_holes:
             rewards = []
             for i, hole_pos_obs_try in enumerate([hole1, hole2, hole3]):
-                dist_at_hole = meta.get("dist_at_hole", None)
-                if dist_at_hole is not None:
-                    dist_at_hole_i = float(dist_at_hole[i])
+                dist_at_hole = meta["dist_at_hole"]
+                speed_at_hole = meta["speed_at_hole"]
+                if dist_at_hole is not None and dist_at_hole[i] is not None:
+                    dist_at_hole = float(dist_at_hole[i])
+                    speed_at_hole = float(speed_at_hole[i])
                 else:
-                    dist_at_hole_i = None
+                    continue
 
+                hole_pos_try = hole_pos_obs_try
                 reward_try = compute_reward(
                     ball_end_xy=np.array([ball_x, ball_y]),
-                    hole_xy=hole_pos_obs_try,
+                    hole_xy=hole_pos_try,
                     in_hole=in_hole,
                     meta=meta,
                     is_out_of_bounds=is_out_of_bounds,
@@ -380,7 +396,8 @@ def training(
                     optimal_speed=optimal_speed,
                     dist_at_hole_scale=dist_at_hole_scale,
                     optimal_speed_scale=optimal_speed_scale,
-                    multiple_dist_at_hole=dist_at_hole_i,
+                    multiple_dist_at_hole = dist_at_hole,
+                    multiple_speed_at_hole = speed_at_hole
                 )
                 rewards.append(reward_try)
         else:
@@ -399,6 +416,7 @@ def training(
             )
 
         # Real logging behavior kept
+
         if env_type == "real" and isinstance(meta, dict):
             used_for_training = bool(meta.get("used_for_training", True))
             out_of_bounds = bool(meta.get("out_of_bounds", False))
@@ -407,29 +425,41 @@ def training(
                 print("Episode discarded by user; not adding to replay buffer.")
                 continue
             else:
-                print("Storing episode")
+                print(f"Storing episode")
                 if using_all_holes:
+                    reward_count = 0
                     for i, hole_pos_obs_try in enumerate([hole1, hole2, hole3]):
+                        if meta["dist_at_hole"] is not None:
+                            dist_at_hole = meta["dist_at_hole"][i]
+                            speed_at_hole = meta["speed_at_hole"][i]
+                        if dist_at_hole is None:
+                            continue
+                        
+                        hole_pos_try = hole_pos_obs_try
+                        reward = rewards[reward_count]
+                        reward_count += 1
                         logging_dict = {
                             "episode": episode,
                             "time": time.time(),
                             "used_for_training": used_for_training,
                             "ball_start_obs": ball_start_obs.tolist(),
-                            "hole_pos_obs": hole_pos_obs_try.tolist(),
+                            "hole_pos_obs": hole_pos_try.tolist(),
                             "disc_positions": disc_positions,
                             "state_norm": state_norm.tolist(),
-                            "action_norm": a_noisy.detach().cpu().numpy().tolist(),
+                            "action_norm": a_noisy.cpu().numpy().tolist(),
                             "speed": speed,
                             "angle_deg": angle_deg,
                             "ball_final_pos": [ball_x, ball_y],
                             "in_hole": in_hole,
                             "out_of_bounds": out_of_bounds,
-                            "reward": rewards[i],
-                            "chosen_hole": i + 1,
-                            "dist_at_hole": meta["dist_at_hole"][i] if meta.get("dist_at_hole", None) is not None else None,
-                            "speed_at_hole": meta.get("speed_at_hole", None),
+                            "reward": reward,
+                            "chosen_hole": i+1,
+                            "aimed_hole": original_hole_num,
+                            "dist_at_hole": dist_at_hole,
+                            "speed_at_hole": speed_at_hole,
                             "exploring": True,
                         }
+                        # print(f"Logging episode data: {logging_dict}")
                         episode_logger.log(logging_dict)
                 else:
                     logging_dict = {
@@ -440,7 +470,7 @@ def training(
                         "hole_pos_obs": hole_pos_obs.tolist(),
                         "disc_positions": disc_positions,
                         "state_norm": state_norm.tolist(),
-                        "action_norm": a_noisy.detach().cpu().numpy().tolist(),
+                        "action_norm": a_noisy.cpu().numpy().tolist(),
                         "speed": speed,
                         "angle_deg": angle_deg,
                         "ball_final_pos": [ball_x, ball_y],
@@ -448,10 +478,12 @@ def training(
                         "out_of_bounds": out_of_bounds,
                         "reward": reward,
                         "chosen_hole": chosen_hole,
-                        "dist_at_hole": meta.get("dist_at_hole", None),
-                        "speed_at_hole": meta.get("speed_at_hole", None),
+                        "aimed_hole": original_hole_num,
+                        "dist_at_hole": meta["dist_at_hole"],
+                        "speed_at_hole": meta["speed_at_hole"],
                         "exploring": True,
                     }
+                    # print(f"Logging episode data: {logging_dict}")
                     episode_logger.log(logging_dict)
 
         # Store transition
@@ -459,10 +491,17 @@ def training(
         a_train = a_noisy.detach().cpu()
 
         if using_all_holes:
-            for i in range(3):
+            for i, hole_pos_obs_try in enumerate([hole1, hole2, hole3]):
+                if meta["dist_at_hole"] is not None:
+                    dist_at_hole = meta["dist_at_hole"][i]
+                    speed_at_hole = meta["speed_at_hole"][i]
+                if dist_at_hole is None:
+                    continue
                 replay_buffer_big.add(s_train, a_train, rewards[i])
                 replay_buffer_recent.add(s_train, a_train, rewards[i])
+                # -------------------------------------------------
         else:
+        # Store (s,a,r) in buffer 
             replay_buffer_big.add(s_train, a_train, reward)
             replay_buffer_recent.add(s_train, a_train, reward)
 
@@ -477,11 +516,12 @@ def training(
                 print("Updating networks...")
 
             for _ in range(grad_steps):
-                states_b, actions_b, rewards_b = sample_mixed(
+                states_b, actions_b, rewards_b = sample_mixed_zero_mean(
                     replay_buffer_recent,
                     replay_buffer_big,
                     recent_ratio=0.7,
                     batch_size=batch_size,
+                    ball_xy_idx=(0,1)
                 )
 
                 states_b  = states_b.to(device)
@@ -679,8 +719,10 @@ if __name__ == "__main__":
             "grad_steps":        rl_cfg["training"]["grad_steps"],
         }
 
+        project_name = rl_cfg["training"].get("project_name", "rl_golf_wandb")
         wandb.init(
-            project="rl_golf_contextual_bandit",
+            project=project_name, 
+            group="sac",  
             config={
                 **sweep_config,
                 "rl_config":     rl_cfg,

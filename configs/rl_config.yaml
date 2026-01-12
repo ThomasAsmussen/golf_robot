@@ -1,34 +1,35 @@
 training:
-  episodes: 30000
-  actor_lr: 0.001
-  critic_lr: 0.001
-  noise_std: 0.05
+  episodes: 20000
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  noise_std: 0.15
   batch_size: 64
-  grad_steps: 20
+  grad_steps: 4
   replay_buffer_capacity: 100000
-  use_wandb: False
+  use_wandb: True
+  project_name: "rl_golf_best"
   eval_interval: 50
   eval_episodes: 20
-  target_update_rho: 0.005
+  target_update_rho: 0.000
   continue_training: False
   error_hard_stop: True
-  do_prints: True
+  do_prints: False
   env_type: "sim"
   model_name: "morning_sweep_4.pth"
 
 model:
   state_dim: 19
   action_dim: 2
-  hidden_dim: 128
+  hidden_dim: 256
   speed_low: 1.0
   speed_high: 2.0
   angle_low: -20.0
   angle_high: 20.0
 
 reward:
-  distance_scale: 5.0
+  distance_scale: 3.0
   in_hole_reward: 3.0
   w_distance: 0.8
-  optimal_speed: 0.65
+  optimal_speed: 0.8
   dist_at_hole_scale: 5.0
-  optimal_speed_scale: 5.0
+  optimal_speed_scale: 2.0

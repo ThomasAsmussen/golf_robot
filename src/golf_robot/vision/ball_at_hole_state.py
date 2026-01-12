@@ -115,6 +115,7 @@ def process_video(
     chosen_hole=None,
     real_time_show=True,
     GUI_mode = True,
+    compute_all_holes=False
 ):
     """
     Run ball detection + Kalman tracking on a single video.
@@ -137,6 +138,7 @@ def process_video(
         sys.exit(1)
 
     src_fps = cap.get(cv2.CAP_PROP_FPS)
+    print(f"Source video FPS: {src_fps:.2f}")
     if not src_fps or src_fps <= 1e-3:
         print("Warning: FPS not found; defaulting to 30.")
         src_fps = 30.0
@@ -198,6 +200,15 @@ def process_video(
     offset_y = 0.0 - 0.13509415128381785
 
     # Load hole center from saved config and convert to "origo" frame
+    if compute_all_holes:
+        hole_positions = []
+        for hole_idx in range(2,4):
+            hu, hv = load_hole_center_px(hole_idx, path="data/holes_pixel_config.json")
+            hole_x, hole_y = pixel_to_plane(hu, hv, H_plane_corrected)
+            hole_xo, hole_yo = to_origo_frame(hole_x, hole_y, ref_x, ref_y, offset_x, offset_y)
+            hole_positions.append( (hole_xo, hole_yo) )
+            print(f"Hole {hole_idx} (origo frame): x={hole_xo:.4f} m, y={hole_yo:.4f} m")
+    
     hu, hv = load_hole_center_px(chosen_hole, path="data/holes_pixel_config.json")
     hole_x, hole_y = pixel_to_plane(hu, hv, H_plane_corrected)
     hole_xo, hole_yo = to_origo_frame(hole_x, hole_y, ref_x, ref_y, offset_x, offset_y)
@@ -306,7 +317,7 @@ def process_video(
          
         #blurred[~(mask_sat & mask_hue)] = (0, 0, 0) # Filtered
         
-        mask_hsv = cv2.inRange(hsv, (1, 150, 0), (10, 255, 255))
+        mask_hsv = cv2.inRange(hsv, (1, 150, 100), (15, 255, 255))
         #filtered = cv2.bitwise_and(blurred, blurred, mask=mask_hsv) # Dont do this, use binary mask directly for computation speed
         
         # F) Morphology
@@ -426,12 +437,22 @@ def process_video(
                         spd = float(np.hypot(vx, vy))
                         bx = float(xs_hist[idx_cross])
                         by = float(ys_hist[idx_cross])
-                        dist = float(np.hypot(bx - hole_xo, by - hole_yo))
+                        if compute_all_holes:
+                            dist = []
+                            for hole_xo_i, hole_yo_i in hole_positions:
+                                d_i = float(np.hypot(bx - hole_xo_i, by - hole_yo_i))
+                                dist.append(d_i)
+                        else:
+                            dist = float(np.hypot(bx - hole_xo, by - hole_yo))
 
                         print("\n=== Crossing detected (x crosses hole_x) ===")
                         print(f"idx={idx_cross}, t={ts_hist[idx_cross]:.3f}s")
                         print(f"Ball pos (filtered): x={bx:.4f} m, y={by:.4f} m")
-                        print(f"Distance to hole: {dist:.4f} m")
+                        if compute_all_holes:
+                            for i, d_i in enumerate(dist):
+                                print(f"Distance to hole {i+1}: {d_i:.4f} m")
+                        else:
+                            print(f"Distance to hole: {dist:.4f} m")
                         print(f"Velocity (gradient of filtered pos): vx={vx:.3f} m/s, vy={vy:.3f} m/s, speed={spd:.3f} m/s\n")
                         
                         crossed_once = True
@@ -505,6 +526,7 @@ def process_video(
         # --- store only after KF has initialized ---
         if filt_x is not None:
             t_s = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+            print(f"FPS: {1/ (t_s+1e-6):.2f}", end='\r')
             ball_times.append(t_s)
             ball_world.append((filt_x, filt_y))
             ball_vel.append((filt_vx, filt_vy))
@@ -594,12 +616,14 @@ def process_video(
     # #return ts, xs, ys, vxs, vys, speed, csv_path
     
 if __name__ == "__main__":
-    video_path = "data/OBS_saved_replay_buffer/Replay 2026-01-03 20-23-28.mp4"
+    video_path = "data/OBS_saved_replay_buffer/Replay_2026-01-08_09-59-35.mp4"
 
     process_video(
         video_path,
-        chosen_hole=2,
-        real_time_show=True,   # turn off GUI if running batch
+        chosen_hole=3,
+        real_time_show=True,
+        GUI_mode=False,   # turn off GUI if running batch
+        compute_all_holes=True
     )
 
     #print("Trajectory CSV:", csv_path)

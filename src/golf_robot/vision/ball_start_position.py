@@ -4,8 +4,8 @@ import numpy as np
 from vision.ball_position_detection import detect_ball_position
 from vision.vision_utils import apply_white_balance, compute_wb_gains_from_corners, rectify_with_chessboard, load_camera_params, pixel_to_plane, plane_to_pixel
 
-#from ball_position_detection import detect_ball_position
-#from vision_utils import apply_white_balance, compute_wb_gains_from_corners, rectify_with_chessboard, load_camera_params, pixel_to_plane, plane_to_pixel
+# from ball_position_detection import detect_ball_position
+# from vision_utils import apply_white_balance, compute_wb_gains_from_corners, rectify_with_chessboard, load_camera_params, pixel_to_plane, plane_to_pixel
 
 def capture_single_frame(
     camera_index: int,
@@ -126,7 +126,7 @@ def get_ball_start_position(debug=True, return_debug_image=False, debug_raw=Fals
 
 
     # Find ball position
-    ball_position = detect_ball_position(img_wb, debug=False,high_hue=20, sat_thresh=200, val_thresh_bool=True,val_thresh=130) # low_hue=1,high_hue=10,sat_thresh=150,min_area=50, circularity_thresh=0.45,
+    ball_position = detect_ball_position(img_wb, debug=False,hue_high=20, sat_low=200, val_low=130) # low_hue=1,high_hue=10,sat_thresh=150,min_area=50, circularity_thresh=0.45,
 
     print(ball_position)
     if ball_position is None:
@@ -219,6 +219,6 @@ def get_ball_start_position(debug=True, return_debug_image=False, debug_raw=Fals
     return (dx, dy)
 
 if __name__ == "__main__":
-    dx, dy = get_ball_start_position(debug = True, use_cam=True, debug_raw=True, camera_index=1, operating_system="windows")
+    dx, dy = get_ball_start_position(debug = True, use_cam=True, debug_raw=True, camera_index=2, operating_system="linux")
     
     print("Ball start position (dx, dy) from origo:", dx, dy)

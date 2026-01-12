@@ -1,0 +1,25 @@
+program: src/golf_robot/SAC_bandit.py  # <-- adjust if filename differs
+method: grid   # bayes or grid or "random" if you prefer
+
+metric:
+  name: final_success_rate
+  goal: maximize
+
+parameters:
+  in_hole_reward:
+    values: [3.0, 5.0]
+
+  distance_scale: # exp(-values[n]*distance)
+    values: [3.0, 5.0]
+
+  w_distance: # w_distance = values[n], w_speed = 1-values[n]
+    values: [0.5, 0.8]
+
+  optimal_speed: 
+    values: [0.65, 0.9]
+
+  dist_at_hole_scale: # exp(-values[n]*dist)
+    values: [0.5, 5.0]
+
+  optimal_speed_scale: # exp(-values[n]*speed)
+    values: [2.0, 5.0]

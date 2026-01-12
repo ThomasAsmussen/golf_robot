@@ -362,6 +362,7 @@ def impact_joint_config_from_direction(q_hit_ref, impact_dir_xy, ball_center=[0.
     v         = v / n  # normalize
     theta_tar = np.arctan2(v[1], v[0])                # target angle in xy-plane
     theta_ref = np.arctan2(R_ref[1, 0], R_ref[0, 0])  # Reference zero angle
+    theta_ref += np.deg2rad(0.0)  # debug offset
     dtheta    = wrap_pi(theta_tar - theta_ref)                 # angle difference
 
     R_des = rotation_z(dtheta) @ R_ref  # desired rotation matrix in world frame
@@ -502,7 +503,8 @@ def generate_trajectory(impact_speed, impact_angle, ball_x_offset, ball_y_offset
     q0_end  = np.array([np.deg2rad(-87.65),  np.deg2rad(-135.05), np.deg2rad(-108.29), np.deg2rad(85.72), np.deg2rad(4.39),  np.deg2rad(-12.23)])
     
     # q0_hit  = np.array([-2.18480298, -2.68658532, -1.75772109,  1.30184109,  0.61400683,  0.50125856])  # reference impact joint config (+X direction)
-    q0_hit  = np.array([-2.11202641, -2.45037247, -1.67584054,  0.95906874,  0.53322783,  0.36131151])
+    q0_hit  = np.array([-2.11202641, -2.45037247, -1.67584054,  0.95906874,  0.53322783,  0.36131151])  # From 8th Jan
+    # q0_hit    = np.array([-2.24881973, -2.4917556,  -1.57452762,  0.90943969,  1.01899601,  0.34730125])
     q0_hit  = move_point_xyz(ball_x_offset, ball_y_offset, 0.01, q0_hit, q0_hit)[0]  # unwrap to near reference
     # possible_start_points = []
     # possible_end_points   = []
