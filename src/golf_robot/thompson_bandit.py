@@ -39,6 +39,7 @@ def cem_plan_action(
     init_std=0.4,
     min_std=0.1, #0.1
     init_mu=None,
+    return_stats=False,
 ):
     elite_n = max(1, int(round(cem_pop * cem_elite_frac)))
 
@@ -68,7 +69,9 @@ def cem_plan_action(
         if best_score is None or topk.values[0].item() > best_score:
             best_score = topk.values[0].item()
             best_a = elite_a[0].detach()
-
+    
+    if return_stats:
+        return best_a, {"cem_mu": mu.detach(), "cem_std": std.detach(), "best_score": float(best_score)}
     return best_a
 
 
@@ -403,7 +406,7 @@ def training2(
             return torch.minimum(q1, q2)
 
         init_mu = a_prev if (use_cem_warm_start and a_prev is not None) else None
-        a_norm = cem_plan_action(
+        a_norm, cem_stats = cem_plan_action(
             s=s,
             score_fn=score_fn,
             action_dim=action_dim,
@@ -414,6 +417,7 @@ def training2(
             init_std=cem_init_std,
             min_std=cem_min_std,
             init_mu=init_mu,
+            return_stats=True,
         )
         a_prev = a_norm.detach()
 
@@ -481,6 +485,41 @@ def training2(
             dist_at_hole_scale=dist_at_hole_scale,
             optimal_speed_scale=optimal_speed_scale,
         ))
+
+        # ---- compute some extra metrics for logging
+        with torch.no_grad():
+            s1 = s.unsqueeze(0)
+            a1 = a_norm.unsqueeze(0)
+            q1s = torch.stack([c(s1, a1).squeeze() for c in critics1]).mean().item()
+            q2s = torch.stack([c(s1, a1).squeeze() for c in critics2]).mean().item()
+            q_min = min(q1s, q2s)
+
+        log_payload = {
+            "reward": float(reward),
+            "in_hole": float(in_hole),
+            "out_of_bounds": float(is_out_of_bounds) if env_type == "real" else 0.0,
+            "ball_x": float(ball_x),
+            "ball_y": float(ball_y),
+            "speed": float(speed),
+            "angle_deg": float(angle_deg),
+            "thompson_head": int(head),
+            "q1_mean": q1s,
+            "q2_mean": q2s,
+            "q_min": q_min,
+            "replay_big_size": len(replay_buffer_big.data),
+            "replay_recent_size": len(replay_buffer_recent.data),
+        }
+        if isinstance(meta, dict):
+            if meta.get("dist_at_hole") is not None:
+                log_payload["dist_at_hole"] = float(meta["dist_at_hole"])
+            if meta.get("speed_at_hole") is not None:
+                log_payload["speed_at_hole"] = float(meta["speed_at_hole"])
+
+        log_payload.update({
+            "cem_best_score": cem_stats["best_score"],
+            "cem_std_mean": float(cem_stats["cem_std"].mean().item()),
+            "cem_std_max": float(cem_stats["cem_std"].max().item()),
+        })
 
         # -------------------------------------------------
         # Real logging
@@ -568,10 +607,9 @@ def training2(
         if rl_cfg["training"].get("do_prints", False):
             print("========================================")
             print(f"Episode {episode + 1}/{episodes}, Reward: {reward:.4f}, TS head: {head}")
-
         if use_wandb:
             step = (global_ep0 + episode) if env_type == "real" else episode
-            wandb.log({"reward": float(reward), "thompson_head": int(head)}, step=step)
+            wandb.log(log_payload, step=step)
 
 
     # -------------------------------------------------
