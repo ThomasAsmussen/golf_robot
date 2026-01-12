@@ -15,7 +15,7 @@ models/rl/ddpg/
 models/rl/bandit/
 models/rl/older/
 data/
-models/
+models/mujoco/golf_world_tmp*.xml
 srs/golf_robot/vision/
 # Mac OS-specific storage files
 .DS_Store

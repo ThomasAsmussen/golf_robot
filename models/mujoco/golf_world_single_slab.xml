@@ -1,12 +1,11 @@
 <mujoco model="golf_world">
   <compiler angle="degree"/>
-  <!-- <option timestep="0.002" gravity="0 0 -9.81" integrator="RK4"/> -->
   <option timestep="0.002" gravity="0 0 -9.81" integrator="RK4" cone="elliptic"/>
 
   <!-- Defaults: enable 6D friction and make contacts crisp -->
   <default>
-    <geom condim="6" solref="0.002 1" solimp="0.95 0.99 0.001"
-          friction="0.30831 1.83703e-05 0.00081743"/> <!-- 0.6 0.001 0.0048 slide, spin, roll -->
+    <geom condim="4" solref="0.01 0.5" solimp="1 1 1"
+          friction="0.30831 0.30831 0.00081743"/> <!-- 0.6 0.001 0.0048 slide, spin, roll -->
   </default>
 
 
@@ -59,40 +58,19 @@
   <contact>
     <!-- Ball–club impact: set restitution ~0.62 via damp_ratio ≈ 0.1504 -->
     <pair geom1="ball_geom" geom2="club_head"
-          solref="0.014271934393272637 0.4087097102776629"  
-          solimp="0.7837685139716153 1.11639 0.00107829"/>
+          solref="0.01 0.5"  
+          solimp="0 0 0"
+          friction="0.0 0.00 0.00"/>
   </contact>
 
   
   <worldbody>
     <!-- ==== GROUND: 6x4 m area, 0.04 m thick, with a 0.106 m opening at (2, 0) ==== -->
     <!-- Top slab (y in [ +0.053, +2 ]) -->
-    <light name="sun_top"
-          pos="2 0 3"
-          dir="0 0 -1"
-          directional="true"
-          diffuse="1 1 1"
-          specular="0.2 0.2 0.2"
-          castshadow="true"/>
-          
     <geom name="green_plus_y" type="box"
-          pos="0 0 -0.02" size="0.5 0.5 0.02"
+          pos="0 0 -0.02" size="10 10 0.02"
           material="green_mat"/>
 
-    <!-- Bottom slab (y in [ -2, -0.053 ]) -->
-    <geom name="green_neg_y" type="box"
-          pos="2 0 -0.02" size="0.5 0.5 0.02"
-          material="green_mat"/>
-
-    <!-- Left slab (x in [ -3, 1.947 ]) material="green_mat" -->
-    <geom name="green_plus_x" type="box"
-          pos="0 1 -0.02" size="2 0.5 0.02"
-          material="green_mat"/>
-
-    <!-- Right slab (x in [ 2.053, 3 ]) -->
-    <geom name="green_neg_x" type="box"
-          pos="0 -1 -0.02" size="2 0.5 0.02"
-          material="green_mat"/>
 
     <!-- ==== CUP (27 convex OBJ wedges; no bottom) -0.110665 ==== -->
     <body name="cup" pos="2 0 -0.110665">
@@ -167,11 +145,13 @@
       <geom name="mount_inert" type="sphere" size="0.10" mass="5.0"
             rgba="0 0 0 0" contype="0" conaffinity="0"/>
 
-      <body name="club_offset" pos="-0.03 0.05 0.37865">
+  
+      <!-- <body name="club_offset" pos="0.0 0.0 0.37865"> -->
+      <body name="club_offset" pos="0.0 0.0 0.381355">
         <body name="club_link" pos="0 0 0">
           <joint name="club_hinge" type="hinge" axis="0 1 0" limited="true" range="-60 60" damping="0.1"/>
-          <geom name="club_shaft" type="capsule" fromto="0 0 0  0 0 -0.36" size="0.01" mass="1.0" material="club_mat"/>
-          <geom name="club_head"  type="box"    pos="0.0 -0.05 -0.36" size="0.02 0.05 0.03" mass="0.5" material="club_mat"/>
+          <geom name="club_shaft" type="capsule" fromto="0 0 0  0 0 -0.36" size="0.01" mass="1.0" material="club_mat" contype="0" conaffinity="0"/>
+          <geom name="club_head"  type="box"    pos="0.0 0.0 -0.36" size="0.02 0.05 0.03" mass="0.5" material="club_mat" contype="0" conaffinity="0"/>
         </body>
       </body>
     </body>

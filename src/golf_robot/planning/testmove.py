@@ -1,6 +1,6 @@
 import socket
 import time
-from kinematics import move_point_xyz
+from kinematics import move_point_xyz, rotation_z, fk_ur10, pick_ik_solution
 import numpy as np
 
 print(f"Start : {time.ctime()}")
@@ -18,9 +18,26 @@ q_start = np.array([np.deg2rad(-126.33), np.deg2rad(-139.79), np.deg2rad(-96.62)
 
 # q_start = np.array([-2.18539977, -2.44831034, -1.85033569,  1.15618144,  0.61460362,  0.50125766], dtype=float)
 q_start = move_point_xyz(0.05, -0.057, -0.005, q_start, q_start)[0]
-print(q_start)
-q_start = move_point_xyz(-0.2, -0.2, 0.0, q_start, q_start)[0]
+# print(q_start)
+# 1. FK of current pose
+T = fk_ur10(q_start)[-1]
 
+# 2. Rotate TCP about world Z by +5°
+Rz = rotation_z(np.deg2rad(20))
+T_rot = T.copy()
+T_rot[:3, :3] = Rz @ T[:3, :3]
+
+# 3. Solve IK near q_start
+q_rot, err = pick_ik_solution(T_rot, q_start)
+
+if q_rot is None or err == 1:
+    raise RuntimeError("IK failed for rotated TCP pose")
+
+q_start = q_rot
+# R_des = rotation_z(np.deg2rad(5))
+# q_start = move_point_xyz(0.0, 0.0, 0.0, q_start, q_start, R_desired=R_des)[0]
+# q_start = move_point_xyz(0.0, 0.0, 0.0, q_start, q_start)[0]
+print(q_start)
 s.send(f'movej({q_start.tolist()},0.2,0.2)\n'.encode())
 # s.send(b'movej([-2.18539977, -2.44831034, -1.85033569,  1.15618144,  0.61460362,  0.50125766],0.5,0.5)\n')
 # [-2.18539977 -2.40191466 -1.86085842  1.1203085   0.61460362  0.50125766]

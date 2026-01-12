@@ -37,6 +37,10 @@ SPEED_NOISE_STD: float = 0.05
 ANGLE_NOISE_STD: float = 0.1
 BALL_OBS_NOISE_STD: float = 0.002
 HOLE_OBS_NOISE_STD: float = 0.002
+# SPEED_NOISE_STD: float = 0.0
+# ANGLE_NOISE_STD: float = 0.0
+# BALL_OBS_NOISE_STD: float = 0.0
+# HOLE_OBS_NOISE_STD: float = 0.02
 
 MAX_DISCS = 2
 
@@ -915,6 +919,42 @@ def scale_state_vec(state_vec: Sequence[float]) -> np.ndarray:
     return np.array([ball_x_scaled, ball_y_scaled, hole_x_scaled, hole_y_scaled] + disc_scaled, dtype=float)
 
 
+def unscale_state_vec(state_norm: np.ndarray, *, max_num_discs: int) -> np.ndarray:
+    """
+    Inverse of scale_state_vec(): map normalized raw state back to meters.
+    Returns raw state layout:
+      [bx, by, hx, hy, d1x, d1y, p1, ..., dNx, dNy, pN]
+    """
+    s = np.asarray(state_norm, dtype=float).reshape(-1)
+
+    # --- ball + hole ---
+    bx = unscale_from_unit(s[0], MIN_BALL_X, MAX_BALL_X)
+    by = unscale_from_unit(s[1], MIN_BALL_Y, MAX_BALL_Y)
+    hx = unscale_from_unit(s[2], MIN_HOLE_X, MAX_HOLE_X)
+    hy = unscale_from_unit(s[3], MIN_HOLE_Y, MAX_HOLE_Y)
+
+    out = [bx, by, hx, hy]
+
+    # --- discs (x,y use the heuristic bounds you used when scaling) ---
+    disc_data = s[4:]
+    for i in range(int(max_num_discs)):
+        dxn = disc_data[3*i + 0]
+        dyn = disc_data[3*i + 1]
+        p   = float(disc_data[3*i + 2])
+
+        if p <= 0.0:
+            # absent disc: you encoded (-1,-1,p=0). There's no real x/y to recover.
+            dx, dy = 0.0, 0.0
+            p = 0.0
+        else:
+            dx = unscale_from_unit(dxn, MIN_HOLE_X - 2.0, MAX_HOLE_X)
+            dy = unscale_from_unit(dyn, MIN_HOLE_Y,      MAX_HOLE_Y)
+            p = 1.0
+
+        out.extend([dx, dy, p])
+
+    return np.asarray(out, dtype=float)
+
 # =========================================================
 # Context sampling (sim) — algorithm independent
 # =========================================================
@@ -1137,6 +1177,7 @@ def evaluation_policy_short(
     rewards            = []
     distances_to_hole  = []
     # max_num_discs = 5
+    print("Actor: ", actor)
     actor.eval()
     with torch.no_grad():
         for i in range(num_episodes):
@@ -1258,6 +1299,108 @@ def evaluation_policy_short(
     actor.train()
     return successes / num_episodes, float(np.mean(rewards)), avg_distance_to_hole
 
+
+def evaluation_policy_hand_tuned(
+    actor,
+    mujoco_cfg,
+    rl_cfg,
+    num_episodes,
+    max_num_discs=5,
+    env_step=None, 
+    env_type="sim",
+    input_func=None,
+):
+    
+    if env_step is None:
+        raise ValueError("evaluation_policy_hand_tuned() requires env_step.")
+    
+    speed_low  = rl_cfg["model"]["speed_low"]
+    speed_high = rl_cfg["model"]["speed_high"]
+    angle_low  = rl_cfg["model"]["angle_low"]
+    angle_high = rl_cfg["model"]["angle_high"]
+
+    here = Path(__file__).resolve().parent
+    project_root       = here.parents[1]
+    episode_log_path = project_root / "log" / f"{env_type}_episodes_eval" / f"episode_logger_eval_hand_tuned_{env_type}.jsonl"
+    episode_logger = EpisodeLoggerJsonl(episode_log_path)
+ 
+    successes          = 0
+    rewards            = []
+    distances_to_hole  = []
+
+    for i in range(num_episodes):
+        # New random context each eval episode
+        if env_type == "sim":
+            ball_start_obs, hole_pos_obs, disc_positions, x, y, hole_pos = sim_init_parameters(mujoco_cfg, max_num_discs)
+        
+        if env_type == "real":
+            ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(camera_index=4)
+            hole_pos = np.array(hole_pos_obs)
+
+        state = encode_state_with_discs(
+            ball_start_obs, hole_pos_obs, disc_positions, max_num_discs=max_num_discs
+        )
+        
+        speed, angle_deg = actor(state)
+        print(f"[EVAL] Hand-tuned action for episode {i}: speed={speed:.4f}, angle_deg={angle_deg:.4f}")
+  
+        # Apply same actuator noise as during training
+        if env_type == "sim":
+            speed_noise     = np.random.normal(0, SPEED_NOISE_STD)
+            angle_deg_noise = np.random.normal(0, ANGLE_NOISE_STD)
+            speed     = np.clip(speed + speed_noise,     speed_low,  speed_high)
+            angle_deg = np.clip(angle_deg + angle_deg_noise, angle_low, angle_high)
+
+
+            ball_x, ball_y, in_hole, meta = env_step(
+                angle_deg, speed, [x, y], mujoco_cfg, disc_positions
+            )
+            is_out_of_bounds = False
+
+        if env_type == "real":
+            result = env_step(impact_velocity=speed, swing_angle=angle_deg, ball_start_position=ball_start_obs, planner="quintic", check_rtt=True, chosen_hole=chosen_hole)
+            ball_x, ball_y, in_hole, meta = result
+            is_out_of_bounds = meta["out_of_bounds"]
+
+    
+        reward = compute_reward(
+            ball_end_xy=np.array([ball_x, ball_y]),
+            hole_xy=hole_pos,
+            in_hole=in_hole,
+            meta=meta,
+            is_out_of_bounds=is_out_of_bounds,
+            distance_scale=rl_cfg["reward"]["distance_scale"],
+            in_hole_reward=rl_cfg["reward"]["in_hole_reward"],
+            w_distance=rl_cfg["reward"]["w_distance"],
+            optimal_speed=rl_cfg["reward"]["optimal_speed"],
+            dist_at_hole_scale=rl_cfg["reward"]["dist_at_hole_scale"],
+            optimal_speed_scale=rl_cfg["reward"]["optimal_speed_scale"],
+        )
+
+        logging_record = {
+            "episode": i,
+            "time": time.time(),
+            "ball_start_obs": ball_start_obs,
+            "hole_pos_obs": hole_pos_obs,
+            "disc_positions": disc_positions,
+            "speed": speed,
+            "angle_deg": angle_deg,
+            "ball_final_pos": [ball_x, ball_y],
+            "in_hole": bool(in_hole),
+            "reward": reward,
+            # "dist_at_hole": meta.get("dist_at_hole", None),
+            # "speed_at_hole": meta.get("speed_at_hole", None),
+        }
+        episode_logger.log(logging_record)
+
+
+        rewards.append(reward)
+        successes += int(in_hole == 1)
+        distance_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
+        distances_to_hole.append(distance_to_hole)
+
+    avg_distance_to_hole = float(np.mean(distances_to_hole)) if distances_to_hole else 0.0
+    return successes / num_episodes, float(np.mean(rewards)), avg_distance_to_hole
 
 if __name__ == "__main__":
     print(np.array([get_hole_positions()[1]["x"], get_hole_positions()[1]["y"]]))
