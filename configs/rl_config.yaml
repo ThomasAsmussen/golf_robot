@@ -7,7 +7,7 @@ training:
   grad_steps: 4
   replay_buffer_capacity: 100000
   use_wandb: True
-  project_name: "no_noise_disc_3"
+  project_name: "no_noise_disc_4"
   eval_interval: 50
   eval_episodes: 20
   target_update_rho: 0.000
@@ -16,8 +16,8 @@ training:
   do_prints: False
   env_type: "sim"
   model_name: "revived_flower_8"
-  wandb_run_id: "no_noise_disc_3_id"
-  max_num_discs: 3
+  wandb_run_id: "no_noise_disc_4_id"
+  max_num_discs: 4
 
 model:
   state_dim: 19
