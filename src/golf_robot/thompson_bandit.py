@@ -203,7 +203,7 @@ def maybe_init_wandb(rl_cfg, mujoco_cfg):
 # ---------------------------------------------------------
 # Training loop
 # ---------------------------------------------------------
-def training2(
+def training(
     rl_cfg,
     mujoco_cfg,
     project_root,
