@@ -263,7 +263,7 @@ def training(
 
         # Sample context
         if env_type == "sim":
-            if last_success_rate > 0.9 and last_last_success_rate > 0.9 or True:
+            if last_success_rate > 0.9 and last_last_success_rate > 0.9 and False:
                 max_num_discs = min(MAX_DISCS, max_num_discs + 1)
                 last_success_rate = 0.0
                 last_last_success_rate = 0.0
