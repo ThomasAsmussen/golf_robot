@@ -7,7 +7,7 @@ training:
   grad_steps: 4
   replay_buffer_capacity: 100000
   use_wandb: True
-  project_name: "no_noise_disc_5"
+  project_name: "no_noise_disc_2_5rew"
   eval_interval: 50
   eval_episodes: 20
   target_update_rho: 0.000
@@ -16,8 +16,8 @@ training:
   do_prints: False
   env_type: "sim"
   model_name: "revived_flower_8"
-  wandb_run_id: "no_noise_disc_5_id"
-  max_num_discs: 5
+  wandb_run_id: "no_noise_disc_2_1_id"
+  max_num_discs: 2
 
 model:
   state_dim: 19
@@ -30,7 +30,7 @@ model:
 
 reward:
   distance_scale: 3.0
-  in_hole_reward: 3.0
+  in_hole_reward: 5.0
   w_distance: 0.8
   optimal_speed: 0.8
   dist_at_hole_scale: 5.0
