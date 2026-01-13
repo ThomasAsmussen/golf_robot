@@ -213,7 +213,7 @@ def training(
     last_success_rate = 0.0
     last_last_success_rate = 0.0
 
-    max_num_discs = 5
+    max_num_discs = rl_cfg["training"]["max_num_discs"]
     stage_start_episode = 0
 
     episode_logger = None
@@ -265,7 +265,7 @@ def training(
 
         # Sample context
         if env_type == "sim":
-            if last_success_rate > 0.9 and last_last_success_rate > 0.9 and True:
+            if last_success_rate > 0.9 and last_last_success_rate > 0.9 or True:
                 max_num_discs = min(MAX_DISCS, max_num_discs + 1)
                 last_success_rate = 0.0
                 last_last_success_rate = 0.0
