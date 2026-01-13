@@ -1,5 +1,5 @@
 training:
-  episodes: 20000
+  episodes: 50000
   actor_lr: 0.0003
   critic_lr: 0.0003
   noise_std: 0.15
@@ -7,7 +7,7 @@ training:
   grad_steps: 4
   replay_buffer_capacity: 100000
   use_wandb: True
-  project_name: "no_noise_disc_4"
+  project_name: "no_noise_disc_5"
   eval_interval: 50
   eval_episodes: 20
   target_update_rho: 0.000
@@ -16,8 +16,8 @@ training:
   do_prints: False
   env_type: "sim"
   model_name: "revived_flower_8"
-  wandb_run_id: "no_noise_disc_4_id"
-  max_num_discs: 4
+  wandb_run_id: "no_noise_disc_5_id"
+  max_num_discs: 5
 
 model:
   state_dim: 19
