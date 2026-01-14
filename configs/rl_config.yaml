@@ -7,16 +7,16 @@ training:
   grad_steps: 4
   replay_buffer_capacity: 100000
   use_wandb: True
-  project_name: "rl_golf_best"
+  project_name: "thompson_golf_robot_real"
   eval_interval: 50
   eval_episodes: 20
   target_update_rho: 0.000
-  continue_training: False
+  continue_training: True
   error_hard_stop: True
   do_prints: False
-  env_type: "sim"
+  env_type: "real"
   model_name: "revived_flower_8"
-  wandb_run_id: "real_robot_12_01"
+  wandb_run_id: "real_robot_14_01_2026_14_30"  # for continuing runs
 
 model:
   state_dim: 19

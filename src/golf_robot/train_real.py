@@ -16,7 +16,8 @@ from matplotlib.figure import Figure
 from PIL import Image, ImageTk
 import cv2
 #from contextual_bandit2 import training
-from SAC_bandit import training
+# from SAC_bandit import training
+from thompson_bandit import training2
 from vision.ball2hole_distance import get_ball_final_position
 from vision.ball_start_position import get_ball_start_position
 from planning.generate_trajectory_csv import generate_trajectory_csv
@@ -27,17 +28,18 @@ from gui.gui import *
 
 
 OPERATING_SYSTEM = "linux"  # "windows" or "linux"
-CAMERA_INDEX_START = 4  # starting camera index for real robot
+CAMERA_INDEX_START = 2  # starting camera index for real robot
 CAMERA_INDEX_END   = 2  # ending camera index for real robot
 # CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#7&23aa88cc&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
 #CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
 #CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
 END_POS = [-2.47, -2.38, -1.55, 1.66, 0.49, -0.26]
+algorithm = "thompson_bandit"  # "contextual_bandit2", "SAC_bandit", "thompson_bandit"
+planner = "quintic"
 
-
-def real_init_parameters(camera_index, chosen_hole=None):
+def real_init_parameters(camera_index, cap=None, chosen_hole=None):
     # Ball
-    bx, by, dbg = get_ball_start_position(debug=True, return_debug_image=True, debug_raw=False, use_cam=True, camera_index=camera_index, operating_system=OPERATING_SYSTEM)
+    bx, by, dbg = get_ball_start_position(debug=True, return_debug_image=True, debug_raw=False, use_cam=True, camera_index=camera_index, cap=cap, operating_system=OPERATING_SYSTEM)
     ball_start_position = np.array([bx, by])  # in meters
     print(f"ball_start_position: {ball_start_position}")
     
@@ -47,7 +49,7 @@ def real_init_parameters(camera_index, chosen_hole=None):
     # Holes
     if chosen_hole is None:
         chosen_hole = random.choice([1,2,3])
-        # chosen_hole = 1
+        #chosen_hole = 1
     # chosen_hole = 1  # for testing purposes
     here = Path(__file__).resolve().parent
     config_dir = here.parents[1] / "configs"
@@ -255,7 +257,10 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
                 dist_at_hole, speed_at_hole, xs, ys, hole_xo, hole_yo, bx, by = process_video(
                     video_path, chosen_hole=chosen_hole, real_time_show=False, compute_all_holes=False
                 )
-            if dist_at_hole is not None and traj_3_worked:
+            if not compute_all_holes and dist_at_hole is not None:
+                prompter.show_trajectory_plot(xs, ys, hole_xo, hole_yo, bx, by)
+
+            elif dist_at_hole is not None and traj_3_worked:
                 prompter.show_trajectory_plot(xs, ys, hole_xo, hole_yo, bx, by)
             #dist_at_hole, speed_at_hole = process_video(
             #    video_path, chosen_hole=chosen_hole,
@@ -302,10 +307,19 @@ def main():
     prompter = HumanPrompter(title="Golf Human Input")
 
     here = Path(__file__).resolve().parent
-    sim_dir = here / "simulation"
-    sys.path.append(str(sim_dir))
+    # sim_dir = here / "simulation"
+    # sys.path.append(str(sim_dir))
 
     obs_replay_start()
+
+    if OPERATING_SYSTEM == "windows":
+        cap = cv2.VideoCapture(CAMERA_INDEX_START, cv2.CAP_DSHOW)
+    else:
+        # Explicit V4L2 backend on Linux
+        cap = cv2.VideoCapture(CAMERA_INDEX_START, cv2.CAP_V4L2)
+
+    if not cap.isOpened():
+        raise RuntimeError(f"Failed to open camera with index {CAMERA_INDEX_START}")
 
     project_root       = here.parents[1]
     mujoco_config_path = project_root / "configs" / "mujoco_config.yaml"
@@ -320,7 +334,8 @@ def main():
     tmp_name = f"golf_world_tmp_{os.getpid()}_{uuid.uuid4().hex}"
 
     try:
-        training(
+        print("Starting training...")
+        training2(
             rl_cfg=rl_cfg,
             mujoco_cfg=mujoco_cfg,
             project_root=project_root,
@@ -330,7 +345,9 @@ def main():
             env_type="real",
             tmp_name=tmp_name,
             camera_index_start=CAMERA_INDEX_START,
+            cap=cap,
         )
+
     finally:
         # Always close the Tk window (even on exceptions / sys.exit)
         try:

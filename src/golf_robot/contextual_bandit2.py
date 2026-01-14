@@ -319,6 +319,11 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
 
             if not used_for_training:
                 print("Episode discarded by user; not adding to replay buffer.")
+                continue_training_ = meta.get("continue_training", True)
+                if not continue_training_:
+                    print("Training aborted by user.")
+                    break   # 👈 clean exit
+
                 continue
             else:
                 print(f"Storing episode")
