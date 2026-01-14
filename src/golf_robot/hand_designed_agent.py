@@ -1,3 +1,4 @@
+from turtle import distance
 import numpy as np
 from rl_common import unscale_state_vec
 
@@ -27,6 +28,6 @@ def hand_tuned_policy(state_vec: np.ndarray) -> np.ndarray:
 
     # Define a fixed power for the shot
     distance = np.linalg.norm(direction)
-    speed = min(distance * 0.42, 1.8)  # Scale power based on distance, capped at 1.8   
-
+    # speed = min(distance * 0.55, 2.0)  # Scale power based on distance, capped at 1.8   
+    speed = min(distance * 0.44, 1.8)
     return speed, angle_deg

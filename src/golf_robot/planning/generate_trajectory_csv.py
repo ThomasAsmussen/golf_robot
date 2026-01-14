@@ -11,15 +11,17 @@ import numpy as np
 import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
-from planning.kinematics import numeric_jacobian
-from planning.trajectory import tcp_path_from_Q, generate_trajectory
 
-# from kinematics import fk_ur10, numeric_jacobian
-# from trajectory import tcp_path_from_Q, generate_trajectory
+try:
+    from planning.kinematics import numeric_jacobian
+    from planning.trajectory import tcp_path_from_Q, generate_trajectory
+except ImportError:
+    from kinematics import fk_ur10, numeric_jacobian
+    from trajectory import tcp_path_from_Q, generate_trajectory
 
 # Toggle to True to show TCP position and TCP velocity plots after planning
 SAVE_PLOTS = False
-SHOW_PLOTS = True
+SHOW_PLOTS = False
 CSV_OUTPUT_PATH = 'log/trajectory_sim.csv'
 
 
@@ -512,8 +514,8 @@ def plot_tcp_path_with_waypoints(
 
 def main():
     csv_out = CSV_OUTPUT_PATH
-    impact_speed = 1.5  # m/s
-    impact_angle = 4.91  # desired impact angle (degrees)
+    impact_speed = 1.6  # m/s
+    impact_angle = 4.16  # desired impact angle (degrees)
     ball_x_offset = 0.0  # desired ball x offset
     ball_y_offset = 0.0  # desired ball y offset
 
