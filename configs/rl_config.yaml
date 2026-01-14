@@ -1,5 +1,5 @@
 training:
-  episodes: 10000
+  episodes: 20000
   actor_lr: 0.0003
   critic_lr: 0.0003
   noise_std: 0.15
