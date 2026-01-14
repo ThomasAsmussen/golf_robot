@@ -128,7 +128,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
     last_last_success_rate = 0.0
     # For now we don't actually place discs, but the state format reserves 5.
     
-    max_num_discs = 0
+    max_num_discs = rl_cfg["training"]["max_num_discs"]
     stage_start_episode = 0
     noise_std_stage_start = noise_std
 
@@ -179,7 +179,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
             )
         if env_type == "sim":
 
-            if last_success_rate > 0.9 and last_last_success_rate > 0.9:
+            if last_success_rate > 0.9 and last_last_success_rate > 0.9 or True:
                 max_num_discs = min(MAX_DISCS, max_num_discs + 1)
                 last_success_rate = 0.0
                 last_last_success_rate = 0.0

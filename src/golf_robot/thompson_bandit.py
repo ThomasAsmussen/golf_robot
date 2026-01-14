@@ -338,7 +338,7 @@ def training2(
     # Warm-start memory
     a_prev = None
 
-    max_num_discs = 5
+    max_num_discs = rl_cfg["training"]["max_num_discs"]
     last_success_rate = 0.0
     last_last_success_rate = 0.0
     log_dict = {}
@@ -364,7 +364,7 @@ def training2(
                 last_success_rate = success_rate_eval
                 
                 # Increment num_discs
-                if last_success_rate > 0.9 and last_last_success_rate > 0.9 and True:
+                if last_success_rate > 0.9 and last_last_success_rate > 0.9 or True:
                     max_num_discs = min(MAX_DISCS, max_num_discs + 1)
                     last_success_rate = 0.0
                     last_last_success_rate = 0.0
