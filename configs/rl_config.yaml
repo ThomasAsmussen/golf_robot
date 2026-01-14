@@ -1,5 +1,5 @@
 training:
-  episodes: 50000
+  episodes: 10000
   actor_lr: 0.0003
   critic_lr: 0.0003
   noise_std: 0.15
@@ -7,7 +7,7 @@ training:
   grad_steps: 4
   replay_buffer_capacity: 100000
   use_wandb: True
-  project_name: "no_noise_disc_2_5rew"
+  project_name: "fewer_neurons"
   eval_interval: 50
   eval_episodes: 20
   target_update_rho: 0.000
@@ -16,13 +16,13 @@ training:
   do_prints: False
   env_type: "sim"
   model_name: "revived_flower_8"
-  wandb_run_id: "no_noise_disc_2_1_id"
-  max_num_discs: 2
+  wandb_run_id: "fewer_neurons_id"
+  max_num_discs: 0
 
 model:
   state_dim: 19
   action_dim: 2
-  hidden_dim: 256
+  hidden_dim: 32
   speed_low: 1.0
   speed_high: 2.0
   angle_low: -20.0
