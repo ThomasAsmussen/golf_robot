@@ -18,8 +18,8 @@ source golf_venv/bin/activate
 
 # LSF array index is 1..N; convert to 0..N-1 for --shard-idx
 SHARD_IDX=$((LSB_JOBINDEX - 1))
-NUM_SHARDS=1
-
+NUM_SHARDS=78
+        
 # Run one shard of the grid
 python src/golf_robot/planning/optimize_start_end_offset.py \
   --speed-min 1.50 --speed-max 2.0 --speed-n 6 \
