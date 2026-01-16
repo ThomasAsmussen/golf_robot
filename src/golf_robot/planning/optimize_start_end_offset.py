@@ -124,8 +124,8 @@ TIME_PENALTY_DEFAULT = 0.3
 TIME_PENALTY_IMPACT  = 0.3
 
 # Optimization budget
-N_COARSE = 8          # random candidates in coarse search
-N_REFINE = 8          # random candidates around best found
+N_COARSE = 80          # random candidates in coarse search
+N_REFINE = 80          # random candidates around best found
 REFINE_SIGMA = np.array([0.05, 0.05, 0.05, 0.05, 0.05, 0.05])  # std for [sx,sy,sz, ex,ey,ez] in meters
 
 # Reproducibility
@@ -368,8 +368,9 @@ def optimize_start_end_for_condition(
     impact_angle_deg: float,
     ball_x_offset: float,
     ball_y_offset: float,
+    rng_seed: int = RNG_SEED,
 ) -> Dict[str, Any]:
-    rng = np.random.default_rng(RNG_SEED)
+    rng = np.random.default_rng(int(rng_seed))
 
     q_hit = build_q_hit(impact_speed, impact_angle_deg, ball_x_offset, ball_y_offset, Q0_HIT_REF)
     if q_hit is None:
@@ -607,21 +608,34 @@ if __name__ == "__main__":
     angles = np.linspace(args.angle_min, args.angle_max, args.angle_n).tolist()
     sa_grid = iter_speed_angle_grid(speeds, angles)
 
-    GRID_X_MIN, GRID_X_MAX, GRID_NX = 0.2, 0.2, 1
-    GRID_Y_MIN, GRID_Y_MAX, GRID_NY = 0.1, 0.1, 1
+    GRID_X_MIN, GRID_X_MAX, GRID_NX = 0.2, 0.2, 11
+    GRID_Y_MIN, GRID_Y_MAX, GRID_NY = 0.1, 0.1, 11
 
     ball_grid = iter_ball_offset_grid(GRID_X_MIN, GRID_X_MAX, GRID_NX,
                                  GRID_Y_MIN, GRID_Y_MAX, GRID_NY)
 
-    # Combine: each “condition” is (speed, angle, bx, by)
-    conditions = [(s, a, bx, by) for (s, a) in sa_grid for (bx, by) in ball_grid]
 
     # Take this shard’s slice
     shard_idx = int(args.shard_idx)
     num_shards = int(args.num_shards)
-    my_conditions = shard_items(conditions, shard_idx, num_shards)
+    sa_conditions = sa_grid
+    my_sa = shard_items(sa_conditions, shard_idx, num_shards)
 
-    out_jsonl = OUT_DIR / f"{tag}start_end_opt_{stamp}_shard{shard_idx:04d}of{num_shards:04d}.jsonl"
+    if len(my_sa) == 0:
+        print(f"[INFO] shard {shard_idx} got 0 (speed,angle) pairs. num_shards too large?")
+        raise SystemExit(0)
+
+    # If you set num_shards == len(sa_conditions), this will be exactly 1.
+    if len(my_sa) != 1:
+        print(f"[WARN] shard {shard_idx} got {len(my_sa)} speed/angle pairs. "
+            f"For exactly 1 per job, set num_shards={len(sa_conditions)}.")
+
+    speed, angle = my_sa[0]
+
+    print(f"[INFO] This job runs speed={speed:.4f}, angle={angle:+.3f}")
+    print(f"[INFO] Ball grid size: {len(ball_grid)}")
+
+    out_jsonl = OUT_DIR / f"{tag}start_end_opt_{stamp}_v{speed:.3f}_a{angle:+.2f}_shard{shard_idx:04d}of{num_shards:04d}.jsonl"
 
     append_jsonl(out_jsonl, {
         "type": "meta",
@@ -640,31 +654,30 @@ if __name__ == "__main__":
             "angle": {"min": args.angle_min, "max": args.angle_max, "n": args.angle_n},
             "ball_x": {"min": GRID_X_MIN, "max": GRID_X_MAX, "n": GRID_NX},
             "ball_y": {"min": GRID_Y_MIN, "max": GRID_Y_MAX, "n": GRID_NY},
-            "n_total_conditions": len(conditions),
+            "n_total_conditions": len(sa_conditions) * len(ball_grid),
             "shard_idx": shard_idx,
             "num_shards": num_shards,
-            "n_this_shard": len(my_conditions),
+            "n_this_shard": len(my_sa) * len(ball_grid),
         }
     })
 
-    print(f"[INFO] total conditions: {len(conditions)}")
-    print(f"[INFO] shard {shard_idx}/{num_shards} conditions: {len(my_conditions)}")
+    print(f"[INFO] total conditions: {len(sa_conditions) * len(ball_grid)}")
+    print(f"[INFO] shard {shard_idx}/{num_shards} conditions: {len(my_sa) * len(ball_grid)}")
     print(f"[INFO] writing: {out_jsonl}")
 
     n_ok = 0
     n_fail = 0
 
-    for i, (speed, angle, bx, by) in enumerate(my_conditions):
+    for j, (bx, by) in enumerate(ball_grid):
         seed = make_rng_seed(RNG_SEED, speed=speed, angle=angle, bx=bx, by=by)
 
-        res = optimize_start_end_for_condition(
-            speed, angle, bx, by,
-        )
+        res = optimize_start_end_for_condition(speed, angle, bx, by, rng_seed=seed)
 
-        record: Dict[str, Any] = {
+        record = {
             "type": "record",
             "shard_idx": shard_idx,
-            "local_idx": int(i),
+            "speed_angle_idx": shard_idx,
+            "ball_idx": int(j),
             "impact_speed": float(speed),
             "impact_angle_deg": float(angle),
             "ball_x_offset": float(bx),
@@ -684,12 +697,11 @@ if __name__ == "__main__":
                 "meta": b.get("meta", {}),
             })
             n_ok += 1
-            print(f"[{i+1:4d}/{len(my_conditions)}] ok  v={speed:.4f} a={angle:+.3f}  J={record['J']:.4f}")
+            print(f"[{j+1:4d}/{len(ball_grid)}] ok  v={speed:.4f} a={angle:+.3f}  J={record['J']:.4f}")
         else:
             record["problem"] = res.get("problem", "unknown")
             n_fail += 1
-            print(f"[{i+1:4d}/{len(my_conditions)}] FAIL v={speed:.4f} a={angle:+.3f} ({record['problem']})")
-
+            print(f"[{j+1:4d}/{len(ball_grid)}] FAIL v={speed:.4f} a={angle:+.3f} ({record['problem']})")
         append_jsonl(out_jsonl, record)
 
     print("[DONE]")
