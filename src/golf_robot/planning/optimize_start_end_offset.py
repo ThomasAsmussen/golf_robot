@@ -608,7 +608,7 @@ if __name__ == "__main__":
     angles = np.linspace(args.angle_min, args.angle_max, args.angle_n).tolist()
     sa_grid = iter_speed_angle_grid(speeds, angles)
 
-    GRID_X_MIN, GRID_X_MAX, GRID_NX = 0.2, 0.2, 11
+    GRID_X_MIN, GRID_X_MAX, GRID_NX = 0.2, 0.2, 21
     GRID_Y_MIN, GRID_Y_MAX, GRID_NY = 0.1, 0.1, 11
 
     ball_grid = iter_ball_offset_grid(GRID_X_MIN, GRID_X_MAX, GRID_NX,
