@@ -1,6 +1,6 @@
 #!/bin/sh
 #BSUB -q hpc
-#BSUB -J start_end_opt[1-100]
+#BSUB -J start_end_opt[1-65]
 #BSUB -n 1
 #BSUB -R "span[hosts=1]"
 #BSUB -R "rusage[mem=1GB]"
@@ -18,7 +18,7 @@ source golf_venv/bin/activate
 
 # LSF array index is 1..N; convert to 0..N-1 for --shard-idx
 SHARD_IDX=$((LSB_JOBINDEX - 1))
-NUM_SHARDS=2
+NUM_SHARDS=1
 
 # Run one shard of the grid
 python src/golf_robot/planning/optimize_start_end_offset.py \
