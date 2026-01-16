@@ -489,91 +489,91 @@ def append_jsonl(path: Path, obj: Dict[str, Any]) -> None:
 # Main
 # ------------------------------------------------------------
 
-if __name__ == "__main__":
-    stamp = time.strftime("%Y%m%d_%H%M%S")
+# if __name__ == "__main__":
+#     stamp = time.strftime("%Y%m%d_%H%M%S")
 
-    # ---------------------------
-    # Grid definition (EDIT THIS)
-    # ---------------------------
-    # These are OFFSETS applied via move_point_xyz in build_q_hit.
-    # If you want “ball start in meters in base frame”, you should convert that to offsets
-    # consistently with however your q0_hit_ref is defined.
-    GRID_X_MIN, GRID_X_MAX, GRID_NX = 0.2, 0.2, 21
-    GRID_Y_MIN, GRID_Y_MAX, GRID_NY = 0.1, 0.1, 11
+#     # ---------------------------
+#     # Grid definition (EDIT THIS)
+#     # ---------------------------
+#     # These are OFFSETS applied via move_point_xyz in build_q_hit.
+#     # If you want “ball start in meters in base frame”, you should convert that to offsets
+#     # consistently with however your q0_hit_ref is defined.
+#     GRID_X_MIN, GRID_X_MAX, GRID_NX = 0.2, 0.2, 21
+#     GRID_Y_MIN, GRID_Y_MAX, GRID_NY = 0.1, 0.1, 11
 
-    grid = iter_ball_offset_grid(GRID_X_MIN, GRID_X_MAX, GRID_NX,
-                                 GRID_Y_MIN, GRID_Y_MAX, GRID_NY)
+#     grid = iter_ball_offset_grid(GRID_X_MIN, GRID_X_MAX, GRID_NX,
+#                                  GRID_Y_MIN, GRID_Y_MAX, GRID_NY)
 
-    out_jsonl = OUT_DIR / f"start_end_opt_grid_{stamp}.jsonl"
+#     out_jsonl = OUT_DIR / f"start_end_opt_grid_{stamp}.jsonl"
 
-    # Optional: write a header/meta line (nice for provenance)
-    append_jsonl(out_jsonl, {
-        "type": "meta",
-        "time": stamp,
-        "impact_speed": float(IMPACT_SPEED),
-        "impact_angle_deg": float(IMPACT_ANGLE_DEG),
-        "grid": {
-            "x": {"min": GRID_X_MIN, "max": GRID_X_MAX, "n": GRID_NX},
-            "y": {"min": GRID_Y_MIN, "max": GRID_Y_MAX, "n": GRID_NY},
-        },
-        "bounds": {"start": START_BOUNDS, "end": END_BOUNDS},
-        "planner": {
-            "T_MAX_DEFAULT": float(T_MAX_DEFAULT),
-            "T_MAX_IMPACT": float(T_MAX_IMPACT),
-            "TIME_PENALTY_DEFAULT": float(TIME_PENALTY_DEFAULT),
-            "TIME_PENALTY_IMPACT": float(TIME_PENALTY_IMPACT),
-        },
-        "budget": {"N_COARSE": int(N_COARSE), "N_REFINE": int(N_REFINE), "RNG_SEED": int(RNG_SEED)},
-    })
+#     # Optional: write a header/meta line (nice for provenance)
+#     append_jsonl(out_jsonl, {
+#         "type": "meta",
+#         "time": stamp,
+#         "impact_speed": float(IMPACT_SPEED),
+#         "impact_angle_deg": float(IMPACT_ANGLE_DEG),
+#         "grid": {
+#             "x": {"min": GRID_X_MIN, "max": GRID_X_MAX, "n": GRID_NX},
+#             "y": {"min": GRID_Y_MIN, "max": GRID_Y_MAX, "n": GRID_NY},
+#         },
+#         "bounds": {"start": START_BOUNDS, "end": END_BOUNDS},
+#         "planner": {
+#             "T_MAX_DEFAULT": float(T_MAX_DEFAULT),
+#             "T_MAX_IMPACT": float(T_MAX_IMPACT),
+#             "TIME_PENALTY_DEFAULT": float(TIME_PENALTY_DEFAULT),
+#             "TIME_PENALTY_IMPACT": float(TIME_PENALTY_IMPACT),
+#         },
+#         "budget": {"N_COARSE": int(N_COARSE), "N_REFINE": int(N_REFINE), "RNG_SEED": int(RNG_SEED)},
+#     })
 
-    print(f"[INFO] Grid size: {len(grid)}")
-    print(f"[INFO] Writing JSONL to: {out_jsonl}")
+#     print(f"[INFO] Grid size: {len(grid)}")
+#     print(f"[INFO] Writing JSONL to: {out_jsonl}")
 
-    n_ok = 0
-    n_fail = 0
+#     n_ok = 0
+#     n_fail = 0
 
-    for i, (bx, by) in enumerate(grid):
-        # Run optimization for this ball offset
-        res = optimize_start_end_for_condition(
-            IMPACT_SPEED, IMPACT_ANGLE_DEG, bx, by
-        )
+#     for i, (bx, by) in enumerate(grid):
+#         # Run optimization for this ball offset
+#         res = optimize_start_end_for_condition(
+#             IMPACT_SPEED, IMPACT_ANGLE_DEG, bx, by
+#         )
 
-        # Convert into a compact JSONL “record” your trajectory generator can use
-        record: Dict[str, Any] = {
-            "type": "record",
-            "idx": int(i),
-            "impact_speed": float(IMPACT_SPEED),
-            "impact_angle_deg": float(IMPACT_ANGLE_DEG),
-            "ball_x_offset": float(bx),
-            "ball_y_offset": float(by),
-            "ok": bool(res.get("ok", False)),
-        }
+#         # Convert into a compact JSONL “record” your trajectory generator can use
+#         record: Dict[str, Any] = {
+#             "type": "record",
+#             "idx": int(i),
+#             "impact_speed": float(IMPACT_SPEED),
+#             "impact_angle_deg": float(IMPACT_ANGLE_DEG),
+#             "ball_x_offset": float(bx),
+#             "ball_y_offset": float(by),
+#             "ok": bool(res.get("ok", False)),
+#         }
 
-        if record["ok"]:
-            b = res["best"]
-            record.update({
-                # the thing you actually want to reuse later:
-                "start_off": b["start_off"],   # [sx, sy, sz]
-                "end_off": b["end_off"],       # [ex, ey, ez]
-                "peak_abs_ddq": float(b["peak_abs_ddq"]),
-                "total_T": float(b["total_T"]),
-                "J": float(b["J"]),
-                # optional provenance/debug
-                "meta": b.get("meta", {}),
-            })
-            n_ok += 1
-            print(f"[{i+1:4d}/{len(grid)}] ok  bx={bx:+.3f} by={by:+.3f}  J={record['J']:.4f}")
-        else:
-            record["problem"] = res.get("problem", "unknown")
-            n_fail += 1
-            print(f"[{i+1:4d}/{len(grid)}] FAIL bx={bx:+.3f} by={by:+.3f}  ({record['problem']})")
+#         if record["ok"]:
+#             b = res["best"]
+#             record.update({
+#                 # the thing you actually want to reuse later:
+#                 "start_off": b["start_off"],   # [sx, sy, sz]
+#                 "end_off": b["end_off"],       # [ex, ey, ez]
+#                 "peak_abs_ddq": float(b["peak_abs_ddq"]),
+#                 "total_T": float(b["total_T"]),
+#                 "J": float(b["J"]),
+#                 # optional provenance/debug
+#                 "meta": b.get("meta", {}),
+#             })
+#             n_ok += 1
+#             print(f"[{i+1:4d}/{len(grid)}] ok  bx={bx:+.3f} by={by:+.3f}  J={record['J']:.4f}")
+#         else:
+#             record["problem"] = res.get("problem", "unknown")
+#             n_fail += 1
+#             print(f"[{i+1:4d}/{len(grid)}] FAIL bx={bx:+.3f} by={by:+.3f}  ({record['problem']})")
 
-        append_jsonl(out_jsonl, record)
+#         append_jsonl(out_jsonl, record)
 
-    print("[DONE]")
-    print(f"  ok:   {n_ok}")
-    print(f"  fail: {n_fail}")
-    print(f"  wrote: {out_jsonl}")
+#     print("[DONE]")
+#     print(f"  ok:   {n_ok}")
+#     print(f"  fail: {n_fail}")
+#     print(f"  wrote: {out_jsonl}")
 
 
 if __name__ == "__main__":
@@ -638,8 +638,8 @@ if __name__ == "__main__":
         "grid": {
             "speed": {"min": args.speed_min, "max": args.speed_max, "n": args.speed_n},
             "angle": {"min": args.angle_min, "max": args.angle_max, "n": args.angle_n},
-            "ball_x": {"min": args.ball_x_min, "max": args.ball_x_max, "n": args.ball_nx},
-            "ball_y": {"min": args.ball_y_min, "max": args.ball_y_max, "n": args.ball_ny},
+            "ball_x": {"min": GRID_X_MIN, "max": GRID_X_MAX, "n": GRID_NX},
+            "ball_y": {"min": GRID_Y_MIN, "max": GRID_Y_MAX, "n": GRID_NY},
             "n_total_conditions": len(conditions),
             "shard_idx": shard_idx,
             "num_shards": num_shards,
@@ -659,7 +659,6 @@ if __name__ == "__main__":
 
         res = optimize_start_end_for_condition(
             speed, angle, bx, by,
-            rng_seed=seed,
         )
 
         record: Dict[str, Any] = {
