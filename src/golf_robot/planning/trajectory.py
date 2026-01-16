@@ -75,121 +75,384 @@ def eval_quintic(c, t):
     return q, dq, ddq
 
 
-def auto_time_and_discretize(q0, dq0, ddq0, qf, dqf, ddqf, T_max=8.0,):
+# def auto_time_and_discretize(q0, dq0, ddq0, qf, dqf, ddqf, T_max=8.0,):
+#     """
+#     Optimize trajectory time T to satisfy joint limits and environment constraints for given start and end states.
+
+#     Inputs:
+#         q0, dq0, ddq0: initial joint pos, vel, acc (6,)
+#         qf, dqf, ddqf: final joint pos, vel, acc (6,)
+#         T_max: maximum allowed time [s]
+
+#     Outputs:
+#         ts: time samples [s] (N,)
+#         Q: joint positions [rad] (N,6)
+#         dQ: joint velocities [rad/s] (N,6)
+#         ddQ: joint accelerations [rad/s^2] (N,6)
+#         feasible: bool flag indicating if a feasible trajectory was found
+#     """
+
+#     # Boundary conditions and dt from config
+#     q_min   = Q_MIN
+#     q_max   = Q_MAX
+#     dq_max  = DQ_MAX
+#     ddq_max = DDQ_MAX
+#     dt      = DT
+
+#     T = 1.5             # initial time guess
+#     growth_gain = 1.2   # time scaling if constraints violated
+    
+#     # Environment constraints (to avoid table, wall, floor)
+#     x_table = -0.25
+#     y_table = -0.25
+#     z_table =  0.2
+#     y_wall  = -1
+#     # z_floor = -0.733
+#     # z_floor = -0.729
+#     z_floor = -0.729
+#     z_floor += Z_PALLET
+
+#     feasible = False  # Feasibility flag
+#     problem = "None"  # Last problem encountered
+
+#     # Search starts with T_min and scales x1.2 until constraints are met or T_max hit
+#     while T <= T_max:
+
+#         # Compute quintic coefficients for each joint
+#         coeffs = np.vstack([quintic_coeffs(q0[i], dq0[i], ddq0[i], qf[i], dqf[i], ddqf[i], T) for i in range(6)])
+
+#         N   = int(np.floor(T / dt)) + 1  # number of samples
+#         ts  = np.linspace(0.0, T, N)     # time samples
+#         Q   = np.zeros((N, 6))           # joint positions
+#         dQ  = np.zeros_like(Q)           # joint velocities
+#         ddQ = np.zeros_like(Q)           # joint accelerations
+
+#         # Evaluate quintic at each time sample
+#         for i, t in enumerate(ts):
+#             for j in range(6):
+#                 Q[i,j], dQ[i,j], ddQ[i,j] = eval_quintic(coeffs[j], t)
+
+#         # Check constraints
+#         if np.any(Q < (q_min.reshape(1, -1))):
+#             T *= growth_gain
+#             problem = "Min q violated"
+#             continue
+#         if np.any(Q > (q_max.reshape(1, -1))):
+#             T *= growth_gain
+#             problem = "Max q violated"
+#             continue
+#         if np.any(np.abs(dQ) > (dq_max.reshape(1, -1))):
+#             T *= growth_gain
+#             problem = "Max dq violated"
+#             continue
+#         if np.any(np.abs(ddQ) > (ddq_max.reshape(1, -1))):
+#             T *= growth_gain
+#             problem = "Max ddq violated"
+#             continue
+
+#         ok = True
+
+#         # Forward kinematics for each time step and check for collisions
+#         for i in range(N):
+#             xyz_joints = fk_ur10(Q[i])   # 9 pose matrices (4x4): joints: 0-5, and club: short, mid, long
+
+#             for j in range(2, len(xyz_joints)):  # iterate from joint 2 to end effector
+#                 x, y, z = xyz_joints[j][:3, 3]   # extract position for current joint/end-effector
+
+#                 # Check crash against table, floor, and wall
+#                 if (x > x_table) and (y > y_table) and (z < z_table):
+#                     problem = f"Table crash, x={x}, y={y}, z={z}"
+#                     ok = False
+#                     break
+
+#                 if (z < z_floor):
+#                     problem = f"Floor crash, z={z}"
+#                     ok = False
+#                     break
+
+#                 if (y < y_wall):
+#                     problem = f"Wall crash, y={y}"
+#                     ok = False
+#                     break
+            
+#             # Break outer loop if collision detected
+#             if not ok:
+#                 break
+        
+#         # If any collision detected, increase T and retry
+#         if not ok:
+#             # T *= growth_gain
+#             # continue
+#             return None, None, None, None, False
+
+#         feasible = True
+#         return ts, Q, dQ, ddQ, feasible
+
+#     print(f"[WARNING]: No feasible path found. Last problem: {problem}")
+#     return None, None, None, None, feasible
+
+def plan_segment_start_to_hit(
+    q_start: np.ndarray,
+    q_hit: np.ndarray,
+    lin_velocity: np.ndarray,
+    *,
+    T_max: float = 5.0,
+    time_penalty: float = 0.5,
+):
     """
-    Optimize trajectory time T to satisfy joint limits and environment constraints for given start and end states.
-
-    Inputs:
-        q0, dq0, ddq0: initial joint pos, vel, acc (6,)
-        qf, dqf, ddqf: final joint pos, vel, acc (6,)
-        T_max: maximum allowed time [s]
-
-    Outputs:
-        ts: time samples [s] (N,)
-        Q: joint positions [rad] (N,6)
-        dQ: joint velocities [rad/s] (N,6)
-        ddQ: joint accelerations [rad/s^2] (N,6)
-        feasible: bool flag indicating if a feasible trajectory was found
+    Plan ONLY segment 0: q_start -> q_hit, enforcing the desired TCP velocity at impact
+    (i.e. at the END of the segment).
+    Returns: (segment_dict, Q, dQ, ddQ) or (None, None, None, None) on failure.
     """
+    q0   = np.asarray(q_start, float)
+    qf   = unwrap_to_seed_all(np.asarray(q_hit, float), q0)
+    dq0  = np.zeros(6)
+    ddq0 = np.zeros(6)
+    ddqf = np.zeros(6)
 
-    # Boundary conditions and dt from config
+    # Enforce TCP velocity at impact (end of segment)
+    dqf, v_tcp, feasible = joint_vel_from_tcp(qf, lin_velocity)
+    if not feasible:
+        print("[WARNING] Impact joint velocity (end of seg0) not feasible within joint limits.")
+        print(f"  Desired TCP velocity: {lin_velocity}, achievable: {v_tcp}")
+        return None, None, None, None
+
+    ts, Q, DQ, DDQ, feasible, T_seg = auto_time_and_discretize(
+        q0, dq0, ddq0, qf, dqf, ddqf,
+        T_max=T_max,
+        time_penalty=time_penalty,
+        T_search_mode="log_grid",
+        refine_steps=12,
+    )
+    if not feasible:
+        return None, None, None, None
+
+    seg = {"ts": ts, "Q": Q, "DQ": DQ, "DDQ": DDQ, "T": T_seg}
+    return seg, Q, DQ, DDQ
+
+
+def plan_segment_hit_to_end(
+    q_hit: np.ndarray,
+    q_end: np.ndarray,
+    lin_velocity: np.ndarray,
+    *,
+    T_max: float = 5.0,
+    time_penalty: float = 0.5,
+):
+    """
+    Plan ONLY segment 1: q_hit -> q_end, enforcing the desired TCP velocity at impact
+    (i.e. at the START of the segment).
+    Returns: (segment_dict, Q, dQ, ddQ) or (None, None, None, None) on failure.
+    """
+    q0   = np.asarray(q_hit, float)
+    qf   = unwrap_to_seed_all(np.asarray(q_end, float), q0)
+
+    # Enforce TCP velocity at impact (start of segment)
+    dq0, v_tcp, feasible = joint_vel_from_tcp(q0, lin_velocity)
+    if not feasible:
+        print("[WARNING] Impact joint velocity (start of seg1) not feasible within joint limits.")
+        print(f"  Desired TCP velocity: {lin_velocity}, achievable: {v_tcp}")
+        return None, None, None, None
+
+    ddq0 = np.zeros(6)
+    ddqf = np.zeros(6)
+
+    # End of follow-through: usually come to rest
+    dqf  = np.zeros(6)
+
+    ts, Q, DQ, DDQ, feasible, T_seg = auto_time_and_discretize(
+        q0, dq0, ddq0, qf, dqf, ddqf,
+        T_max=T_max,
+        time_penalty=time_penalty,
+        T_search_mode="log_grid",
+        refine_steps=12,
+    )
+    if not feasible:
+        return None, None, None, None
+
+    seg = {"ts": ts, "Q": Q, "DQ": DQ, "DDQ": DDQ, "T": T_seg}
+    return seg, Q, DQ, DDQ
+
+
+def auto_time_and_discretize(
+    q0, dq0, ddq0, qf, dqf, ddqf,
+    *,
+    T_max=8.0,
+    T_init=1.5,
+    growth_gain=1.2,
+    # --- objective: minimize peak |ddq| (+ optional time penalty) ---
+    time_penalty=0.001,     # objective = peak_ddq + time_penalty * T
+    refine_steps=10,      # more = more accurate optimum if time_penalty > 0
+    T_search_mode="log_grid",  # "log_grid" is robust
+    # --- evaluation sampling (dense, to not miss peaks) ---
+    sample_dt_max=0.002,
+    min_samples=200,
+):
+    """
+    For a single segment, choose T to satisfy constraints and minimize peak |ddq| (optionally penalize T).
+
+    Returns:
+        ts, Q, dQ, ddQ, feasible, T_final
+    """
+    # print(f"time_penalty: {time_penalty}")
     q_min   = Q_MIN
     q_max   = Q_MAX
     dq_max  = DQ_MAX
     ddq_max = DDQ_MAX
-    dt      = DT
 
-    T = 1.5             # initial time guess
-    growth_gain = 1.2   # time scaling if constraints violated
-    
+    dt_stream = DT  # keep returned arrays on your normal DT
+
     # Environment constraints (to avoid table, wall, floor)
     x_table = -0.25
     y_table = -0.25
     z_table =  0.2
     y_wall  = -1
-    # z_floor = -0.733
-    # z_floor = -0.729
-    z_floor = -0.729
-    z_floor += Z_PALLET
+    z_floor = -0.729 + Z_PALLET
 
-    feasible = False  # Feasibility flag
-    problem = "None"  # Last problem encountered
+    def _choose_eval_dt(T):
+        # dense sampling so we don't miss the true ddq peak
+        dt_by_min_samples = T / max(1, (min_samples - 1))
+        return min(sample_dt_max, dt_by_min_samples)
 
-    # Search starts with T_min and scales x1.2 until constraints are met or T_max hit
-    while T <= T_max:
+    def _eval_dense(T):
+        dt_eval = _choose_eval_dt(T)
 
-        # Compute quintic coefficients for each joint
-        coeffs = np.vstack([quintic_coeffs(q0[i], dq0[i], ddq0[i], qf[i], dqf[i], ddqf[i], T) for i in range(6)])
+        coeffs = np.vstack([
+            quintic_coeffs(q0[i], dq0[i], ddq0[i], qf[i], dqf[i], ddqf[i], T)
+            for i in range(6)
+        ])
 
-        N   = int(np.floor(T / dt)) + 1  # number of samples
-        ts  = np.linspace(0.0, T, N)     # time samples
-        Q   = np.zeros((N, 6))           # joint positions
-        dQ  = np.zeros_like(Q)           # joint velocities
-        ddQ = np.zeros_like(Q)           # joint accelerations
+        N = int(np.floor(T / dt_eval)) + 1
+        ts = np.linspace(0.0, T, N)
 
-        # Evaluate quintic at each time sample
+        Q   = np.zeros((N, 6))
+        dQ  = np.zeros_like(Q)
+        ddQ = np.zeros_like(Q)
+
         for i, t in enumerate(ts):
             for j in range(6):
-                Q[i,j], dQ[i,j], ddQ[i,j] = eval_quintic(coeffs[j], t)
+                Q[i, j], dQ[i, j], ddQ[i, j] = eval_quintic(coeffs[j], t)
 
-        # Check constraints
-        if np.any(Q < (q_min.reshape(1, -1))):
-            T *= growth_gain
-            problem = "Min q violated"
-            continue
-        if np.any(Q > (q_max.reshape(1, -1))):
-            T *= growth_gain
-            problem = "Max q violated"
-            continue
-        if np.any(np.abs(dQ) > (dq_max.reshape(1, -1))):
-            T *= growth_gain
-            problem = "Max dq violated"
-            continue
-        if np.any(np.abs(ddQ) > (ddq_max.reshape(1, -1))):
-            T *= growth_gain
-            problem = "Max ddq violated"
-            continue
+        # Joint constraints
+        if np.any(Q < q_min.reshape(1, -1)):            return False, "Min q violated", None
+        if np.any(Q > q_max.reshape(1, -1)):            return False, "Max q violated", None
+        if np.any(np.abs(dQ) > dq_max.reshape(1, -1)):  return False, "Max dq violated", None
+        if np.any(np.abs(ddQ) > ddq_max.reshape(1, -1)):return False, "Max ddq violated", None
 
-        ok = True
-
-        # Forward kinematics for each time step and check for collisions
+        # Collision constraints
         for i in range(N):
-            xyz_joints = fk_ur10(Q[i])   # 9 pose matrices (4x4): joints: 0-5, and club: short, mid, long
-
-            for j in range(2, len(xyz_joints)):  # iterate from joint 2 to end effector
-                x, y, z = xyz_joints[j][:3, 3]   # extract position for current joint/end-effector
-
-                # Check crash against table, floor, and wall
+            xyz_joints = fk_ur10(Q[i])
+            for j in range(2, len(xyz_joints)):
+                x, y, z = xyz_joints[j][:3, 3]
                 if (x > x_table) and (y > y_table) and (z < z_table):
-                    problem = f"Table crash, x={x}, y={y}, z={z}"
-                    ok = False
-                    break
-
+                    return False, f"Table crash, x={x}, y={y}, z={z}", None
                 if (z < z_floor):
-                    problem = f"Floor crash, z={z}"
-                    ok = False
-                    break
-
+                    return False, f"Floor crash, z={z}", None
                 if (y < y_wall):
-                    problem = f"Wall crash, y={y}"
-                    ok = False
-                    break
-            
-            # Break outer loop if collision detected
-            if not ok:
-                break
-        
-        # If any collision detected, increase T and retry
-        if not ok:
-            # T *= growth_gain
-            # continue
-            return None, None, None, None, False
+                    return False, f"Wall crash, y={y}", None
 
-        feasible = True
-        return ts, Q, dQ, ddQ, feasible
+        peak_ddq = float(np.max(np.abs(ddQ)))  # peak absolute accel across all joints/time
+        return True, "None", peak_ddq
 
-    print(f"[WARNING]: No feasible path found. Last problem: {problem}")
-    return None, None, None, None, feasible
+    def _objective(peak_ddq, T):
+        return float(peak_ddq + time_penalty * T)
+
+    # ------------------------------------------------------------
+    # 1) Find first feasible T
+    # ------------------------------------------------------------
+    T = float(T_init)
+    problem = "None"
+    feasible_T = None
+    feasible_peak = None
+
+    while T <= T_max:
+        ok, problem, peak = _eval_dense(T)
+        if ok:
+            feasible_T = T
+            feasible_peak = peak
+            break
+        T *= growth_gain
+
+    if feasible_T is None:
+        print(f"[WARNING]: No feasible segment found. Last problem: {problem}")
+        return None, None, None, None, False, None
+
+    # ------------------------------------------------------------
+    # 2) Optimize T over [feasible_T, T_max]
+    # ------------------------------------------------------------
+    best_T = feasible_T
+    best_peak = feasible_peak
+    best_J = _objective(best_peak, best_T)
+
+    # If no time penalty, peak |ddq| almost always decreases with T => pick largest feasible T.
+    if time_penalty == 0.0:
+        ok, _, peak = _eval_dense(T_max)
+        if ok:
+            best_T = float(T_max)
+            best_peak = peak
+            best_J = _objective(best_peak, best_T)
+    else:
+        if T_search_mode == "log_grid":
+            Ts = np.geomspace(feasible_T, T_max, num=max(12, refine_steps))
+            for T_cand in Ts:
+                ok, _, peak = _eval_dense(float(T_cand))
+                if not ok:
+                    continue
+                J = _objective(peak, float(T_cand))
+                if J < best_J:
+                    best_J, best_T, best_peak = J, float(T_cand), peak
+        else:
+            # simple ternary-ish refinement
+            lo, hi = feasible_T, T_max
+            for _ in range(refine_steps):
+                m1 = lo + (hi - lo) / 3.0
+                m2 = hi - (hi - lo) / 3.0
+
+                ok1, _, p1 = _eval_dense(m1)
+                ok2, _, p2 = _eval_dense(m2)
+
+                if not ok1 and not ok2:
+                    lo = m1
+                    continue
+                if ok1:
+                    J1 = _objective(p1, m1)
+                    if J1 < best_J:
+                        best_J, best_T, best_peak = J1, m1, p1
+                if ok2:
+                    J2 = _objective(p2, m2)
+                    if J2 < best_J:
+                        best_J, best_T, best_peak = J2, m2, p2
+
+                if ok1 and ok2:
+                    if _objective(p1, m1) < _objective(p2, m2):
+                        hi = m2
+                    else:
+                        lo = m1
+                else:
+                    lo = m1
+
+    T_final = float(best_T)
+
+    # ------------------------------------------------------------
+    # 3) Return trajectory on DT grid (what the rest of your pipeline expects)
+    # ------------------------------------------------------------
+    coeffs = np.vstack([
+        quintic_coeffs(q0[i], dq0[i], ddq0[i], qf[i], dqf[i], ddqf[i], T_final)
+        for i in range(6)
+    ])
+
+    N_stream = int(np.floor(T_final / dt_stream)) + 1
+    ts = np.linspace(0.0, T_final, N_stream)
+
+    Q   = np.zeros((N_stream, 6))
+    dQ  = np.zeros_like(Q)
+    ddQ = np.zeros_like(Q)
+
+    for i, t in enumerate(ts):
+        for j in range(6):
+            Q[i, j], dQ[i, j], ddQ[i, j] = eval_quintic(coeffs[j], t)
+
+    return ts, Q, dQ, ddQ, True, T_final
 
 
 def joint_vel_from_tcp(q, v_lin, damping=1e-4):
@@ -223,64 +486,134 @@ def joint_vel_from_tcp(q, v_lin, damping=1e-4):
     return dq, v_tcp, feasible
 
 
-def plan_piecewise_quintic(waypoints, impact_idx, lin_velocity):
+# def plan_piecewise_quintic(waypoints, impact_idx, lin_velocity):
+#     """
+#     Simplified wrapper around auto_time_and_discretize.
+#     Inputs:
+#         waypoints: list of joint-space waypoints [rad] (list of (6,) arrays)
+#         impact: dict with impact parameters (or None)
+#     Returns: (segments, Q_all, dQ_all, ddQ_all)
+#     """
+#     segments    = []
+#     prev_end_dq = np.zeros(6)
+
+#     for seg in range(len(waypoints) - 1):
+#         # Initial conditions for this segment
+#         q0    = waypoints[seg]
+#         dq0   = prev_end_dq if seg > 0 else np.zeros(6)   
+#         ddq0  = np.zeros(6)
+
+#         # Final conditions for this segment
+#         qf    = unwrap_to_seed_all(waypoints[seg + 1], q0)
+#         # dqf dependent on whether this is the impact segment
+#         ddqf  = np.zeros(6)
+
+#         # If this segment ends at the impact waypoint, impose TCP velocity there
+#         if (seg + 1) == impact_idx:  
+#             dqf, v_tcp, feasible = joint_vel_from_tcp(qf, lin_velocity)
+
+#             # Check feasibility and warn if not feasible
+#             if not feasible:
+#                 print("[WARNING] Impact joint velocity is not feasible within joint limits.")
+#                 print(f"  Desired TCP velocity: {lin_velocity}, possible: {v_tcp}")
+#                 return None, None, None, None
+#         else:
+#             dqf = np.zeros(6)
+
+#         # print(f"ddq0: {ddq0}, ddqf: {ddqf}")
+#         # Given start and end conditions, plan the segment with time-scaling
+#         ts, Q, DQ, DDQ, feasible = auto_time_and_discretize(q0, dq0, ddq0, qf, dqf, ddqf, T_max=5.0)
+
+#         if not feasible:
+#             print(f"[ERROR] Could not find feasible trajectory for segment {seg} to {seg+1}.")
+#             return None, None, None, None
+        
+#         segments.append({'ts': ts, 'Q': Q, 'DQ': DQ, 'DDQ': DDQ})
+#         prev_end_dq = DQ[-1].copy()
+
+#     # Start with the first segment (include all points)
+#     Q_blocks   = [segments[0]['Q']]
+#     dQ_blocks  = [segments[0]['DQ']]
+#     ddQ_blocks = [segments[0]['DDQ']]
+
+#     # Append remaining segments, skipping duplicate first row
+#     for seg in segments[1:]:
+#         Q_blocks.append(seg['Q'][1:])
+#         dQ_blocks.append(seg['DQ'][1:])
+#         ddQ_blocks.append(seg['DDQ'][1:])
+
+
+#     # Stack into continuous trajectories
+#     Q_all   = np.vstack(Q_blocks)
+#     dQ_all  = np.vstack(dQ_blocks)
+#     ddQ_all = np.vstack(ddQ_blocks)
+
+#     return segments, Q_all, dQ_all, ddQ_all
+
+
+def plan_piecewise_quintic(
+    waypoints, impact_idx, lin_velocity,
+    *,
+    T_max_default=5.0,
+    T_max_impact=6.0,
+    time_penalty_default=0.5,
+    time_penalty_impact=0.5,
+):
     """
-    Simplified wrapper around auto_time_and_discretize.
-    Inputs:
-        waypoints: list of joint-space waypoints [rad] (list of (6,) arrays)
-        impact: dict with impact parameters (or None)
-    Returns: (segments, Q_all, dQ_all, ddQ_all)
+    Piecewise planner where EACH segment chooses its own optimal duration T
+    to minimize peak |ddq| (optionally plus time penalty).
     """
     segments    = []
     prev_end_dq = np.zeros(6)
 
     for seg in range(len(waypoints) - 1):
-        # Initial conditions for this segment
         q0    = waypoints[seg]
-        dq0   = prev_end_dq if seg > 0 else np.zeros(6)   
+        dq0   = prev_end_dq if seg > 0 else np.zeros(6)
         ddq0  = np.zeros(6)
 
-        # Final conditions for this segment
         qf    = unwrap_to_seed_all(waypoints[seg + 1], q0)
-        # dqf dependent on whether this is the impact segment
         ddqf  = np.zeros(6)
 
-        # If this segment ends at the impact waypoint, impose TCP velocity there
-        if (seg + 1) == impact_idx:  
-            dqf, v_tcp, feasible = joint_vel_from_tcp(qf, lin_velocity)
+        is_impact_seg = ((seg + 1) == impact_idx)
 
-            # Check feasibility and warn if not feasible
+        if is_impact_seg:
+            dqf, v_tcp, feasible = joint_vel_from_tcp(qf, lin_velocity)
             if not feasible:
                 print("[WARNING] Impact joint velocity is not feasible within joint limits.")
                 print(f"  Desired TCP velocity: {lin_velocity}, possible: {v_tcp}")
                 return None, None, None, None
+            T_max = T_max_impact
+            time_penalty = time_penalty_impact
         else:
             dqf = np.zeros(6)
+            T_max = T_max_default
+            time_penalty = time_penalty_default
 
-        # print(f"ddq0: {ddq0}, ddqf: {ddqf}")
-        # Given start and end conditions, plan the segment with time-scaling
-        ts, Q, DQ, DDQ, feasible = auto_time_and_discretize(q0, dq0, ddq0, qf, dqf, ddqf, T_max=5.0)
+        ts, Q, DQ, DDQ, feasible, T_seg = auto_time_and_discretize(
+            q0, dq0, ddq0, qf, dqf, ddqf,
+            T_max=T_max,
+            time_penalty=time_penalty,
+            T_search_mode="log_grid",
+            refine_steps=12,
+        )
 
         if not feasible:
-            print(f"[ERROR] Could not find feasible trajectory for segment {seg} to {seg+1}.")
+            print(f"[ERROR] Could not find feasible trajectory for segment {seg} -> {seg+1}.")
             return None, None, None, None
-        
-        segments.append({'ts': ts, 'Q': Q, 'DQ': DQ, 'DDQ': DDQ})
+
+        segments.append({'ts': ts, 'Q': Q, 'DQ': DQ, 'DDQ': DDQ, 'T': T_seg})
         prev_end_dq = DQ[-1].copy()
 
-    # Start with the first segment (include all points)
+    # Stitch segments (skip duplicate first row on later segments)
     Q_blocks   = [segments[0]['Q']]
     dQ_blocks  = [segments[0]['DQ']]
     ddQ_blocks = [segments[0]['DDQ']]
 
-    # Append remaining segments, skipping duplicate first row
     for seg in segments[1:]:
         Q_blocks.append(seg['Q'][1:])
         dQ_blocks.append(seg['DQ'][1:])
         ddQ_blocks.append(seg['DDQ'][1:])
 
-
-    # Stack into continuous trajectories
     Q_all   = np.vstack(Q_blocks)
     dQ_all  = np.vstack(dQ_blocks)
     ddQ_all = np.vstack(ddQ_blocks)
@@ -507,7 +840,8 @@ def generate_trajectory(impact_speed, impact_angle, ball_x_offset, ball_y_offset
     # q0_hit  = np.array([-2.18480298, -2.68658532, -1.75772109,  1.30184109,  0.61400683,  0.50125856])  # reference impact joint config (+X direction)
     q0_hit  = np.array([-2.11202641, -2.45037247, -1.67584054,  0.95906874,  0.53322783,  0.36131151])  # From 8th Jan
     # q0_hit    = np.array([-2.24881973, -2.4917556,  -1.57452762,  0.90943969,  1.01899601,  0.34730125])
-    q0_hit  = move_point_xyz(ball_x_offset, ball_y_offset, 0.01, q0_hit, q0_hit)[0]  # unwrap to near reference
+    # q0_hit  = move_point_xyz(ball_x_offset, ball_y_offset, 0.01, q0_hit, q0_hit)[0]  # unwrap to near reference
+    q0_hit  = move_point_xyz(ball_x_offset+0.005, ball_y_offset+0.02, 0.005, q0_hit, q0_hit)[0]  # unwrap to near reference
     # possible_start_points = []
     # possible_end_points   = []
     # for x in range(5):
@@ -516,10 +850,14 @@ def generate_trajectory(impact_speed, impact_angle, ball_x_offset, ball_y_offset
     #             possible_start_points.append(move_point_xyz(-0.6 + 0.05*x, -0.1 + 0.05*y, 0.15 + 0.03*z, q0_hit, q0_start)[0])
     #             possible_end_points.append(move_point_xyz(0.4 + 0.05*x, -0.1 + 0.05*y, 0.15 + 0.03*z, q0_hit, q0_end)[0])
         
-    possible_start_points = [move_point_xyz(-0.4, 0.0, 0.25, q0_hit, q0_start)[0]
+    # possible_start_points = [move_point_xyz(-0.4, 0.0, 0.25, q0_hit, q0_start)[0]
+    possible_start_points = [move_point_xyz(-0.36, 0.2, 0.236, q0_hit, q0_start)[0]
+    # possible_start_points = [move_point_xyz(-0.5, 0.152, 0.35, q0_hit, q0_start)[0]
     ]
 
-    possible_end_points = [move_point_xyz(0.5, 0.0, 0.25, q0_hit, q0_end)[0]
+    # possible_end_points = [move_point_xyz(0.5, 0.0, 0.1, q0_hit, q0_end)[0]
+    possible_end_points = [move_point_xyz(0.683, 0.127, 0.11, q0_hit, q0_end)[0]
+    # possible_end_points = [move_point_xyz(0.683, 0.127, 0.11, q0_hit, q0_end)[0]
                         #    move_point_xyz(0.5, 0.1, 0.25, q0_hit, q0_end)[0],
                         #    move_point_xyz(0.4, -0.1, 0.25, q0_hit, q0_end)[0],
                         #    move_point_xyz(0.4, 0.0, 0.30, q0_hit, q0_end)[0],
