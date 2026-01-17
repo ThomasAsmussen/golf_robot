@@ -3,16 +3,18 @@ Trajectory generation using quintic polynomials with automatic time-scaling to s
 """
 
 import numpy as np
-from planning.config import Q_MIN, Q_MAX, DQ_MAX, DDQ_MAX, DT, Z_PALLET
-from planning.utils import unwrap_to_seed_all, normalize
-from planning.kinematics import numeric_jacobian, fk_ur10, rotation_z, pick_ik_solution, move_point_xyz
 import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 
-# from config import Q_MIN, Q_MAX, DQ_MAX, DDQ_MAX, DT, Z_PALLET
-# from utils import unwrap_to_seed_all, normalize
-# from kinematics import numeric_jacobian, fk_ur10, rotation_z, pick_ik_solution, move_point_xyz
+try:
+    from planning.config import Q_MIN, Q_MAX, DQ_MAX, DDQ_MAX, DT, Z_PALLET
+    from planning.utils import unwrap_to_seed_all, normalize
+    from planning.kinematics import numeric_jacobian, fk_ur10, rotation_z, pick_ik_solution, move_point_xyz
+except ImportError:
+    from config import Q_MIN, Q_MAX, DQ_MAX, DDQ_MAX, DT, Z_PALLET
+    from utils import unwrap_to_seed_all, normalize
+    from kinematics import numeric_jacobian, fk_ur10, rotation_z, pick_ik_solution, move_point_xyz
 
 
 def quintic_coeffs(q0, dq0, ddq0, qf, dqf, ddqf, T):
@@ -536,7 +538,7 @@ def generate_trajectory(impact_speed, impact_angle, ball_x_offset, ball_y_offset
     
     ball_center = fk_ur10(q0_hit)[-1][:3, 3] + np.array([0.02133, 0.0, 0.0])  # TCP position at zero angle + offset
     q_hit = impact_joint_config_from_direction(q0_hit, impact_direction, ball_center=ball_center)
-    q_hit = move_point_xyz(0.0, 0.0, 0.0, q_hit, q_hit)[0]  # unwrap to near reference
+    q_hit = move_point_xyz(0.0, 0.0, -0.005, q_hit, q_hit)[0]  # unwrap to near reference
     # waypoints = [q_start, q_hit, q_end]
     # print("Q_HIT:")
     # print(q_hit)

@@ -21,7 +21,7 @@ from SAC_bandit import training
 from vision.ball2hole_distance import get_ball_final_position
 from vision.ball_start_position import get_ball_start_position
 from planning.generate_trajectory_csv import generate_trajectory_csv
-from planning_linear import send_swing
+from planning_linear.linear_planner import send_swing
 #from vision.record_camera import record_from_camera
 from vision.ball_at_hole_state import process_video
 from gui.gui import *
@@ -30,9 +30,11 @@ from hand_designed_agent import hand_tuned_policy
 
 
 OPERATING_SYSTEM = "linux"  # "windows" or "linux"
-CAMERA_INDEX_START = 4  # starting camera index for real robot
-CAMERA_INDEX_END   = 2  # ending camera index for real robot
-actor_name = "hand_tuned_policy"
+CAMERA_INDEX_START = 2  # starting camera index for real robot
+CAMERA_INDEX_END   = 4  # ending camera index for real robot
+actor_name = "hand_tuned_policy"  # "hand_tuned_policy", "SAC_bandit", "thompson_bandit", "contextual_bandit2"
+planner = "quintic"  # "quintic" or "linear"
+
 # CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#7&23aa88cc&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
 #CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
 #CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
@@ -50,8 +52,8 @@ def real_init_parameters(camera_index, chosen_hole=None):
     
     # Holes
     if chosen_hole is None:
-        # chosen_hole = random.choice([1,2,3])
-        chosen_hole = 2
+        #chosen_hole = random.choice([1,2,3])
+        chosen_hole = 3
     # chosen_hole = 1  # for testing purposes
     here = Path(__file__).resolve().parent
     config_dir = here.parents[1] / "configs"
@@ -83,73 +85,73 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
             print("Trajectory not feasible, aborting.")
             sys.exit(0)
             
-            if OPERATING_SYSTEM == "windows":
-                if check_rtt:
-                    out = subprocess.check_output(
-                        ["wsl", "ping", "-c", "3", "192.38.66.227"],
-                        text=True
-                    )
-
-                    rtts = [
-                        float(m.group(1))
-                        for m in re.finditer(r'time=([\d.]+)\s*ms', out)
-                    ]
-
-                    print("RTTs (ms):", rtts)
-                    print("avg:", sum(rtts)/len(rtts))
-            elif OPERATING_SYSTEM == "linux":
-                if check_rtt:
-                    out = subprocess.check_output(
-                        ["ping", "-c", "3", "192.38.66.227"], text=True
-                    )
-
-                    rtts = [
-                        float(m.group(1))
-                        for m in re.finditer(r'time=([\d.]+)\s*ms', out)
-                    ]
-
-                    print("RTTs (ms):", rtts)
-                    print("avg:", sum(rtts)/len(rtts))
-            
-            
-            prompter.confirm_or_exit("Ready to execute trajectory. Continue?")
-
-            here = Path(__file__).resolve().parent
-            traj_exe = here / "communication" / "traj_streamer"
-
-            if OPERATING_SYSTEM == "linux":
-                traj_cmd = [str(traj_exe)]
-
-            elif OPERATING_SYSTEM == "windows":
-                win_path = here / "communication" / "traj_streamer"
-                wsl_path = subprocess.check_output(
-                    ["wsl", "wslpath", "-a", str(win_path)],
+        if OPERATING_SYSTEM == "windows":
+            if check_rtt:
+                out = subprocess.check_output(
+                    ["wsl", "ping", "-c", "3", "192.38.66.227"],
                     text=True
-                ).strip()
-                traj_cmd = ["wsl", wsl_path]
-
-            else:
-                raise RuntimeError(f"Unsupported OS: {OPERATING_SYSTEM}")
-            
-            def run_traj():
-                return subprocess.run(
-                    traj_cmd,
-                    check=False,
-                    capture_output=False,
-                    text=True,
                 )
 
-            result = prompter.run_with_spinner("Shooting", run_traj)
+                rtts = [
+                    float(m.group(1))
+                    for m in re.finditer(r'time=([\d.]+)\s*ms', out)
+                ]
 
-            print("Trajectory streamer output:")
-            print(result.stdout)
+                print("RTTs (ms):", rtts)
+                print("avg:", sum(rtts)/len(rtts))
+        elif OPERATING_SYSTEM == "linux":
+            if check_rtt:
+                out = subprocess.check_output(
+                    ["ping", "-c", "3", "192.38.66.227"], text=True
+                )
+
+                rtts = [
+                    float(m.group(1))
+                    for m in re.finditer(r'time=([\d.]+)\s*ms', out)
+                ]
+
+                print("RTTs (ms):", rtts)
+                print("avg:", sum(rtts)/len(rtts))
+        
+        
+        prompter.confirm_or_exit("Ready to execute trajectory. Continue?")
+
+        here = Path(__file__).resolve().parent
+        traj_exe = here / "communication" / "traj_streamer"
+
+        if OPERATING_SYSTEM == "linux":
+            traj_cmd = [str(traj_exe)]
+
+        elif OPERATING_SYSTEM == "windows":
+            win_path = here / "communication" / "traj_streamer"
+            wsl_path = subprocess.check_output(
+                ["wsl", "wslpath", "-a", str(win_path)],
+                text=True
+            ).strip()
+            traj_cmd = ["wsl", wsl_path]
+
+        else:
+            raise RuntimeError(f"Unsupported OS: {OPERATING_SYSTEM}")
+        
+        def run_traj():
+            return subprocess.run(
+                traj_cmd,
+                check=False,
+                capture_output=False,
+                text=True,
+            )
+
+        result = prompter.run_with_spinner("Shooting", run_traj)
+
+        print("Trajectory streamer output:")
+        print(result.stdout)
 
 
     if planner == "linear":
         HOST = "192.38.66.227"   # UR10
         #PORT_logger = 30003
         PORT_cmd = 30002
-        time_sleep = 10.0
+        #time_sleep = 10.0
 
         # 1) Set up your logger on its own socket/connection
         # logger = UR10Logger(HOST, port=PORT_logger, log_folder="log")
@@ -163,26 +165,28 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
         print("Sending swing...")
         x_ball_origo=-0.64026
         ball_radius=0.021335
-        offset = 0.25 # 0.33 max
+        offset = 0.20 # 0.33 max
         z_buffer = 0.015
         x_start=x_ball_origo+ball_radius-offset   + ball_start_position[0]
         x_end=x_ball_origo+ball_radius+offset   + ball_start_position[0]
         y_ball_origo=-0.59278 #-0.546
         y_ball = y_ball_origo + ball_start_position[1]
         z_ball=0.15512+z_buffer #-0.006
-        # swing_meta = send_swing(traj_cmd, x_start=x_start, x_end=x_end,
-        #     y_ball=y_ball_origo, z_ball=z_ball,#0.01+Z_PALLET, #-0.040 old
-        #     path_angle_deg=swing_angle, attack_angle_deg=0.0,
-        #     vel=impact_velocity, acc=5.0)
 
-        swing_meta = prompter.run_with_spinner("Shooting", 
-            send_swing(traj_cmd, x_start=x_start, x_end=x_end,
-            y_ball=y_ball_origo, z_ball=z_ball,#0.01+Z_PALLET, #-0.040 old
+        swing_meta = send_swing(traj_cmd, x_start=x_start, x_end=x_end,
+            y_ball=y_ball, z_ball=z_ball,#0.01+Z_PALLET, #-0.040 old
             path_angle_deg=swing_angle, attack_angle_deg=0.0,
-            vel=impact_velocity, acc=5.0))
+            vel=impact_velocity, acc=4.5)
+
+        # swing_meta = prompter.run_with_spinner("Shooting", 
+        #     send_swing(traj_cmd, x_start=x_start, x_end=x_end,
+        #     y_ball=y_ball, z_ball=z_ball,#0.01+Z_PALLET, #-0.040 old
+        #     path_angle_deg=swing_angle, attack_angle_deg=0.0,
+        #     vel=impact_velocity, acc=5.0))
         
+
         # 3) Let the swing run and the logger collect a bit extra
-        time.sleep(time_sleep)   # 8.0 adjust to cover your full motion
+        # time.sleep(time_sleep)   # 8.0 adjust to cover your full motion
 
         # 4) Clean up
         try:
@@ -322,7 +326,8 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
         continue_evaluation = prompter.ask_yes_no("Continue evaluation?")
         if not continue_evaluation:
             print("Evaluation aborted by user")
-
+        ball_final_position = np.array([0.0, 0.0])  # safe default
+        in_hole = False
         meta = {
             "dist_at_hole": None,
             "speed_at_hole": None,
@@ -339,6 +344,7 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
 
 def load_correct_actor(actor_name, rl_cfg):
     # actor, device = load_actor(rl_cfg["training"]["model_name"], rl_cfg)
+    project_root = Path(__file__).parents[2]
     if actor_name == "hand_tuned_policy":
         print("Using hand-tuned policy")
         return hand_tuned_policy, None
@@ -348,8 +354,19 @@ def load_correct_actor(actor_name, rl_cfg):
         print("Using SAC bandit policy")
         
     elif actor_name == "thompson_bandit":
-        from thompson_bandit import load_actor
+        from thompson_bandit import find_latest_doublecritic_checkpoint, load_doublecritics, MeanPlannerActor
+        device = rl_cfg["training"].get("device", "cpu")
+        model_dir = project_root / "models" / "rl" / "dqn-bts"
+        print("Model dir:", model_dir)
+
+        c1_h0, tag_stem = find_latest_doublecritic_checkpoint(model_dir, prefix=None)
         print("Using Thompson bandit policy")
+        print("Continuing training from latest double-critic checkpoints:")
+        print(f"  Critic1_0 : {c1_h0.name}")
+        critics1, critics2, loaded_tag = load_doublecritics(model_dir, rl_cfg, tag_stem, device)
+        return MeanPlannerActor(critics1, critics2, rl_cfg, device).to(device), None
+
+        
     
     elif actor_name == "contextual_bandit2":
         from contextual_bandit2 import load_actor
@@ -378,17 +395,21 @@ def main():
         rl_cfg = yaml.safe_load(f)
 
     actor, device = load_correct_actor(actor_name, rl_cfg)
-    
+    device = "cpu"
     # actor = hand_tuned_policy
     try:
-        evaluation_policy_hand_tuned(actor, mujoco_cfg, rl_cfg, num_episodes=10, max_num_discs=0, env_step=run_real, env_type="real", input_func=real_init_parameters)
+        if actor_name == "hand_tuned_policy":
+            evaluation_policy_hand_tuned(actor, mujoco_cfg, rl_cfg, num_episodes=30, max_num_discs=0, env_step=run_real, env_type="real", input_func=real_init_parameters, planner=planner)
+        else:
+            evaluation_policy_short(actor, device, mujoco_cfg, rl_cfg, num_episodes=20, max_num_discs=0, env_step=run_real, env_type="real", input_func=real_init_parameters)
     finally:
         # Always close the Tk window (even on exceptions / sys.exit)
-        try:
-            prompter.close()
-            obs_replay_stop()
-        except Exception:
-            pass
+        if LOG_SHOTS:
+            try:
+                prompter.close()
+                obs_replay_stop()
+            except Exception:
+                pass
 
 if __name__ == "__main__":
     main()

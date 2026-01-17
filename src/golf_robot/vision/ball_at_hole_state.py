@@ -260,7 +260,7 @@ def process_video(
     crossed_once = False
     ROI_R = 140  # pixels (tune)
     GOLF_BALL_DIAM_M = 0.05
-    DIAM_TOL_M = 0.02
+    DIAM_TOL_M = 0.05
     INIT_CONSEC = 2
     init_streak = 0
 
@@ -616,11 +616,11 @@ def process_video(
     # #return ts, xs, ys, vxs, vys, speed, csv_path
     
 if __name__ == "__main__":
-    video_path = "data/OBS_saved_replay_buffer/Replay_2026-01-08_09-59-35.mp4"
+    video_path = "data/OBS_saved_replay_buffer/Replay_2026-01-13_15-18-40.mp4"
 
     process_video(
         video_path,
-        chosen_hole=3,
+        chosen_hole=1,
         real_time_show=True,
         GUI_mode=False,   # turn off GUI if running batch
         compute_all_holes=True

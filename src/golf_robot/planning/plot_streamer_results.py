@@ -14,6 +14,11 @@ Edit the PLANNED_CSV constant or the STREAMER_LOG_GLOB if you need custom paths.
 from pathlib import Path
 import numpy as np
 import matplotlib
+import matplotlib.pyplot as plt
+import time
+import glob
+import os
+from kinematics import *
 
 # Toggle this to True to show the joint-velocity (dQ) plot interactively
 # instead of saving it to disk. Default False keeps non-interactive 'Agg'
@@ -32,11 +37,6 @@ if SHOW_PLOTS:
 else:
     matplotlib.use('Agg')
 
-import matplotlib.pyplot as plt
-import time
-import glob
-import os
-from kinematics import fk_ur10
 
 # Configuration (edit as needed)
 PLANNED_CSV = 'log/trajectory_sim.csv'          # planner-produced CSV
@@ -145,7 +145,213 @@ def load_streamer_log(path):
     return t, Q, dQ
 
 
+def _T_tcp_from_q(q):
+    """Return 4x4 TCP transform from fk_ur10 output (which may be a list or a single matrix)."""
+    T = fk_ur10(np.asarray(q, float))
+    if isinstance(T, (list, tuple)):
+        T_tcp = T[-1]
+    else:
+        T_tcp = T
+    T_tcp = np.asarray(T_tcp, float)
+    if T_tcp.shape == (4, 4):
+        return T_tcp
+    elif T_tcp.shape == (3, 4):
+        T4 = np.eye(4)
+        T4[:3, :] = T_tcp
+        return T4
+    else:
+        raise TypeError(f"Unexpected transform shape: {T_tcp.shape}")
 
+
+def _rot_to_rpy_xyz(R):
+    """
+    Convert rotation matrix to roll/pitch/yaw using XYZ (roll about x, pitch about y, yaw about z).
+    Returns (roll, pitch, yaw) in radians.
+    """
+    R = np.asarray(R, float)
+    # pitch = asin(-R[2,0]) with clamp for numerical safety
+    sp = -R[2, 0]
+    sp = np.clip(sp, -1.0, 1.0)
+    pitch = np.arcsin(sp)
+
+    # handle near gimbal lock
+    cp = np.cos(pitch)
+    if abs(cp) < 1e-9:
+        # gimbal lock: roll and yaw coupled
+        roll = 0.0
+        yaw = np.arctan2(-R[0, 1], R[1, 1])
+    else:
+        roll = np.arctan2(R[2, 1], R[2, 2])
+        yaw = np.arctan2(R[1, 0], R[0, 0])
+
+    return np.array([roll, pitch, yaw], dtype=float)
+
+
+def tcp_rpy_from_Q(Q):
+    """Compute TCP roll/pitch/yaw for each joint configuration in Q (N,6). Returns (N,3)."""
+    Q = np.asarray(Q, float)
+    rpy = np.zeros((Q.shape[0], 3), dtype=float)
+    for i in range(Q.shape[0]):
+        T = _T_tcp_from_q(Q[i])
+        R = T[:3, :3]
+        rpy[i, :] = _rot_to_rpy_xyz(R)
+    return rpy
+
+
+def plot_tcp_orientation_error_rpy(t_plan, Q_plan, t_meas, Q_meas, out_prefix=None):
+    """
+    Plot (measured - planned) TCP orientation error in roll/pitch/yaw vs time (three subplots).
+
+    We unwrap planned/measured RPY first, interpolate planned RPY onto t_meas, then subtract.
+    Returns filename or None (if SHOW_PLOTS).
+    """
+    os.makedirs(OUT_DIR, exist_ok=True)
+    ts = out_prefix or time.strftime('%Y%m%d_%H%M%S')
+
+    # Basic checks
+    if t_plan is None or Q_plan is None or len(t_plan) < 2 or len(Q_plan) < 2:
+        print("[WARN] Not enough planned data for TCP orientation error plot")
+        return None
+    if t_meas is None or Q_meas is None or len(t_meas) < 2 or len(Q_meas) < 2:
+        print("[WARN] Not enough measured data for TCP orientation error plot")
+        return None
+
+    # Compute TCP orientations (RPY)
+    try:
+        rpy_plan = tcp_rpy_from_Q(Q_plan)  # (N,3)
+        rpy_meas = tcp_rpy_from_Q(Q_meas)  # (M,3)
+    except Exception as e:
+        print(f"[WARN] Failed to compute TCP orientations: {e}")
+        return None
+
+    # Ensure strictly increasing time for interpolation
+    def _sorted_unique_time(t, X):
+        t = np.asarray(t, float)
+        X = np.asarray(X, float)
+        order = np.argsort(t)
+        t_s = t[order]
+        X_s = X[order]
+        keep = np.ones_like(t_s, dtype=bool)
+        keep[1:] = t_s[1:] > t_s[:-1]
+        return t_s[keep], X_s[keep]
+
+    t_plan_s, rpy_plan_s = _sorted_unique_time(t_plan, rpy_plan)
+    t_meas_s, rpy_meas_s = _sorted_unique_time(t_meas, rpy_meas)
+
+    # Overlap window so we don't extrapolate
+    t0 = max(t_plan_s[0], t_meas_s[0])
+    t1 = min(t_plan_s[-1], t_meas_s[-1])
+    if t1 <= t0:
+        print("[WARN] No time overlap between planned and measured for TCP orientation error plot")
+        return None
+
+    mask = (t_meas_s >= t0) & (t_meas_s <= t1)
+    t_m = t_meas_s[mask]
+    rpy_m = rpy_meas_s[mask]
+    if len(t_m) < 2:
+        print("[WARN] Not enough overlapping samples for TCP orientation error plot")
+        return None
+
+    # Unwrap angles before interpolation/subtraction to avoid pi jumps
+    rpy_plan_u = np.unwrap(rpy_plan_s, axis=0)
+    rpy_meas_u = np.unwrap(rpy_m, axis=0)
+
+    # Interpolate planned RPY onto measured timestamps
+    rpy_p_interp = np.zeros_like(rpy_meas_u)
+    for k in range(3):
+        rpy_p_interp[:, k] = np.interp(t_m, t_plan_s, rpy_plan_u[:, k])
+
+    err = rpy_meas_u - rpy_p_interp  # (measured - planned), unwrapped space
+
+    # Optional: wrap error back to [-pi, pi] for readability
+    err = (err + np.pi) % (2.0 * np.pi) - np.pi
+
+    # Plot roll/pitch/yaw errors
+    fig, axes = plt.subplots(3, 1, figsize=(12, 9), sharex=True)
+    labels = ["roll error (deg)", "pitch error (deg)", "yaw error (deg)"]
+    for i in range(3):
+        ax = axes[i]
+        ax.plot(t_m, np.rad2deg(err[:, i]), '-', linewidth=1.5, label='Measured - Planned')
+        ax.set_ylabel(labels[i])
+        ax.grid(True)
+        ax.legend()
+
+    axes[-1].set_xlabel("Time (s)")
+    plt.tight_layout()
+
+    fn = os.path.join(OUT_DIR, f'comparison_tcp_orientation_error_{ts}.png')
+    if SHOW_PLOTS:
+        try:
+            plt.show()
+        finally:
+            plt.close()
+        return None
+    else:
+        plt.savefig(fn)
+        plt.close()
+        return fn
+
+
+def plot_tcp_orientation_comparison(t_plan, Q_plan, t_meas, Q_meas, out_prefix=None, Q_kf=None):
+    """
+    Plot planned vs measured TCP orientation as roll/pitch/yaw (rad) over time.
+    Optionally include KF orientation if Q_kf is provided.
+    Returns filename or None (if SHOW_PLOTS).
+    """
+    os.makedirs(OUT_DIR, exist_ok=True)
+    ts = out_prefix or time.strftime('%Y%m%d_%H%M%S')
+
+    if t_plan is None or Q_plan is None or len(t_plan) < 2 or len(Q_plan) < 2:
+        print("[WARN] Not enough planned data for TCP orientation plot")
+        return None
+    if t_meas is None or Q_meas is None or len(t_meas) < 2 or len(Q_meas) < 2:
+        print("[WARN] Not enough measured data for TCP orientation plot")
+        return None
+
+    # Compute RPY
+    try:
+        rpy_plan = tcp_rpy_from_Q(Q_plan)
+        rpy_meas = tcp_rpy_from_Q(Q_meas)
+        rpy_kf = tcp_rpy_from_Q(Q_kf) if Q_kf is not None and len(Q_kf) > 1 else None
+    except Exception as e:
+        print(f"[WARN] Failed to compute TCP orientation: {e}")
+        return None
+
+    # Unwrap to avoid pi-jumps (independently per component)
+    rpy_plan_u = np.unwrap(rpy_plan, axis=0)
+    rpy_meas_u = np.unwrap(rpy_meas, axis=0)
+    rpy_kf_u = np.unwrap(rpy_kf, axis=0) if rpy_kf is not None else None
+
+    labels = ["roll (rad)", "pitch (rad)", "yaw (rad)"]
+
+    fig, axes = plt.subplots(3, 1, figsize=(12, 9), sharex=False)
+
+    for i in range(3):
+        ax = axes[i]
+        ax.plot(t_plan, rpy_plan_u[:, i], 'b-', label='Planned', linewidth=2)
+        ax.plot(t_meas, rpy_meas_u[:, i], 'r.', label='Measured', linewidth=0.7)
+        if rpy_kf_u is not None:
+            ax.plot(np.linspace(t_meas[0], t_meas[-1], len(rpy_kf_u)), rpy_kf_u[:, i],
+                    color='g', linestyle='-.', label='KF', linewidth=1.5)
+
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel(labels[i])
+        ax.grid(True)
+        ax.legend()
+
+    plt.tight_layout()
+    fn = os.path.join(OUT_DIR, f'comparison_tcp_orientation_{ts}.png')
+
+    if SHOW_PLOTS:
+        try:
+            plt.show()
+        finally:
+            plt.close()
+        return None
+    else:
+        plt.savefig(fn)
+        plt.close()
+        return fn
 
 def tcp_xyz_from_q(q):
     T = fk_ur10(np.asarray(q, float))
@@ -317,6 +523,94 @@ def plot_comparisons(t_plan, Q_plan, dQ_plan, t_meas, Q_meas, dQ_meas, out_prefi
     else:
         fn_tcp = None
     return fn1, fn2, fn_accel, fn_tcp
+
+
+def plot_tcp_position_error_xyz(t_plan, Q_plan, t_meas, Q_meas, out_prefix=None):
+    """
+    Plot (measured - planned) TCP position error in x/y/z vs time (three subplots).
+
+    We interpolate planned TCP xyz onto t_meas so the subtraction is well-defined.
+    Returns filename or None (if SHOW_PLOTS).
+    """
+    os.makedirs(OUT_DIR, exist_ok=True)
+    ts = out_prefix or time.strftime('%Y%m%d_%H%M%S')
+
+    # Basic checks
+    if t_plan is None or Q_plan is None or len(t_plan) < 2 or len(Q_plan) < 2:
+        print("[WARN] Not enough planned data for TCP position error plot")
+        return None
+    if t_meas is None or Q_meas is None or len(t_meas) < 2 or len(Q_meas) < 2:
+        print("[WARN] Not enough measured data for TCP position error plot")
+        return None
+
+    # Compute TCP positions
+    try:
+        P_plan = tcp_path_from_Q(Q_plan)  # (N,3)
+        P_meas = tcp_path_from_Q(Q_meas)  # (M,3)
+    except Exception as e:
+        print(f"[WARN] Failed to compute TCP positions: {e}")
+        return None
+
+    # Ensure strictly increasing time for interpolation (np.interp needs ascending x)
+    def _sorted_unique_time(t, P):
+        t = np.asarray(t, float)
+        P = np.asarray(P, float)
+        order = np.argsort(t)
+        t_s = t[order]
+        P_s = P[order]
+        # drop duplicate timestamps (keep first occurrence)
+        keep = np.ones_like(t_s, dtype=bool)
+        keep[1:] = t_s[1:] > t_s[:-1]
+        return t_s[keep], P_s[keep]
+
+    t_plan_s, P_plan_s = _sorted_unique_time(t_plan, P_plan)
+    t_meas_s, P_meas_s = _sorted_unique_time(t_meas, P_meas)
+
+    # Overlap window so we don't extrapolate
+    t0 = max(t_plan_s[0], t_meas_s[0])
+    t1 = min(t_plan_s[-1], t_meas_s[-1])
+    if t1 <= t0:
+        print("[WARN] No time overlap between planned and measured for TCP error plot")
+        return None
+
+    mask = (t_meas_s >= t0) & (t_meas_s <= t1)
+    t_m = t_meas_s[mask]
+    P_m = P_meas_s[mask]
+    if len(t_m) < 2:
+        print("[WARN] Not enough overlapping samples for TCP error plot")
+        return None
+
+    # Interpolate planned xyz onto measured timestamps
+    P_p_interp = np.zeros_like(P_m)
+    for k in range(3):
+        P_p_interp[:, k] = np.interp(t_m, t_plan_s, P_plan_s[:, k])
+
+    err = P_m - P_p_interp  # (measured - planned)
+
+    # Plot x/y/z errors
+    fig, axes = plt.subplots(3, 1, figsize=(12, 9), sharex=True)
+    labels = ["x error (m)", "y error (m)", "z error (m)"]
+    for i in range(3):
+        ax = axes[i]
+        ax.plot(t_m, err[:, i], '-', linewidth=1.5, label='Measured - Planned')
+        ax.set_ylabel(labels[i])
+        ax.grid(True)
+        ax.legend()
+
+    axes[-1].set_xlabel("Time (s)")
+    plt.tight_layout()
+
+    fn = os.path.join(OUT_DIR, f'comparison_tcp_position_error_{ts}.png')
+    if SHOW_PLOTS:
+        try:
+            plt.show()
+        finally:
+            plt.close()
+        return None
+    else:
+        plt.savefig(fn)
+        plt.close()
+        return fn
 
 
 def plot_sampling_intervals(t_meas, out_prefix=None):
@@ -630,6 +924,19 @@ def main():
 
     dQ_meas_fd = _finite_diff_velocities(t_meas, Q_meas)
     save_fd_velocities(t_meas, dQ_meas_fd)
+
+    # fn_tcp_ori = plot_tcp_orientation_comparison(t_plan, Q_plan, t_meas, Q_meas, Q_kf=Q_kf if Q_kf is not None else None)
+    # fn_tcp_ori = plot_tcp_orientation_comparison(t_plan, Q_plan-Q_plan, t_meas, Q_meas-Q_plan, None)
+    # if fn_tcp_ori:
+    #     print(f"[INFO] Saved TCP-orientation comparison: {fn_tcp_ori}")
+    # Plot TCP position error (measured - planned) in x/y/z
+    fn_tcp_err = plot_tcp_position_error_xyz(t_plan, Q_plan, t_meas, Q_meas)
+    if fn_tcp_err:
+        print(f"[INFO] Saved TCP position error plot: {fn_tcp_err}")
+    fn_tcp_ori_err = plot_tcp_orientation_error_rpy(t_plan, Q_plan, t_meas, Q_meas)
+    
+    if fn_tcp_ori_err:
+        print(f"[INFO] Saved TCP orientation error plot: {fn_tcp_ori_err}")
 
     f1, f2, f_accel, f_tcp = plot_comparisons(
         t_plan, Q_plan, dQ_plan,

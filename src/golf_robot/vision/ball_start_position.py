@@ -1,14 +1,18 @@
 import cv2
 import os
 import numpy as np
-from vision.ball_position_detection import detect_ball_position
-from vision.vision_utils import apply_white_balance, compute_wb_gains_from_corners, rectify_with_chessboard, load_camera_params, pixel_to_plane, plane_to_pixel
-
+try:
+    from vision.ball_position_detection import detect_ball_position
+    from vision.vision_utils import apply_white_balance, compute_wb_gains_from_corners, rectify_with_chessboard, load_camera_params, pixel_to_plane, plane_to_pixel
+except ImportError:
+    from ball_position_detection import detect_ball_position
+    from vision_utils import apply_white_balance, compute_wb_gains_from_corners, rectify_with_chessboard, load_camera_params, pixel_to_plane, plane_to_pixel
 # from ball_position_detection import detect_ball_position
 # from vision_utils import apply_white_balance, compute_wb_gains_from_corners, rectify_with_chessboard, load_camera_params, pixel_to_plane, plane_to_pixel
 
 def capture_single_frame(
-    camera_index: int,
+    camera_index: int, 
+    cap=None,
     operating_system: str = "windows",
     frame_width: int = 1920,
     frame_height: int = 1080,
@@ -19,13 +23,15 @@ def capture_single_frame(
     Open a camera, warm it up, grab ONE clean frame, then close it again.
     Includes basic sanity checks on the returned frame size.
     """
-    # Choose backend
-    if operating_system.lower() == "windows":
-        cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
-    else:
-        # Explicit V4L2 backend on Linux
-        cap = cv2.VideoCapture(camera_index, cv2.CAP_V4L2)
-
+    shutdown_cap = False
+    if cap is None:
+        shutdown_cap = True
+        # Choose backend
+        if operating_system.lower() == "windows":
+            cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+        else:
+            # Explicit V4L2 backend on Linux
+            cap = cv2.VideoCapture(camera_index, cv2.CAP_V4L2)
     if not cap.isOpened():
         raise RuntimeError(f"Could not open camera index {camera_index}")
 
@@ -64,15 +70,17 @@ def capture_single_frame(
     finally:
         ret, img = cap.read()
         print("img.shape =", img.shape)
-        cap.release()
+        if shutdown_cap:
+            cap.release()
 
-def get_ball_start_position(debug=True, return_debug_image=False, debug_raw=False, use_cam=True, camera_index = 1, operating_system="windows"):
+def get_ball_start_position(debug=True, return_debug_image=False, debug_raw=False, use_cam=True, camera_index = 1, cap=None, operating_system="windows"):
     # Read image
     frame_height = 1080
     frame_width = 1920
     if use_cam:
         img = capture_single_frame(
             camera_index=camera_index,
+            cap=cap,
             operating_system=operating_system,
             frame_width=frame_width,
             frame_height=frame_height,

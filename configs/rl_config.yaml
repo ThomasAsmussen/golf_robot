@@ -12,6 +12,7 @@ training:
   eval_episodes: 20
   target_update_rho: 0.000
   continue_training: True
+  continue_training: True
   error_hard_stop: True
   do_prints: False
   env_type: "real"

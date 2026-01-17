@@ -3,11 +3,13 @@ Kinematics for the UR10 robot (with a mounted golf club).
 """
 
 import numpy as np
-from planning.config import A, D, Z_CLUB, Q_MIN, Q_MAX, X_CLUB_LONG, Y_CLUB_LONG, X_CLUB_SHORT, Y_CLUB_SHORT, CLUB_MID
-from planning.utils import rotm_from_rpy, T_from_xyz_rpy, unwrap_to_seed
 
-# from config import A, D, Z_CLUB, Q_MIN, Q_MAX, X_CLUB_LONG, Y_CLUB_LONG, X_CLUB_SHORT, Y_CLUB_SHORT, CLUB_MID
-# from utils import rotm_from_rpy, T_from_xyz_rpy, unwrap_to_seed
+try:
+    from planning.config import A, D, Z_CLUB, Q_MIN, Q_MAX, X_CLUB_LONG, Y_CLUB_LONG, X_CLUB_SHORT, Y_CLUB_SHORT, CLUB_MID
+    from planning.utils import rotm_from_rpy, T_from_xyz_rpy, unwrap_to_seed
+except ImportError:
+    from config import A, D, Z_CLUB, Q_MIN, Q_MAX, X_CLUB_LONG, Y_CLUB_LONG, X_CLUB_SHORT, Y_CLUB_SHORT, CLUB_MID
+    from utils import rotm_from_rpy, T_from_xyz_rpy, unwrap_to_seed
 
 def fk_ur10(q):
     """
@@ -88,6 +90,41 @@ def fk_ur10(q):
     T0_MID   = T07 @ T7_mid
 
     return [T01,T02,T03,T04,T05,T06,T07,T0_SHORT,T0_LONG,T0_MID]
+
+
+def rpy_from_R_zyx(R):
+    """
+    Convert rotation matrix -> roll, pitch, yaw using ZYX convention:
+      R = Rz(yaw) * Ry(pitch) * Rx(roll)
+    Returns (roll, pitch, yaw) in radians.
+    """
+    R = np.asarray(R, float)
+
+    # pitch = asin(-R[2,0]) in the standard ZYX extraction
+    sp = -R[2, 0]
+    sp = np.clip(sp, -1.0, 1.0)
+    pitch = np.arcsin(sp)
+
+    # handle gimbal lock near +-90deg pitch
+    cp = np.cos(pitch)
+    if abs(cp) < 1e-8:
+        # Gimbal lock: yaw and roll are coupled. Choose roll=0 and solve yaw from R[0,1], R[1,1]
+        roll = 0.0
+        yaw = np.arctan2(-R[0, 1], R[1, 1])
+    else:
+        roll = np.arctan2(R[2, 1], R[2, 2])
+        yaw  = np.arctan2(R[1, 0], R[0, 0])
+
+    return roll, pitch, yaw
+
+
+def tcp_rpy_from_Q(Q):
+    """Compute TCP roll/pitch/yaw for each q in Q -> array (N,3)"""
+    rpy = np.zeros((len(Q), 3), dtype=float)
+    for i, q in enumerate(Q):
+        _, R = tcp_pose_from_q(q)
+        rpy[i, :] = rpy_from_R_zyx(R)
+    return rpy
 
 
 def ur10_inv_kin(T):
@@ -180,6 +217,29 @@ def ur10_inv_kin(T):
         return np.empty((0, 6)), np.empty((0,), int)
 
     return np.vstack(sols), np.array(errs, dtype=int)
+
+
+def tcp_pose_from_q(q):
+    """
+    Returns (p, R) where:
+      p is (3,) TCP position
+      R is (3,3) rotation matrix of TCP
+    """
+    T = fk_ur10(np.asarray(q, float))
+    T_tcp = T[-1] if isinstance(T, (list, tuple)) else T
+    T_tcp = np.asarray(T_tcp, float)
+
+    if T_tcp.shape == (4, 4):
+        p = T_tcp[:3, 3].copy()
+        R = T_tcp[:3, :3].copy()
+    elif T_tcp.shape == (3, 4):
+        p = T_tcp[:3, 3].copy()
+        R = T_tcp[:3, :3].copy()
+    else:
+        raise TypeError(f"Unexpected transform shape: {T_tcp.shape}")
+
+    return p, R
+
 
 
 

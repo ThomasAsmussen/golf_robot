@@ -12,7 +12,7 @@ The script:
  - time-aligns them by interpolating KF joints to the planned time grid
  - plots:
      (1) planned vs KF joint positions
-     (2) joint error (KF - planned)
+     (2) joint error (measured - planned)
  - saves figures into OUT_DIR (or shows them if SHOW_PLOTS=True)
 """
 
@@ -29,8 +29,8 @@ SHOW_PLOTS = True  # if False, uses non-interactive backend and saves PNGs
 OUT_DIR = "log"
 
 PLANNED_CSV = "log/trajectory_sim.csv"   # planner-produced CSV
-# KF_CSV      = os.path.join(OUT_DIR, "kf_predictions.csv")  # KF log
-KF_CSV = "log/streamed_measurements.csv"  # KF log
+KF_CSV      = os.path.join(OUT_DIR, "kf_predictions.csv")  # KF log
+# KF_CSV = "log/streamed_measurements.csv"  # KF log
 
 # ---------------------------------------------------------------------
 # Matplotlib backend selection

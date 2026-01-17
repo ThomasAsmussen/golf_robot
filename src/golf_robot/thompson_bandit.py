@@ -9,6 +9,7 @@ import torch.nn.functional as F
 import wandb
 import uuid
 import time
+import cv2
 
 from rl_common import *
 
@@ -94,6 +95,7 @@ class MeanPlannerActor(nn.Module):
     @torch.no_grad()
     def forward(self, state):
         # state: [B, state_dim], eval uses B=1
+        print(state)
         s = state.squeeze(0)
 
         cem_pop = self.rl_cfg["training"].get("cem_pop_eval", self.rl_cfg["training"].get("cem_pop", 256))
@@ -159,14 +161,13 @@ def load_doublecritics(model_dir: Path, rl_cfg, tag_stem: str, device):
         c2_path = model_dir / f"ddpg_critic2_{tag}_h{k}.pth"
         if not c1_path.exists() or not c2_path.exists():
             raise FileNotFoundError(f"Missing critic files for head {k}:\n  {c1_path}\n  {c2_path}")
-
         c1 = Critic(state_dim, action_dim, hidden_dim).to(device)
         c2 = Critic(state_dim, action_dim, hidden_dim).to(device)
         c1.load_state_dict(torch.load(c1_path, map_location=device))
         c2.load_state_dict(torch.load(c2_path, map_location=device))
         c1.train(); c2.train()
         critics1.append(c1); critics2.append(c2)
-
+    print(f"Loaded double-critic models from tag: {tag}")
     return critics1, critics2, tag
 
 
@@ -213,6 +214,7 @@ def training(
     env_type="sim",
     tmp_name=None,
     camera_index_start=None,
+    cap=None,
 ):
     if env_type == "real":
         maybe_init_wandb(rl_cfg, mujoco_cfg)
@@ -253,8 +255,8 @@ def training(
 
     use_wandb = bool(rl_cfg["training"].get("use_wandb", False))
 
-    model_name = rl_cfg["training"].get("model_name", None)
-
+    # model_name = rl_cfg["training"].get("model_name", None)
+    model_name = None
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
@@ -308,7 +310,7 @@ def training(
     episode_log_path = None
     episode_logger = None
     if env_type == "real":
-        episode_log_path = project_root / "log" / "real_episodes" / "episode_logger.jsonl"
+        episode_log_path = project_root / "log" / "real_episodes" / "episode_logger_thompson.jsonl"
         episode_logger = EpisodeLoggerJsonl(episode_log_path)
         loaded_n = load_replay_from_jsonl(
             episode_log_path,
@@ -322,7 +324,15 @@ def training(
             with episode_log_path.open("r") as f:
                 global_ep0 = sum(1 for _ in f)
     
-    
+
+    ball_table = wandb.Table(columns=[
+        "step",
+        "x",
+        "y",
+        "reward",
+        "in_hole",
+        "planner",
+    ])
 
 
     # Warm-start memory
@@ -384,7 +394,7 @@ def training(
                 mujoco_cfg, max_num_discs
             )
         else:
-            ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(camera_index=camera_index_start)
+            ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(camera_index=camera_index_start, cap=cap)
             hole_pos = np.array(hole_pos_obs, dtype=float)
 
         # -------------------------------------------------
@@ -501,6 +511,7 @@ def training(
             "ball_start_x": float(ball_start_obs[0]),
             "ball_start_y": float(ball_start_obs[1]),
             "speed": float(speed),
+            "speed_at_hole": meta.get("speed_at_hole", None),
             "angle_deg": float(angle_deg),
             "thompson_head": int(head),
             "q1_mean": q1s,
@@ -528,29 +539,41 @@ def training(
             used_for_training = bool(meta.get("used_for_training", True))
             if not used_for_training:
                 print("Episode discarded by user; not adding to replay buffer.")
+                continue_training_ = meta.get("continue_training", True)
+                if not continue_training_:
+                    print("Training aborted by user.")
+                    break   # 👈 clean exit
+
                 continue
 
             episode_logger.log(
                 {
-                    "episode": episode,
-                    "time": time.time(),
-                    "used_for_training": used_for_training,
+                    "reward": float(reward),
+                    "in_hole": bool(in_hole),
+                    "out_of_bounds": bool(meta.get("out_of_bounds", False)),
                     "ball_start_obs": ball_start_obs.tolist(),
+                    "speed": float(speed),
+                    "speed_at_hole": meta.get("speed_at_hole", None),
+                    "angle_deg": float(angle_deg),
+                    "thompson_head": int(head),
+                    "q1_mean": q1s,
+                    "q2_mean": q2s,
+                    "q_min": q_min,
+                    "cem_best_score": cem_stats["best_score"],
+                    "cem_std_mean": float(cem_stats["cem_std"].mean().item()),
+                    "cem_std_max": float(cem_stats["cem_std"].max().item()),
+                    "replay_big_size": len(replay_buffer_big.data),
+                    "replay_recent_size": len(replay_buffer_recent.data),
+                    "episode": episode,
+                    "used_for_training": used_for_training,                   
                     "hole_pos_obs": hole_pos_obs.tolist(),
                     "disc_positions": disc_positions,
                     "state_norm": state_norm.tolist(),
-                    "action_norm": a_norm.detach().cpu().numpy().tolist(),
-                    "speed": float(speed),
-                    "angle_deg": float(angle_deg),
-                    "ball_final_pos": [float(ball_x), float(ball_y)],
-                    "in_hole": bool(in_hole),
-                    "out_of_bounds": bool(meta.get("out_of_bounds", False)),
-                    "reward": float(reward),
+                    "action_norm": a_norm.detach().cpu().numpy().tolist(),                    
+                    "ball_final_pos": [float(ball_x), float(ball_y)],                                      
                     "chosen_hole": chosen_hole,
                     "dist_at_hole": meta.get("dist_at_hole", None),
-                    "speed_at_hole": meta.get("speed_at_hole", None),
                     "exploring": True,
-                    "thompson_head": head,
                     "planner": "ts_doublecritic_cem",
                 }
             )
@@ -558,6 +581,10 @@ def training(
             if not meta.get("continue_training", True):
                 print("Training aborted by user.")
                 break
+
+            if use_wandb:
+                step = episode_logger.get_length() + 1
+                wandb.log(log_payload, step=step)
 
         # -------------------------------------------------
         # Store
@@ -569,12 +596,16 @@ def training(
         # Train
         # -------------------------------------------------
         if len(replay_buffer_big.data) >= batch_size:
+            if env_type == "real":
+                print(f"Training on episode {episode + 1} with replay size {len(replay_buffer_big.data)}")
+
             for _ in range(grad_steps):
-                states_b, actions_b, rewards_b = sample_mixed(
+                states_b, actions_b, rewards_b = sample_mixed_zero_mean(
                     replay_buffer_recent,
                     replay_buffer_big,
                     recent_ratio=0.7,
                     batch_size=batch_size,
+                    ball_xy_idx=(0, 1),
                 )
                 states_b = states_b.to(device)
                 actions_b = actions_b.to(device)
@@ -601,16 +632,17 @@ def training(
                     torch.nn.utils.clip_grad_norm_(critics2[k].parameters(), 1.0)
                     opts2[k].step()
 
+            if env_type == "real":
+                print(f"Completed gradient steps for episode {episode + 1}. Saving models...")
+                save_doublecritics(model_dir, tmp_name, critics1, critics2)
         # -------------------------------------------------
         # Prints + wandb
         # -------------------------------------------------
         if rl_cfg["training"].get("do_prints", False):
             print("========================================")
             print(f"Episode {episode + 1}/{episodes}, Reward: {reward:.4f}, TS head: {head}")
-        if use_wandb:
-            step = (global_ep0 + episode) if env_type == "real" else episode
-            wandb.log(log_payload, step=step)
 
+    cap.release()
 
     # -------------------------------------------------
     # Final evaluation + save

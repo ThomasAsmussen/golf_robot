@@ -1,34 +1,141 @@
+// stream_dq_like_test_with_logging.cpp
+// Reads q0..q5 and dq0..dq5 from a trajectory CSV,
+// streams joint velocities with speedj (via mydriver.setSpeed),
+// and logs:
+//  1) event-driven measurements (q_actual, dq_actual) -> streamed_measurements.csv
+//  2) KF predictions at each 8 ms send tick            -> kf_predictions.csv
+//
+// KF uses a simple actuator model to "feed commanded velocity" into predict():
+//   dq_next = a*dq + (1-a)*dq_cmd,   a = exp(-dt/tau)
+//
+// Build:
+//   g++ -O2 -std=c++17 -pthread stream_dq_like_test_with_logging.cpp -o stream_test
+// (adjust include/lib paths to your project)
+
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <array>
+#include <atomic>
+#include <thread>
+#include <chrono>
+#include <csignal>
+#include <mutex>
+#include <condition_variable>
+#include <filesystem>
+#include <cmath>
+#include <limits>
+
+#include "../include/communication/ur_driver.h"
+#include "../include/communication/ur5.h"
+
+//static const std::string CSV_IN   = "C:/Users/marti/'OneDrive - Danmarks Tekniske Universitet'/DTU/GitHub/golf_robot/log/trajectory_sim.csv";      // input
+static const std::string CSV_IN   = "log/trajectory_sim.csv";      // input
+static const std::string CSV_OUT  = "log/streamed_measurements.csv"; // output
+//static const std::string CSV_OUT =
+//    "/home/thomas/Documents/masters_project/golf_robot/log/streamed_measurements.csv";
+//static const std::string CSV_OUT =
+//    "C:/Users/marti/'OneDrive - Danmarks Tekniske Universitet'/DTU/GitHub/golf_robot/log/streamed_measurements.csv";
+// static const std::string CSV_IN =
+//     "/mnt/c/Users/marti/OneDrive - Danmarks Tekniske Universitet/DTU/GitHub/golf_robot/log/trajectory_sim.csv";
+
+// static const std::string CSV_OUT =
+//     "/mnt/c/Users/marti/OneDrive - Danmarks Tekniske Universitet/DTU/GitHub/golf_robot/log/streamed_measurements.csv";
+
+
+static const std::string ROBOT_IP = "192.38.66.227";
+static const int         REVERSE_PORT = 5007;
+static const std::array<double,6> END_POS = {-2.47, -2.38, -1.55, 1.66, 0.49, -0.26};
+
+static const double ACCEL  = 6.0;
+static const double DT     = 0.008;     // 8 ms
+static const double VCLAMP = 3.5;
+
+static const double kp = 0.0;
+static const double kd = 0.0;
+static const double ki = 0.0;
+
+// Controller params
+static constexpr std::array<double,6> Kp_pos = {kp,kp,kp,kp,kp,kp};
+static constexpr std::array<double,6> Kd_vel = {kd,kd,kd,kd,kd,kd};
+static constexpr std::array<double,6> Ki_pos = {ki,ki,ki,ki,ki,ki};
+
+// Anti-windup / safety
+static const double ITERM_CLAMP = 1.0;  // max magnitude of integral contribution in rad/s
+static const double IQ_CLAMP    = 10.0; // max magnitude of integral state in "rad*s" (backup clamp)
+
+
+static const double MAX_ERROR_DEG = 2.0;
+static const double MAX_ERROR_RAD = MAX_ERROR_DEG * 3.14159265358979323846 / 180.0;
+
+#define USE_BASIC_KF 0
+// KF tuning
+static const bool   USE_KF   = true;
+static const double SIGMA_A  = 8.0e-1;     // rad/s^2 process accel noise
+static const double SIGMA_Q  = 1e-4;    // rad meas std
+static const double SIGMA_DQ = 10;    // rad/s meas std (NOTE: 1e-4 is often too optimistic on real robot)
+// static const std::array<double,6> TAU_CMD = {
+//     0.0180,  // joint 0
+//     0.0182,  // joint 1
+//     0.0165,  // joint 2
+//     0.0137,  // joint 3
+//     0.0137,  // joint 4
+//     0.0129   // joint 5
+// };
+static const std::array<double,6> TAU_CMD = {
+    1,  // joint 0
+    1,  // joint 1
+    1,  // joint 2
+    1,  // joint 3
+    1,  // joint 4
+    1   // joint 5
+};
+// static const double TAU_CMD  = 0.024;    // seconds: actuator time constant for dq tracking
+
+// -------------------- Utilities --------------------
+std::atomic<bool> keep_running(true);
+void on_sigint(int){ keep_running = false; }
+
+static std::vector<std::string> split_csv(const std::string& line){
+    std::vector<std::string> out;
+    std::stringstream ss(line);
+    std::string tok;
+    while(std::getline(ss, tok, ',')) out.push_back(tok);
+    return out;
+}
 
 // --- Minimal 2x2 per-joint KF (q, dq) ---
-// struct KF2 {
-//     double q=0.0, dq=0.0;
-//     double P00=1e-4, P01=0.0, P10=0.0, P11=1.0;
-//     void predict(double dt, double sigma_a){
-//         if (dt <= 0) return;
-//         const double g0=0.5*dt*dt, g1=dt, s2=sigma_a*sigma_a;
-//         // x = F x
-//         q  += dt*dq;
-//         // P = FPF^T + Q
-//         const double nP00 = P00 + dt*(P01+P10) + dt*dt*P11 + s2*g0*g0;
-//         const double nP01 = P01 + dt*P11 + s2*g0*g1;
-//         const double nP10 = P10 + dt*P11 + s2*g0*g1;
-//         const double nP11 = P11 + s2*g1*g1;
-//         P00=nP00; P01=nP01; P10=nP10; P11=nP11;
-//     }
-//     void update_pos(double z, double R){
-//         const double S = P00 + R;
-//         const double K0 = P00 / S;
-//         const double K1 = P10 / S;
-//         const double r  = z - q;
-//         q  += K0 * r;
-//         dq += K1 * r;
-//         const double nP00 = (1.0 - K0)*P00;
-//         const double nP01 = (1.0 - K0)*P01;
-//         const double nP10 = P10 - K1*P00;
-//         const double nP11 = P11 - K1*P01;
-//         P00=nP00; P01=nP01; P10=nP10; P11=nP11;
-//     }
-// };
+struct KF2_basic {
+    double q=0.0, dq=0.0;
+    double P00=1e-4, P01=0.0, P10=0.0, P11=1.0;
+    void predict(double dt, double sigma_a){
+        if (dt <= 0) return;
+        const double g0=0.5*dt*dt, g1=dt, s2=sigma_a*sigma_a;
+        // x = F x
+        q  += dt*dq;
+        // P = FPF^T + Q
+        const double nP00 = P00 + dt*(P01+P10) + dt*dt*P11 + s2*g0*g0;
+        const double nP01 = P01 + dt*P11 + s2*g0*g1;
+        const double nP10 = P10 + dt*P11 + s2*g0*g1;
+        const double nP11 = P11 + s2*g1*g1;
+        P00=nP00; P01=nP01; P10=nP10; P11=nP11;
+    }
+    void update_pos(double z, double R){
+        const double S = P00 + R;
+        const double K0 = P00 / S;
+        const double K1 = P10 / S;
+        const double r  = z - q;
+        q  += K0 * r;
+        dq += K1 * r;
+        const double nP00 = (1.0 - K0)*P00;
+        const double nP01 = (1.0 - K0)*P01;
+        const double nP10 = P10 - K1*P00;
+        const double nP11 = P11 - K1*P01;
+        P00=nP00; P01=nP01; P10=nP10; P11=nP11;
+    }
+};
 
 // struct KF2 {
 //     double q = 0.0, dq = 0.0;
@@ -98,108 +205,6 @@
 //         P00 = nP00; P01 = nP01; P10 = nP10; P11 = nP11;
 //     }
 // };
-
-
-// stream_dq_like_test_with_logging.cpp
-// Reads q0..q5 and dq0..dq5 from a trajectory CSV,
-// streams joint velocities with speedj (via mydriver.setSpeed),
-// and logs:
-//  1) event-driven measurements (q_actual, dq_actual) -> streamed_measurements.csv
-//  2) KF predictions at each 8 ms send tick            -> kf_predictions.csv
-//
-// KF uses a simple actuator model to "feed commanded velocity" into predict():
-//   dq_next = a*dq + (1-a)*dq_cmd,   a = exp(-dt/tau)
-//
-// Build:
-//   g++ -O2 -std=c++17 -pthread stream_dq_like_test_with_logging.cpp -o stream_test
-// (adjust include/lib paths to your project)
-
-#include <iostream>
-#include <fstream>
-#include <sstream>
-#include <string>
-#include <vector>
-#include <array>
-#include <atomic>
-#include <thread>
-#include <chrono>
-#include <csignal>
-#include <mutex>
-#include <condition_variable>
-#include <filesystem>
-#include <cmath>
-#include <limits>
-
-#include "../include/communication/ur_driver.h"
-#include "../include/communication/ur5.h"
-
-//static const std::string CSV_IN   = "C:/Users/marti/'OneDrive - Danmarks Tekniske Universitet'/DTU/GitHub/golf_robot/log/trajectory_sim.csv";      // input
-static const std::string CSV_IN   = "log/trajectory_sim.csv";      // input
-static const std::string CSV_OUT  = "log/streamed_measurements.csv"; // output
-//static const std::string CSV_OUT =
-//    "/home/thomas/Documents/masters_project/golf_robot/log/streamed_measurements.csv";
-//static const std::string CSV_OUT =
-//    "C:/Users/marti/'OneDrive - Danmarks Tekniske Universitet'/DTU/GitHub/golf_robot/log/streamed_measurements.csv";
-// static const std::string CSV_IN =
-//     "/mnt/c/Users/marti/OneDrive - Danmarks Tekniske Universitet/DTU/GitHub/golf_robot/log/trajectory_sim.csv";
-
-// static const std::string CSV_OUT =
-//     "/mnt/c/Users/marti/OneDrive - Danmarks Tekniske Universitet/DTU/GitHub/golf_robot/log/streamed_measurements.csv";
-
-
-static const std::string ROBOT_IP = "192.38.66.227";
-static const int         REVERSE_PORT = 5007;
-static const std::array<double,6> END_POS = {-2.47, -2.38, -1.55, 1.66, 0.49, -0.26};
-
-static const double ACCEL  = 6.0;
-static const double DT     = 0.008;     // 8 ms
-static const double VCLAMP = 3.5;
-
-static const double kp = 0.0;
-static const double kd = 0.0;
-static const double ki = 0.0;
-// Anti-windup / safety
-static const double ITERM_CLAMP = 1.0;  // max magnitude of integral contribution in rad/s
-static const double IQ_CLAMP    = 10.0; // max magnitude of integral state in "rad*s" (backup clamp)
-
-
-static const double MAX_ERROR_DEG = 2.0;
-static const double MAX_ERROR_RAD = MAX_ERROR_DEG * 3.14159265358979323846 / 180.0;
-
-// KF tuning
-static const bool   USE_KF   = true;
-static const double SIGMA_A  = 8.0e-1;     // rad/s^2 process accel noise
-static const double SIGMA_Q  = 1e-4;    // rad meas std
-static const double SIGMA_DQ = 10;    // rad/s meas std (NOTE: 1e-4 is often too optimistic on real robot)
-// static const std::array<double,6> TAU_CMD = {
-//     0.0180,  // joint 0
-//     0.0182,  // joint 1
-//     0.0165,  // joint 2
-//     0.0137,  // joint 3
-//     0.0137,  // joint 4
-//     0.0129   // joint 5
-// };
-static const std::array<double,6> TAU_CMD = {
-    1,  // joint 0
-    1,  // joint 1
-    1,  // joint 2
-    1,  // joint 3
-    1,  // joint 4
-    1   // joint 5
-};
-// static const double TAU_CMD  = 0.024;    // seconds: actuator time constant for dq tracking
-
-// -------------------- Utilities --------------------
-std::atomic<bool> keep_running(true);
-void on_sigint(int){ keep_running = false; }
-
-static std::vector<std::string> split_csv(const std::string& line){
-    std::vector<std::string> out;
-    std::stringstream ss(line);
-    std::string tok;
-    while(std::getline(ss, tok, ',')) out.push_back(tok);
-    return out;
-}
 
 // -------------------- Minimal 2x2 KF per joint: x=[q,dq] --------------------
 struct KF2 {
@@ -291,8 +296,21 @@ struct KF2 {
     }
 };
 
+ #if USE_BASIC_KF
+ using KFType = KF2_basic;
+ #else
+ using KFType = KF2;
+ #endif
+
 int main(){
     std::signal(SIGINT, on_sigint);
+
+    // ADDED
+    std::array<double,6> last_q_meas_arr{};
+    std::array<double,6> last_dq_meas_arr{};
+    std::atomic<double>  last_meas_t_sec{0.0};  // seconds since t0
+    std::mutex meas_state_mtx;
+    // ADDED
 
     // ---- Driver start ----
     std::condition_variable rt_msg_cond_;
@@ -409,20 +427,16 @@ int main(){
           << " ITERM_CLAMP=" << ITERM_CLAMP << " IQ_CLAMP=" << IQ_CLAMP << "\n";
 
     // ---- KF init ----
-    std::array<KF2,6> kf;
-    for (int j=0;j<6;++j) { kf[j].q = q_rows.front()[j]; kf[j].dq = 0.0; }
+  
+    std::array<KFType,6> kf;
+    for (int j=0;j<6;++j) {
+        kf[j].q = q_rows.front()[j];
+        kf[j].dq = 0.0;
+    }
 
     // Command shared with KF thread
     std::array<std::atomic<double>,6> last_cmd;
     for (int j=0;j<6;++j) last_cmd[j].store(0.0, std::memory_order_relaxed);
-
-    // Controller params
-    // std::array<double,6> Kp_pos = {kp,kp,kp,kp,kp,kp};
-    std::array<double,6> Kd_vel = {kd,kd,kd,kd,kd,kd};
-    std::array<double,6> Ki_pos = {ki, ki, ki, ki, ki, ki};
-    std::array<double,6> Kp_pos = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-    // std::array<double,6> Kd_vel = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-    // std::array<double,6> Ki_pos = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 
     std::array<double,6> VCLAMPs = {VCLAMP,VCLAMP,VCLAMP,VCLAMP,VCLAMP,VCLAMP};
 
@@ -468,11 +482,17 @@ int main(){
                 const double dt_meas = std::chrono::duration<double>(t_meas - kf_time).count();
                 if (dt_meas > 0) {
                     std::array<double,6> u{};
+                    
+                    #if USE_BASIC_KF
+                        for (int j=0;j<6;++j) {
+                            kf[j].predict(dt_meas, SIGMA_A);
+                        }
+                    #else
                     for (int j=0;j<6;++j) u[j] = last_cmd[j].load(std::memory_order_relaxed);
-
-                    for (int j=0;j<6;++j) {
-                        kf[j].predict_cmd(dt_meas, u[j], TAU_CMD[j], SIGMA_A);
-                    }
+                        for (int j=0;j<6;++j) {
+                            kf[j].predict_cmd(dt_meas, u[j], TAU_CMD[j], SIGMA_A);
+                        }
+                    #endif
                     kf_time = t_meas;
                 }
 
@@ -481,7 +501,11 @@ int main(){
                 const double Rdq = SIGMA_DQ * SIGMA_DQ;
                 for (int j=0;j<6;++j) {
                     if (j < (int)q_meas.size() && j < (int)dq_meas.size()) {
-                        kf[j].update_q_dq(q_meas[j], dq_meas[j], Rq, Rdq);
+                        #if USE_BASIC_KF
+                            kf[j].update_pos(q_meas[j], Rq);
+                        #else
+                            kf[j].update_q_dq(q_meas[j], dq_meas[j], Rq, Rdq);
+                        #endif
                     }
                 }
             }
@@ -491,6 +515,19 @@ int main(){
                 if (j < (int)q_meas.size())  last_q_meas[j]  = q_meas[j];
                 if (j < (int)dq_meas.size()) last_dq_meas[j] = dq_meas[j];
             }
+
+            double tsec = std::chrono::duration<double>(t_meas - t0).count();
+
+            // ADDED
+            {
+            std::lock_guard<std::mutex> lk(meas_state_mtx);
+            for (int j=0;j<6;++j) {
+                last_q_meas_arr[j]  = q_meas[j];
+                last_dq_meas_arr[j] = dq_meas[j];
+            }
+            last_meas_t_sec.store(tsec, std::memory_order_release);
+            }
+            // ADDED
 
             // log measurement event
             std::array<double,13> row{};
@@ -526,6 +563,11 @@ for (size_t i = 0; i < N && keep_running.load(); ++i) {
     std::array<double,6> q_hat{}, dq_hat{};
     {
         std::lock_guard<std::mutex> g(kf_mtx);
+        // ADDED
+        double tick_t = std::chrono::duration<double>(next_tick - t0).count();
+
+        std::array<double,6> q_fb{};
+        // ADDED
 
         if (USE_KF) {
             double dt_pred = std::chrono::duration<double>(next_tick - kf_time).count();
@@ -535,11 +577,28 @@ for (size_t i = 0; i < N && keep_running.load(); ++i) {
             for (int j = 0; j < 6; ++j) u[j] = last_cmd[j].load(std::memory_order_relaxed);
 
             for (int j = 0; j < 6; ++j) {
-                KF2 kf_copy = kf[j];
-                if (dt_pred > 0) kf_copy.predict_cmd(dt_pred, u[j], TAU_CMD[j], SIGMA_A);
+                KFType kf_copy = kf[j];
+                #if USE_BASIC_KF
+                    if (dt_pred > 0) kf_copy.predict(dt_pred, SIGMA_A);
+                #else
+                    if (dt_pred > 0) kf_copy.predict_cmd(dt_pred, u[j], TAU_CMD[j], SIGMA_A);
+                #endif
                 q_hat[j]  = kf_copy.q;
                 dq_hat[j] = kf_copy.dq;
-            }
+
+            //ADDED
+            std::lock_guard<std::mutex> lk(meas_state_mtx);
+            double t_meas = last_meas_t_sec.load(std::memory_order_acquire);
+            double dt_align = tick_t - t_meas;
+            if (dt_align < 0) dt_align = 0;          // shouldn't happen often
+            if (dt_align > 0.03) dt_align = 0.03;    // clamp (e.g. 30 ms)
+
+            for (int j=0;j<6;++j) {
+                // Option A: align using dq_hat (preferred: smoother)
+                q_fb[j] = last_q_meas_arr[j] + dt_align * dq_hat[j];
+                        }
+            //ADDED
+
         } else {
             for (int j = 0; j < 6; ++j) {
                 q_hat[j]  = std::isnan(last_q_meas[j])  ? q_rows[i][j]  : last_q_meas[j];
@@ -555,8 +614,13 @@ for (size_t i = 0; i < N && keep_running.load(); ++i) {
     bool large_error_this_step = false;
 
     for (int j = 0; j < 6; ++j) {
-        const double e_q  = q_rows[i][j] - q_hat[j];
-        const double e_dq = v_ff[j]      - dq_hat[j];
+        // ADDED
+        // const double e_q  = q_rows[i][j] - q_hat[j];
+        // const double e_dq = v_ff[j]      - dq_hat[j];
+        double e_q  = q_ref - q_fb[j];
+        double e_dq = dq_ref - dq_hat[j];
+        // ADDED
+        
 
         if (std::fabs(e_q) > MAX_ERROR_RAD) {
             large_error_this_step = true;
@@ -603,8 +667,8 @@ for (size_t i = 0; i < N && keep_running.load(); ++i) {
         }
 
         Iq[j]   = Iq_new;
-        // v_cmd[j] = u_sat;
-        v_cmd[j] = u_unsat;
+        v_cmd[j] = u_sat;
+        // v_cmd[j] = u_unsat;
     }
 
     // Abort on large error: stop robot and reset integrators
