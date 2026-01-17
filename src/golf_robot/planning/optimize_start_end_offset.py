@@ -201,8 +201,8 @@ def build_q_hit(
     - optionally small z tweak
     """
     # you had these offsets baked in; keep consistent if needed
-    q0_hit = move_point_xyz(ball_x_offset + 0.005, ball_y_offset + 0.02, 0.005, q0_hit_ref, q0_hit_ref)[0]
-
+    # q0_hit = move_point_xyz(ball_x_offset + 0.005, ball_y_offset + 0.02, 0.00, q0_hit_ref, q0_hit_ref)[0]
+    q0_hit = move_point_xyz(ball_x_offset, ball_y_offset + 0.01, 0.00, q0_hit_ref, q0_hit_ref)[0]
     impact_direction = np.array([math.cos(math.radians(impact_angle_deg)),
                                  math.sin(math.radians(impact_angle_deg)),
                                  0.0], dtype=float)
@@ -214,7 +214,7 @@ def build_q_hit(
     if q_hit is None:
         return None
 
-    q_hit = move_point_xyz(0.0, 0.0, -0.005, q_hit, q_hit)[0]
+    # q_hit = move_point_xyz(0.0, 0.0, 0.005, q_hit, q_hit)[0]
     return q_hit
 
 
@@ -608,8 +608,8 @@ if __name__ == "__main__":
     angles = np.linspace(args.angle_min, args.angle_max, args.angle_n).tolist()
     sa_grid = iter_speed_angle_grid(speeds, angles)
 
-    GRID_X_MIN, GRID_X_MAX, GRID_NX = 0.2, 0.2, 21
-    GRID_Y_MIN, GRID_Y_MAX, GRID_NY = 0.1, 0.1, 11
+    GRID_X_MIN, GRID_X_MAX, GRID_NX = -0.2, 0.2, 14
+    GRID_Y_MIN, GRID_Y_MAX, GRID_NY = -0.1, 0.1, 7
 
     ball_grid = iter_ball_offset_grid(GRID_X_MIN, GRID_X_MAX, GRID_NX,
                                  GRID_Y_MIN, GRID_Y_MAX, GRID_NY)
