@@ -2,21 +2,21 @@ training:
   episodes: 20000
   actor_lr: 0.0003
   critic_lr: 0.0003
-  noise_std: 0.15
+  noise_std: 0.0
   batch_size: 64
   grad_steps: 4
   replay_buffer_capacity: 100000
   use_wandb: True
-  project_name: "fewer_neurons"
+  project_name: "real_fewer_neurons"
   eval_interval: 50
   eval_episodes: 20
   target_update_rho: 0.000
-  continue_training: False
+  continue_training: True
   error_hard_stop: True
   do_prints: False
-  env_type: "sim"
-  model_name: "revived_flower_8"
-  wandb_run_id: "fewer_neurons_id"
+  env_type: "real"
+  model_name: "dark_brook_42"
+  wandb_run_id: "real_fewer_neurons_id"
   max_num_discs: 0
 
 model:
