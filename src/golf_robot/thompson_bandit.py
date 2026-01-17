@@ -670,8 +670,10 @@ def training2(
                     "final_avg_distance": final_avg_dist,
                 }
             )
-
-    save_doublecritics(model_dir, tag_for_saving, critics1, critics2)
+    
+    if env_type == "sim":
+        print(f"Saving final double-critic models to tag: {tag_for_saving}")
+        save_doublecritics(model_dir, tag_for_saving, critics1, critics2)
 
     if episode_logger is not None:
         episode_logger.close()
