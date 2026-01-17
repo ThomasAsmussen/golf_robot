@@ -196,8 +196,8 @@ def process_video(
     ref_x, ref_y = pixel_to_plane(u_tl, v_tl, H_plane_corrected)
 
     # Offsets (same values you used before)
-    offset_x = 3.85 + 0.01566469927311509
-    offset_y = 0.0 - 0.13509415128381785
+    offset_x = 3.85 + 0.04207646285 #+ 0.01566469927311509 # in meters
+    offset_y = 0.00 - 0.16754972165742624 #- 0.13509415128381785 # in meters
 
     # Load hole center from saved config and convert to "origo" frame
     if compute_all_holes:

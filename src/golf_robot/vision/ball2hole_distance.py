@@ -150,8 +150,8 @@ def get_ball_final_position(camera_index=0, chosen_hole=None, use_cam=True, debu
     print("Ref plane before offset:", ref_x, ref_y)
 
     # From start camera origo (measured from camera origo to hole then hole to checkerboard tl corner):
-    offset_x = 3.85 + 0.01566469927311509 # in meters
-    offset_y = 0.0 - 0.13509415128381785 # in meters
+    offset_x = 3.85 + 0.04207646285 #+ 0.01566469927311509 # in meters
+    offset_y = 0.00 - 0.16754972165742624 #- 0.13509415128381785 # in meters
 
     print("Ref plane:", ref_x, ref_y)
 
