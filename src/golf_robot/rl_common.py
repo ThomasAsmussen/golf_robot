@@ -33,10 +33,10 @@ import time
 # =========================================================
 
 # Environment / measurement noise
-SPEED_NOISE_STD: float = 0 #0.05
-ANGLE_NOISE_STD: float = 0 #0.1
-BALL_OBS_NOISE_STD: float = 0 #0.002
-HOLE_OBS_NOISE_STD: float = 0 #0.002
+SPEED_NOISE_STD: float = 0.05
+ANGLE_NOISE_STD: float = 0.1
+BALL_OBS_NOISE_STD: float = 0.002
+HOLE_OBS_NOISE_STD: float = 0.002
 # SPEED_NOISE_STD: float = 0.0
 # ANGLE_NOISE_STD: float = 0.0
 # BALL_OBS_NOISE_STD: float = 0.0
