@@ -651,7 +651,7 @@ if __name__ == "__main__":
     sa_grid = iter_speed_angle_grid(speeds, angles)
 
     GRID_X_MIN, GRID_X_MAX, GRID_NX = -0.18, 0.18, 14
-    GRID_Y_MIN, GRID_Y_MAX, GRID_NY = -0.9, 0.9, 7
+    GRID_Y_MIN, GRID_Y_MAX, GRID_NY = -0.09, 0.09, 7
 
     ball_grid = iter_ball_offset_grid(GRID_X_MIN, GRID_X_MAX, GRID_NX,
                                  GRID_Y_MIN, GRID_Y_MAX, GRID_NY)
