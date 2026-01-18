@@ -120,8 +120,8 @@ T_MAX_IMPACT = 6.0
 
 # If 0.0 => will prefer larger segment times (lowest accel but slow).
 # If >0 => trades off time vs accel.
-TIME_PENALTY_DEFAULT = 0.3
-TIME_PENALTY_IMPACT  = 0.3
+TIME_PENALTY_DEFAULT = 0.2
+TIME_PENALTY_IMPACT  = 0.2
 
 # Optimization budget
 N_COARSE = 80          # random candidates in coarse search
@@ -202,7 +202,13 @@ def build_q_hit(
     """
     # you had these offsets baked in; keep consistent if needed
     # q0_hit = move_point_xyz(ball_x_offset + 0.005, ball_y_offset + 0.02, 0.00, q0_hit_ref, q0_hit_ref)[0]
-    q0_hit = move_point_xyz(ball_x_offset, ball_y_offset + 0.01, 0.00, q0_hit_ref, q0_hit_ref)[0]
+    q0_hit, info = move_point_xyz(ball_x_offset, ball_y_offset + 0.01, 0.00, q0_hit_ref, q0_hit_ref)
+    if q0_hit is None:
+        return None
+    q0_hit = np.asarray(q0_hit, float)
+    if q0_hit.shape != (6,):
+        return None
+
     impact_direction = np.array([math.cos(math.radians(impact_angle_deg)),
                                  math.sin(math.radians(impact_angle_deg)),
                                  0.0], dtype=float)
@@ -256,8 +262,17 @@ def evaluate_candidate(
     # Build only what we need depending on mode
     if opt_mode == "start_only":
         # q_start varies, q_end fixed but NOT planned
-        q_start = move_point_xyz(sx, sy, sz, q_hit, Q0_START_SEED)[0]
-
+        q_start, info = move_point_xyz(sx, sy, sz, q_hit, Q0_START_SEED)
+        if q_start is None:
+            return CandidateResult(
+                ok=False, sx=sx, sy=sy, sz=sz, ex=ex, ey=ey, ez=ez,
+                meta={"problem": "IK failed for start offset", "start_offset": [sx, sy, sz], "ik_info": info}
+            )
+        q_start = np.asarray(q_start, float)
+        if q_start.shape != (6,):
+            return CandidateResult(ok=False, sx=sx, sy=sy, sz=sz, ex=ex, ey=ey, ez=ez,
+                                meta={"problem": "Bad q_start shape", "shape": str(q_start.shape)})
+        
         seg0, Q0, dQ0, ddQ0 = plan_segment_start_to_hit(
             q_start, q_hit, lin_velocity,
             T_max=T_MAX_IMPACT,                # this segment ends at impact -> use impact knobs
@@ -272,7 +287,7 @@ def evaluate_candidate(
 
         # Objective is only segment 0 (pre-impact)
         print(f"peak: {peak}, total_T: {total_T}")
-        J = objective(peak, total_T, time_penalty_total=0.0)
+        J = objective(peak, total_T, time_penalty_total=TIME_PENALTY_DEFAULT)
 
         return CandidateResult(
             ok=True, sx=sx, sy=sy, sz=sz, ex=ex, ey=ey, ez=ez,
@@ -282,8 +297,16 @@ def evaluate_candidate(
 
     elif opt_mode == "end_only":
         # q_end varies, q_start fixed but NOT planned
-        q_end = move_point_xyz(ex, ey, ez, q_hit, Q0_END_SEED)[0]
-
+        q_end, info = move_point_xyz(ex, ey, ez, q_hit, Q0_END_SEED)
+        if q_end is None:
+            return CandidateResult(
+                ok=False, sx=sx, sy=sy, sz=sz, ex=ex, ey=ey, ez=ez,
+                meta={"problem": "IK failed for end offset", "end_offset": [ex, ey, ez], "ik_info": info}
+            )
+        q_end = np.asarray(q_end, float)
+        if q_end.shape != (6,):
+            return CandidateResult(ok=False, sx=sx, sy=sy, sz=sz, ex=ex, ey=ey, ez=ez,
+                                meta={"problem": "Bad q_end shape", "shape": str(q_end.shape)})
         seg1, Q1, dQ1, ddQ1 = plan_segment_hit_to_end(
             q_hit, q_end, lin_velocity,
             T_max=T_MAX_DEFAULT,               # post-impact segment -> use default knobs (tune if you prefer)
@@ -297,7 +320,7 @@ def evaluate_candidate(
         total_T = float(seg1.get("T", seg1["ts"][-1]))
 
         # Objective is only segment 1
-        J = objective(peak, total_T, time_penalty_total=0.0)
+        J = objective(peak, total_T, time_penalty_total=TIME_PENALTY_DEFAULT)
 
         return CandidateResult(
             ok=True, sx=sx, sy=sy, sz=sz, ex=ex, ey=ey, ez=ez,
@@ -307,8 +330,27 @@ def evaluate_candidate(
 
     elif opt_mode == "both":
         # Current behavior: plan both segments
-        q_start = move_point_xyz(sx, sy, sz, q_hit, Q0_START_SEED)[0]
-        q_end   = move_point_xyz(ex, ey, ez, q_hit, Q0_END_SEED)[0]
+        q_start, info_start = move_point_xyz(sx, sy, sz, q_hit, Q0_START_SEED)
+        if q_start is None:
+            return CandidateResult(
+                ok=False, sx=sx, sy=sy, sz=sz, ex=ex, ey=ey, ez=ez,
+                meta={"problem": "IK failed for start offset", "start_offset": [sx, sy, sz], "info": info_start}
+            )
+        q_start = np.asarray(q_start, float)
+        if q_start.shape != (6,):
+            return CandidateResult(ok=False, sx=sx, sy=sy, sz=sz, ex=ex, ey=ey, ez=ez,
+                                meta={"problem": "Bad q_start shape", "shape": str(q_start.shape)})
+        q_end, info_end = move_point_xyz(ex, ey, ez, q_hit, Q0_END_SEED)
+        if q_end is None:
+            return CandidateResult(
+                ok=False, sx=sx, sy=sy, sz=sz, ex=ex, ey=ey, ez=ez,
+                meta={"problem": "IK failed for end offset", "end_offset": [ex, ey, ez], "info": info_end}
+            )
+        q_end = np.asarray(q_end, float)
+        if q_end.shape != (6,):
+            return CandidateResult(ok=False, sx=sx, sy=sy, sz=sz, ex=ex, ey=ey, ez=ez,
+                                meta={"problem": "Bad q_end shape", "shape": str(q_end.shape)})
+
 
         impact_idx = 1
         waypoints = [q_start, q_hit, q_end]
@@ -326,7 +368,7 @@ def evaluate_candidate(
 
         peak = peak_abs_ddq(ddQ_all)
         total_T = float(sum(float(seg.get("T", seg["ts"][-1])) for seg in segments))
-        J = objective(peak, total_T, time_penalty_total=0.0)
+        J = objective(peak, total_T, time_penalty_total=TIME_PENALTY_DEFAULT)
 
         return CandidateResult(
             ok=True, sx=sx, sy=sy, sz=sz, ex=ex, ey=ey, ez=ez,
