@@ -1,24 +1,30 @@
 training:
-  episodes: 20000
+  episodes: 2000
   actor_lr: 0.0003
   critic_lr: 0.0003
   noise_std: 0.0
-  batch_size: 64
-  grad_steps: 10
+  batch_size: 128
+  grad_steps: 2
   replay_buffer_capacity: 100000
   use_wandb: True
-  project_name: "real_fewer_neurons"
+  project_name: "real_fewer_neurons_sim"
   eval_interval: 50
   eval_episodes: 20
   target_update_rho: 0.000
-  continue_training: True
-  continue_training: True
+  continue_training: False
   error_hard_stop: True
   do_prints: False
-  env_type: "real"
+  env_type: "sim"
   model_name: "revived_flower_8"
-  wandb_run_id: "real_robot_14_01_2026_19_20"  # for continuing runs
+  wandb_run_id: "real_robot_22_01_2026_19_00"  # for continuing runs
   max_num_discs: 0
+  # cem_init_std: 0.25 real
+  # cem_min_std: 0.12
+  cem_init_std: 0.3
+  cem_min_std: 0.05
+  cem_pop: 256
+  cem_iters: 3
+  bootstrap_p: 0.7
 
 model:
   state_dim: 19
@@ -32,7 +38,7 @@ model:
 reward:
   distance_scale: 3.0
   in_hole_reward: 5.0
-  w_distance: 0.8
+  w_distance: 1.0
   optimal_speed: 0.8
   dist_at_hole_scale: 5.0
   optimal_speed_scale: 2.0

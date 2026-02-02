@@ -95,7 +95,7 @@ class MeanPlannerActor(nn.Module):
     @torch.no_grad()
     def forward(self, state):
         # state: [B, state_dim], eval uses B=1
-        print(state)
+        # print(state)
         s = state.squeeze(0)
 
         cem_pop = self.rl_cfg["training"].get("cem_pop_eval", self.rl_cfg["training"].get("cem_pop", 256))
@@ -103,6 +103,7 @@ class MeanPlannerActor(nn.Module):
         cem_elite_frac = self.rl_cfg["training"].get("cem_elite_frac", 0.2)
         cem_init_std = self.rl_cfg["training"].get("cem_init_std", 0.4)
         cem_min_std = self.rl_cfg["training"].get("cem_min_std", 0.1) #0.1
+        # print(f"cem_pop: {cem_pop}, cem_iters: {cem_iters}, cem_elite_frac: {cem_elite_frac}, cem_init_std: {cem_init_std}, cem_min_std: {cem_min_std}")
 
         action_dim = self.rl_cfg["model"]["action_dim"]
 
@@ -231,11 +232,11 @@ def training(
     bootstrap_p = rl_cfg["training"].get("bootstrap_p", 0.8)
 
     cem_pop = rl_cfg["training"].get("cem_pop", 256)
-    cem_iters = rl_cfg["training"].get("cem_iters", 2)
-    cem_elite_frac = rl_cfg["training"].get("cem_elite_frac", 0.2)
+    cem_iters = rl_cfg["training"].get("cem_iters", 1)
+    cem_elite_frac = rl_cfg["training"].get("cem_elite_frac", 0.1)
     cem_init_std = rl_cfg["training"].get("cem_init_std", 0.4)
     cem_min_std = rl_cfg["training"].get("cem_min_std", 0.1) #0.1
-    use_cem_warm_start = bool(rl_cfg["training"].get("cem_warm_start", True))
+    use_cem_warm_start = bool(rl_cfg["training"].get("cem_warm_start", False))
 
     state_dim  = rl_cfg["model"]["state_dim"]
     action_dim = rl_cfg["model"]["action_dim"]
@@ -284,12 +285,12 @@ def training(
         critics1 = [Critic(state_dim, action_dim, hidden_dim).to(device) for _ in range(K)]
         critics2 = [Critic(state_dim, action_dim, hidden_dim).to(device) for _ in range(K)]
 
-    opts1 = [torch.optim.Adam(c.parameters(), lr=critic_lr) for c in critics1]
-    opts2 = [torch.optim.Adam(c.parameters(), lr=critic_lr) for c in critics2]
+    opts1 = [torch.optim.Adam(c.parameters(), lr=critic_lr, weight_decay=1e-5) for c in critics1]
+    opts2 = [torch.optim.Adam(c.parameters(), lr=critic_lr, weight_decay=1e-5) for c in critics2]
 
     # ---- buffers
     replay_buffer_big = ReplayBuffer(capacity=rl_cfg["training"]["replay_buffer_capacity"])
-    replay_buffer_recent = ReplayBuffer(1000)
+    replay_buffer_recent = ReplayBuffer(500)
 
     # ---- wandb
     if use_wandb:
@@ -372,10 +373,11 @@ def training(
                     a_prev = None  # optional: reset CEM warm-start
                     print(f"[CURRICULUM] Increased max_num_discs -> {max_num_discs}")
                 
-                print(
-                    f"[EVAL] Ep {episode}: success={success_rate_eval:.2f}, "
-                    f"avg_reward={avg_reward_eval:.3f}, avg_dist={avg_distance_eval:.3f}"
-                )
+                
+                # print(
+                #     f"[EVAL] Ep {episode}: success={success_rate_eval:.2f}, "
+                #     f"avg_reward={avg_reward_eval:.3f}, avg_dist={avg_distance_eval:.3f}"
+                # )
                 if use_wandb:
                     wandb.log(
                         {
@@ -504,22 +506,38 @@ def training(
             q2s = torch.stack([c(s1, a1).squeeze() for c in critics2]).mean().item()
             q_min = min(q1s, q2s)
 
-        log_payload = {
-            "reward": float(reward),
-            "in_hole": float(in_hole),
-            "out_of_bounds": float(is_out_of_bounds) if env_type == "real" else 0.0,
-            "ball_start_x": float(ball_start_obs[0]),
-            "ball_start_y": float(ball_start_obs[1]),
-            "speed": float(speed),
-            "speed_at_hole": meta.get("speed_at_hole", None),
-            "angle_deg": float(angle_deg),
-            "thompson_head": int(head),
-            "q1_mean": q1s,
-            "q2_mean": q2s,
-            "q_min": q_min,
-            "replay_big_size": len(replay_buffer_big.data),
-            "replay_recent_size": len(replay_buffer_recent.data),
-        }
+        if env_type == "real":
+            log_payload = {
+                "reward": float(reward),
+                "in_hole": float(in_hole),
+                "out_of_bounds": float(is_out_of_bounds) if env_type == "real" else 0.0,
+                "speed": float(speed),
+                "angle_deg": float(angle_deg),
+                "chosen_hole": chosen_hole,
+                "ball_start_x": float(ball_start_obs[0]),
+                "ball_start_y": float(ball_start_obs[1]),
+                "speed_at_hole": meta.get("speed_at_hole", None),
+                "thompson_head": int(head),
+                "q1_mean": q1s,
+                "q2_mean": q2s,
+                "q_min": q_min,
+                "replay_big_size": len(replay_buffer_big.data),
+                "replay_recent_size": len(replay_buffer_recent.data),
+
+            }
+        else:
+            log_payload = {
+                "reward": float(reward),
+                "in_hole": float(in_hole),
+                "speed": float(speed),
+                "angle_deg": float(angle_deg),
+                "thompson_head": int(head),
+                "q1_mean": q1s,
+                "q2_mean": q2s,
+                "q_min": q_min,
+                "replay_big_size": len(replay_buffer_big.data),
+                "replay_recent_size": len(replay_buffer_recent.data),
+            }
         if isinstance(meta, dict):
             if meta.get("dist_at_hole") is not None:
                 log_payload["dist_at_hole"] = float(meta["dist_at_hole"])
@@ -596,16 +614,17 @@ def training(
         # Train
         # -------------------------------------------------
         if len(replay_buffer_big.data) >= batch_size:
+            # print(f"Batch size: {batch_size}")
             if env_type == "real":
                 print(f"Training on episode {episode + 1} with replay size {len(replay_buffer_big.data)}")
 
             for _ in range(grad_steps):
-                states_b, actions_b, rewards_b = sample_mixed_zero_mean(
+                states_b, actions_b, rewards_b = sample_mixed(
                     replay_buffer_recent,
                     replay_buffer_big,
                     recent_ratio=0.7,
                     batch_size=batch_size,
-                    ball_xy_idx=(0, 1),
+                    # ball_xy_idx=(0, 1),
                 )
                 states_b = states_b.to(device)
                 actions_b = actions_b.to(device)
@@ -642,7 +661,8 @@ def training(
             print("========================================")
             print(f"Episode {episode + 1}/{episodes}, Reward: {reward:.4f}, TS head: {head}")
 
-    cap.release()
+    if env_type == "real" and cap is not None:
+        cap.release()
 
     # -------------------------------------------------
     # Final evaluation + save
@@ -721,6 +741,21 @@ if __name__ == "__main__":
             },
         )
 
+    if wandb.run is not None:
+        cfg = wandb.config
+
+        rl_cfg["reward"]["distance_scale"]     = float(cfg.get("distance_scale", rl_cfg["reward"]["distance_scale"]))
+        rl_cfg["reward"]["in_hole_reward"]     = float(cfg.get("in_hole_reward", rl_cfg["reward"]["in_hole_reward"]))
+        rl_cfg["reward"]["w_distance"]         = float(cfg.get("w_distance", rl_cfg["reward"]["w_distance"]))
+        rl_cfg["reward"]["optimal_speed"]      = float(cfg.get("optimal_speed", rl_cfg["reward"]["optimal_speed"]))
+        rl_cfg["reward"]["dist_at_hole_scale"] = float(cfg.get("dist_at_hole_scale", rl_cfg["reward"]["dist_at_hole_scale"]))
+        rl_cfg["reward"]["optimal_speed_scale"]= float(cfg.get("optimal_speed_scale", rl_cfg["reward"]["optimal_speed_scale"]))
+        rl_cfg["training"]["cem_pop"]         = int(cfg.get("cem_pop", rl_cfg["training"]["cem_pop"]))
+        rl_cfg["training"]["cem_iters"]       = int(cfg.get("cem_iters", rl_cfg["training"]["cem_iters"]))
+        rl_cfg["training"]["critic_lr"]       = float(cfg.get("critic_lr", rl_cfg["training"]["critic_lr"]))
+        rl_cfg["training"]["bootstrap_p"]     = float(cfg.get("bootstrap_p", rl_cfg["training"]["bootstrap_p"]))
+
+    print("RL Config:", rl_cfg)
     training(
         rl_cfg,
         mujoco_cfg,
