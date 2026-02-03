@@ -1242,7 +1242,8 @@ def evaluation_policy_short(
                 angle_deg = np.clip(angle_deg + angle_deg_noise, angle_low, angle_high)
 
                 # disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3), (2.4, -0.2), (2.4, 0.2)] # with 5 static discs
-                disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3)]
+                # disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3)] # with 3 static discs
+                disc_positions = [(2.1, 0.0)] # with 1 static disc
                 ball_x, ball_y, in_hole, meta = env_step(
                     angle_deg, speed, [x, y], mujoco_cfg, disc_positions
                 )
