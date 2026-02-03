@@ -778,7 +778,7 @@ def compute_reward(
             w_speed = 1.0 - w_distance
             reward = float(w_distance * dist_term + w_speed * speed_term)
             # print(f"Reward from meta: {reward:.4f} (dist_term: {dist_term:.4f}, speed_term: {speed_term:.4f})")
-            print(f"Dist term: {dist_term:.4f}, Speed term: {speed_term:.4f}, Reward: {reward:.4f}")
+            # print(f"Dist term: {dist_term:.4f}, Speed term: {speed_term:.4f}, Reward: {reward:.4f}")
             return reward
 
     final_dist = float(np.linalg.norm(ball_end_xy - hole_xy))
@@ -1241,7 +1241,8 @@ def evaluation_policy_short(
                 speed     = np.clip(speed + speed_noise,     speed_low,  speed_high)
                 angle_deg = np.clip(angle_deg + angle_deg_noise, angle_low, angle_high)
 
-                disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3), (2.4, -0.2), (2.4, 0.2)]
+                # disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3), (2.4, -0.2), (2.4, 0.2)] # with 5 static discs
+                disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3)]
                 ball_x, ball_y, in_hole, meta = env_step(
                     angle_deg, speed, [x, y], mujoco_cfg, disc_positions
                 )
