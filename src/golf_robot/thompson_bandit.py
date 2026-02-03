@@ -444,9 +444,9 @@ def training(
         # Step env
         # -------------------------------------------------
         if env_type == "sim":
-            # disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3), (2.4, -0.2), (2.4, 0.2)] # with 5 static discs
+            disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3), (2.4, -0.2), (2.4, 0.2)] # with 5 static discs
             # disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3)] # with 3 static discs
-            disc_positions = [(2.1, 0.0)] # with 1 static disc
+            # disc_positions = [(2.1, 0.0)] # with 1 static disc
             result = env_step(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
         else:
             result = env_step(

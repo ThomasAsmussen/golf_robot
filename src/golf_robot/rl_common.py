@@ -33,14 +33,14 @@ import time
 # =========================================================
 
 # Environment / measurement noise
-SPEED_NOISE_STD: float = 0.05
-ANGLE_NOISE_STD: float = 0.1
-BALL_OBS_NOISE_STD: float = 0.002
-HOLE_OBS_NOISE_STD: float = 0.002
-# SPEED_NOISE_STD: float = 0.0
-# ANGLE_NOISE_STD: float = 0.0
-# BALL_OBS_NOISE_STD: float = 0.0
-# HOLE_OBS_NOISE_STD: float = 0.02
+# SPEED_NOISE_STD: float = 0.05
+# ANGLE_NOISE_STD: float = 0.1
+# BALL_OBS_NOISE_STD: float = 0.002
+# HOLE_OBS_NOISE_STD: float = 0.002
+SPEED_NOISE_STD: float = 0.0
+ANGLE_NOISE_STD: float = 0.0
+BALL_OBS_NOISE_STD: float = 0.0
+HOLE_OBS_NOISE_STD: float = 0.00
 
 MAX_DISCS = 2
 
@@ -1241,9 +1241,9 @@ def evaluation_policy_short(
                 speed     = np.clip(speed + speed_noise,     speed_low,  speed_high)
                 angle_deg = np.clip(angle_deg + angle_deg_noise, angle_low, angle_high)
 
-                # disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3), (2.4, -0.2), (2.4, 0.2)] # with 5 static discs
+                disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3), (2.4, -0.2), (2.4, 0.2)] # with 5 static discs
                 # disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3)] # with 3 static discs
-                disc_positions = [(2.1, 0.0)] # with 1 static disc
+                # disc_positions = [(2.1, 0.0)] # with 1 static disc
                 ball_x, ball_y, in_hole, meta = env_step(
                     angle_deg, speed, [x, y], mujoco_cfg, disc_positions
                 )
