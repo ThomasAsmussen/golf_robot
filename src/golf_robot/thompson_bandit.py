@@ -402,7 +402,7 @@ def training(
         # -------------------------------------------------
         # Encode + scale state (NO engineered features)
         # -------------------------------------------------
-        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 5)
+        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 0)
         state_norm = scale_state_vec(state_vec)
         s = torch.tensor(state_norm, dtype=torch.float32, device=device)
 
@@ -444,6 +444,7 @@ def training(
         # Step env
         # -------------------------------------------------
         if env_type == "sim":
+            disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3), (2.4, -0.2), (2.4, 0.2)]
             result = env_step(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
         else:
             result = env_step(

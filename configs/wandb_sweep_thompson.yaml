@@ -60,5 +60,5 @@ parameters:
 
   critic_lr:
     distribution: log_uniform_values
-    min: 1e-4
+    min: 5e-4
     max: 5e-3

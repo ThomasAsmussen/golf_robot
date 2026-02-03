@@ -749,8 +749,9 @@ def compute_reward(
         return reward
 
     if is_out_of_bounds:
-        reward = 0.0
+        reward = -1.0
         # print("out of bounds reward: ", reward)
+        print("Out of bounds. Reward:", reward)
         return reward
 
 
@@ -777,6 +778,7 @@ def compute_reward(
             w_speed = 1.0 - w_distance
             reward = float(w_distance * dist_term + w_speed * speed_term)
             # print(f"Reward from meta: {reward:.4f} (dist_term: {dist_term:.4f}, speed_term: {speed_term:.4f})")
+            print(f"Dist term: {dist_term:.4f}, Speed term: {speed_term:.4f}, Reward: {reward:.4f}")
             return reward
 
     final_dist = float(np.linalg.norm(ball_end_xy - hole_xy))
@@ -1153,7 +1155,7 @@ def evaluation_policy_short(
     input_func=None,
     big_episode_logger=None,
 ):
-    print(f"Number of evaluation episodes: {num_episodes}")
+    # print(f"Number of evaluation episodes: {num_episodes}")
     if env_step is None:
         raise ValueError("evaluation_policy_short() requires env_step.")
     
@@ -1164,7 +1166,7 @@ def evaluation_policy_short(
 
     if env_type == "real":
         print("[EVAL] Real-world evaluation mode started.")
-        num_episodes = 3
+        # num_episodes = 3
 
         here = Path(__file__).resolve().parent
         project_root       = here.parents[1]
@@ -1172,12 +1174,12 @@ def evaluation_policy_short(
         episode_logger = EpisodeLoggerJsonl(episode_log_path)
     
     # hole_positions = get_hole_positions()
-
+    # print("Evaluating")
     successes          = 0
     rewards            = []
     distances_to_hole  = []
     # max_num_discs = 5
-    print("Actor: ", actor)
+    # print("Actor: ", actor)
     actor.eval()
     with torch.no_grad():
         for i in range(num_episodes):
@@ -1186,8 +1188,8 @@ def evaluation_policy_short(
                 ball_start_obs, hole_pos_obs, disc_positions, x, y, hole_pos = sim_init_parameters(mujoco_cfg, max_num_discs)
             
             if env_type == "real":
-                chosen_hole = (i % 3) + 1  # Cycle through holes 1-3
-                ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(camera_index=2, chosen_hole=chosen_hole)
+                chosen_hole = 2  # Cycle through holes 1-3
+                ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(camera_index=4, chosen_hole=chosen_hole)
                 hole_pos = np.array(hole_pos_obs)
     
             # Build state exactly matching the actor's expected state_dim
@@ -1195,7 +1197,7 @@ def evaluation_policy_short(
 
             MAX_DISCS_FEATS = 5
             state_vec = encode_state_with_discs(
-                ball_start_obs, hole_pos_obs, disc_positions, max_num_discs=MAX_DISCS_FEATS
+                ball_start_obs, hole_pos_obs, disc_positions, max_num_discs=0
             )
             raw_norm = scale_state_vec(state_vec)
 
@@ -1239,7 +1241,7 @@ def evaluation_policy_short(
                 speed     = np.clip(speed + speed_noise,     speed_low,  speed_high)
                 angle_deg = np.clip(angle_deg + angle_deg_noise, angle_low, angle_high)
 
-
+                disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3), (2.4, -0.2), (2.4, 0.2)]
                 ball_x, ball_y, in_hole, meta = env_step(
                     angle_deg, speed, [x, y], mujoco_cfg, disc_positions
                 )
@@ -1311,6 +1313,7 @@ def evaluation_policy_hand_tuned(
     env_type="sim",
     input_func=None,
     planner=None,
+    camera_index=4,
 ):
     
     if env_step is None:
@@ -1336,7 +1339,7 @@ def evaluation_policy_hand_tuned(
             ball_start_obs, hole_pos_obs, disc_positions, x, y, hole_pos = sim_init_parameters(mujoco_cfg, max_num_discs)
         
         if env_type == "real":
-            ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(camera_index=4)
+            ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(camera_index=camera_index)
             hole_pos = np.array(hole_pos_obs)
 
         state = encode_state_with_discs(

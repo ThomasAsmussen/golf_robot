@@ -27,7 +27,7 @@ training:
   bootstrap_p: 0.7
 
 model:
-  state_dim: 19
+  state_dim: 4
   action_dim: 2
   hidden_dim: 32
   speed_low: 1.0
