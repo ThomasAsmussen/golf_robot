@@ -9,7 +9,7 @@ import torch.nn.functional as F
 import wandb
 import uuid
 import time
-from rl_common_0_no_noise import *
+from rl_common_5_no_noise import *
 
 
 # ---------------------------------------------------------
@@ -231,10 +231,10 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
         # One-step environment: simulate and get reward
         # -------------------------------------------------
         if env_type == "sim":
-            # disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3), (2.4, -0.2), (2.4, 0.2)] # with 5 static discs
+            disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3), (2.4, -0.2), (2.4, 0.2)] # with 5 static discs
             # disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3)] # with 3 static discs
             # disc_positions = [(2.1, 0.0)] # with 1 static disc
-            disc_positions = [] # with 0 discs
+            # disc_positions = [] # with 0 discs
             result = env_step(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
         if env_type == "real":
             result = env_step(impact_velocity=speed, swing_angle=angle_deg, ball_start_position=ball_start_obs, planner="quintic", check_rtt=True, chosen_hole=chosen_hole)
@@ -485,7 +485,6 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
 
 
         if (episode) % rl_cfg["training"]["eval_interval"] == 2 and env_type == "sim":
-            print("Evaluating policy...")
             (
                 success_rate_eval,
                 avg_reward_eval,
