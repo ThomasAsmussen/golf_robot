@@ -20,6 +20,8 @@ source golf_venv/bin/activate
 export WANDB_CONSOLE=off
 export WANDB_DISABLE_CODE=true
 export WANDB_START_METHOD=thread
+export WANDB_DISABLE_STATS=true
+
 
 # Run the wandb sweep agent
 # --count controls how many trials this job will run
