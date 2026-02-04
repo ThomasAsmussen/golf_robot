@@ -35,6 +35,11 @@ td3:
   policy_delay: 5
   tau: 0.005
 
+sac:
+  target_entropy: -2.0
+  alpha_init: 0.1
+  alpha_lr_mult: 1.0
+
 model:
   state_dim: 4
   action_dim: 2
