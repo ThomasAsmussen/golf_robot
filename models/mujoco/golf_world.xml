@@ -6,7 +6,7 @@
   <!-- Defaults: enable 6D friction and make contacts crisp -->
   <default>
     <geom condim="6" solref="0.002 1" solimp="0.95 0.99 0.001"
-          friction="0.30831 1.83703e-05 0.00121743"/> <!-- 0.6 0.001 0.0048 slide, spin, roll -->
+          friction="0.30831 1.83703e-05 0.000817"/> <!-- 0.6 0.001 0.0048 slide, spin, roll -->
   </default>
 
 
@@ -59,8 +59,8 @@
   <contact>
     <!-- Ball–club impact: set restitution ~0.62 via damp_ratio ≈ 0.1504 -->
     <pair geom1="ball_geom" geom2="club_head"
-          solref="0.018456653624695597 0.2831490055941693"  
-          solimp="0.7837685139716153 1.11639 0.00107829"/>
+          solref="0.01850 0.29919"  
+          solimp="0.78377 1.11639 0.00108"/>
   </contact>
 
   
