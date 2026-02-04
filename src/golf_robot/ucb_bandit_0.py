@@ -267,7 +267,8 @@ def training(
     # ---- wandb
     if use_wandb:
         # wandb.watch(critics[0], log="gradients", log_freq=100)
-        run_name = wandb.run.name.replace("-", "_")
+        # run_name = wandb.run.name.replace("-", "_")
+        run_name = f"run_{wandb.run.id}"
     else:
         run_name = "local_run"
 
