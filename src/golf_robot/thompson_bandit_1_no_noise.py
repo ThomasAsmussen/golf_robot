@@ -294,8 +294,8 @@ def training(
 
     # ---- wandb
     if use_wandb:
-        wandb.watch(critics1[0], log="gradients", log_freq=100)
-        wandb.watch(critics2[0], log="gradients", log_freq=100)
+        # wandb.watch(critics1[0], log="gradients", log_freq=100)
+        # wandb.watch(critics2[0], log="gradients", log_freq=100)
         run_name = wandb.run.name.replace("-", "_")
     else:
         run_name = "local_run"
@@ -326,14 +326,14 @@ def training(
                 global_ep0 = sum(1 for _ in f)
     
 
-    ball_table = wandb.Table(columns=[
-        "step",
-        "x",
-        "y",
-        "reward",
-        "in_hole",
-        "planner",
-    ])
+    # ball_table = wandb.Table(columns=[
+    #     "step",
+    #     "x",
+    #     "y",
+    #     "reward",
+    #     "in_hole",
+    #     "planner",
+    # ])
 
 
     # Warm-start memory
@@ -761,15 +761,19 @@ if __name__ == "__main__":
         rl_cfg["training"]["bootstrap_p"]     = float(cfg.get("bootstrap_p", rl_cfg["training"]["bootstrap_p"]))
 
     print("RL Config:", rl_cfg)
-    training(
-        rl_cfg,
-        mujoco_cfg,
-        project_root,
-        continue_training=rl_cfg["training"].get("continue_training", False),
-        env_step=env_step,
-        env_type=env_type,
-        tmp_name=tmp_name if env_type == "real" else None,
-    )
+    try:
+        training(
+            rl_cfg,
+            mujoco_cfg,
+            project_root,
+            continue_training=rl_cfg["training"]["continue_training"],
+            env_step=env_step,
+            env_type=env_type,
+            tmp_name=tmp_name if env_type == "real" else None,
+        )
+    finally:
+        if rl_cfg["training"]["use_wandb"]:
+            wandb.finish()
 
     if env_type == "sim" and tmp_xml_path is not None:
         try:

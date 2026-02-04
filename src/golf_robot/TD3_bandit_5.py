@@ -648,7 +648,7 @@ def training(
             torch.save(q1.state_dict(),    model_dir / f"td3_q1_{run_name}.pth")
             torch.save(q2.state_dict(),    model_dir / f"td3_q2_{run_name}.pth")
             print("Sweep complete. TD3 models saved.")
-            wandb.finish()
+            
 
     if episode_logger is not None:
         episode_logger.close()

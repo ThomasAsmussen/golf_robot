@@ -127,9 +127,9 @@ def training(
 
     # TD3 knobs (safe defaults if not in YAML)
     td3_cfg = rl_cfg["training"].get("td3", {})
-    exploration_noise = float(td3_cfg.get("exploration_noise", 0.10))  # action noise during collection
-    policy_delay      = int(td3_cfg.get("policy_delay", 2))            # actor update every N critic updates
-    tau               = float(td3_cfg.get("tau", 0.005))               # target smoothing (polyak)
+    exploration_noise = float(rl_cfg["training"]["noise_std"])  # action noise during collection
+    policy_delay      = int(rl_cfg["td3"]["policy_delay"])            # actor update every N critic updates
+    tau               = float(rl_cfg["td3"]["tau"])                   # target smoothing (polyak)
     # Target policy smoothing is irrelevant for pure bandit targets, but we keep targets anyway.
 
     # -------------------------
@@ -677,20 +677,12 @@ if __name__ == "__main__":
 
     # Optional: wandb sweeps
     if rl_cfg["training"]["use_wandb"]:
-        sweep_config = {
-            "actor_lr":          rl_cfg["training"]["actor_lr"],
-            "critic_lr":         rl_cfg["training"]["critic_lr"],
-            "hidden_dim":        rl_cfg["model"]["hidden_dim"],
-            "batch_size":        rl_cfg["training"]["batch_size"],
-            "grad_steps":        rl_cfg["training"]["grad_steps"],
-        }
         
         project_name = rl_cfg["training"].get("project_name", "rl_golf_wandb")
         wandb.init(
             project=project_name, 
             group="td3",  
             config={
-                **sweep_config,
                 "rl_config":     rl_cfg,
                 "mujoco_config": mujoco_cfg,
             },
@@ -703,6 +695,11 @@ if __name__ == "__main__":
         rl_cfg["reward"]["optimal_speed"]       = cfg.get("optimal_speed", rl_cfg["reward"]["optimal_speed"])
         rl_cfg["reward"]["dist_at_hole_scale"]  = cfg.get("dist_at_hole_scale", rl_cfg["reward"]["dist_at_hole_scale"])
         rl_cfg["reward"]["optimal_speed_scale"] = cfg.get("optimal_speed_scale", rl_cfg["reward"]["optimal_speed_scale"])
+        rl_cfg["training"]["actor_lr"]      = float(cfg["actor_lr"])
+        rl_cfg["training"]["critic_lr"]     = float(cfg["critic_lr"])
+        rl_cfg["training"]["noise_std"]     = float(cfg["noise_std"])
+        rl_cfg["td3"]["tau"]             = float(cfg["tau"])
+        rl_cfg["td3"]["policy_delay"]    = int(cfg["policy_delay"])
 
     training(
         rl_cfg,
