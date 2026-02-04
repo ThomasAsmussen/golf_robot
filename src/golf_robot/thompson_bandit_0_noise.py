@@ -402,7 +402,7 @@ def training(
         # -------------------------------------------------
         # Encode + scale state (NO engineered features)
         # -------------------------------------------------
-        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 5)
+        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 0)
         state_norm = scale_state_vec(state_vec)
         s = torch.tensor(state_norm, dtype=torch.float32, device=device)
 

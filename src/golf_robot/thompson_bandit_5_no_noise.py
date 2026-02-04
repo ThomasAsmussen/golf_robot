@@ -11,7 +11,7 @@ import uuid
 # import time
 # import cv2
 
-from golf_robot.rl_common_5_no_noise import *
+from rl_common_5_no_noise import *
 
 
 # =========================================================
@@ -402,7 +402,7 @@ def training(
         # -------------------------------------------------
         # Encode + scale state (NO engineered features)
         # -------------------------------------------------
-        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 5)
+        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 0)
         state_norm = scale_state_vec(state_vec)
         s = torch.tensor(state_norm, dtype=torch.float32, device=device)
 
