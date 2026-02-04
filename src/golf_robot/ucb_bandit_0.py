@@ -1,5 +1,10 @@
 # ucb_bandit_singlecritic.py
 import os
+
+# Only make the *run* offline. The agent stays online.
+os.environ["WANDB_MODE"] = "offline"   # or "disabled" if you don't even want local logs
+os.environ["WANDB_CONSOLE"] = "off"
+os.environ["WANDB_DISABLE_CODE"] = "true"
 from pathlib import Path
 import sys
 import yaml
@@ -12,6 +17,8 @@ import uuid
 import time
 
 from rl_common_0_no_noise import *
+
+
 
 
 # =========================================================
@@ -605,13 +612,12 @@ if __name__ == "__main__":
     if rl_cfg["training"].get("use_wandb", False):
         project_name = rl_cfg["training"].get("project_name", "rl_golf_wandb")
         wandb.init(
-            project=project_name, 
-            group="en-ucb",  
-            config={
-                "rl_config": rl_cfg,
-                "mujoco_config": mujoco_cfg,
-            },
+            project=project_name,
+            group="en-ucb",
+            settings=wandb.Settings(mode="offline", console="off", disable_code=True),
+            config={"rl_config": rl_cfg, "mujoco_config": mujoco_cfg},
         )
+
         cfg = wandb.config
         rl_cfg["reward"]["distance_scale"]      = cfg.get("distance_scale", rl_cfg["reward"]["distance_scale"])
         rl_cfg["reward"]["in_hole_reward"]      = cfg.get("in_hole_reward", rl_cfg["reward"]["in_hole_reward"])
