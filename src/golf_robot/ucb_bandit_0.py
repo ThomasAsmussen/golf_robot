@@ -11,7 +11,7 @@ import wandb
 import uuid
 import time
 
-from rl_common import *
+from rl_common_0_no_noise import *
 
 
 # =========================================================
@@ -400,7 +400,7 @@ def training(
             # disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3), (2.4, -0.2), (2.4, 0.2)] # with 5 static discs
             # disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3)] # with 3 static discs
             # disc_positions = [(2.1, 0.0)] # with 1 static disc
-            # disc_positions = [] # with 0 discs
+            disc_positions = [] # with 0 discs
             result = env_step(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
         else:
             result = env_step(
