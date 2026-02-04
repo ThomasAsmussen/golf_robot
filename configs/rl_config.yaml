@@ -15,7 +15,7 @@ training:
   error_hard_stop: True
   do_prints: False
   env_type: "sim"
-  model_name: "revived_flower_8"
+  model_name: "woven_sweep_153"
   wandb_run_id: "real_robot_22_01_2026_19_00"  # for continuing runs
   max_num_discs: 0
   # cem_init_std: 0.25 #real
@@ -25,6 +25,11 @@ training:
   cem_pop: 256
   cem_iters: 3
   bootstrap_p: 0.8
+
+cont_bandit_training:
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  noise_std: 0.0
 
 model:
   state_dim: 4
