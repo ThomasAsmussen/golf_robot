@@ -200,9 +200,9 @@ def training(
     replay_buffer_recent = ReplayBuffer(1000)
 
     if use_wandb:
-        wandb.watch(actor, log="gradients", log_freq=100)
-        wandb.watch(q1,    log="gradients", log_freq=100)
-        wandb.watch(q2,    log="gradients", log_freq=100)
+        # wandb.watch(actor, log="gradients", log_freq=100)
+        # wandb.watch(q1,    log="gradients", log_freq=100)
+        # wandb.watch(q2,    log="gradients", log_freq=100)
         run_name = wandb.run.name.replace("-", "_")
     else:
         run_name = "local_run"
@@ -607,22 +607,23 @@ def training(
                 log_dict["avg_reward"]           = avg_reward_eval
                 log_dict["avg_distance_to_hole"] = avg_distance_to_hole_eval
                 log_dict["exploration_noise"]    = exploration_noise
+                wandb.log(log_dict, step=episode)
 
-        if use_wandb:
-            if env_type == "sim":
-                distance_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
-            else:
-                distance_to_hole = float(np.linalg.norm(np.array([ball_x, ball_y]) - np.array(hole_pos_obs)))
+        # if use_wandb:
+        #     if env_type == "sim":
+        #         distance_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
+        #     else:
+        #         distance_to_hole = float(np.linalg.norm(np.array([ball_x, ball_y]) - np.array(hole_pos_obs)))
 
-            log_dict["reward"]           = float(max(rewards)) if using_all_holes else float(reward)
-            log_dict["distance_to_hole"] = distance_to_hole
-            log_dict["max_num_discs"]    = max_num_discs
-            if critic_loss_value is not None:
-                log_dict["critic_loss"] = critic_loss_value
-            if actor_loss_value is not None:
-                log_dict["actor_loss"]  = float(actor_loss_value)
+        #     log_dict["reward"]           = float(max(rewards)) if using_all_holes else float(reward)
+        #     log_dict["distance_to_hole"] = distance_to_hole
+        #     log_dict["max_num_discs"]    = max_num_discs
+        #     if critic_loss_value is not None:
+        #         log_dict["critic_loss"] = critic_loss_value
+        #     if actor_loss_value is not None:
+        #         log_dict["actor_loss"]  = float(actor_loss_value)
 
-            wandb.log(log_dict, step=episode)
+        #     wandb.log(log_dict, step=episode)
 
     # -------------------------------------------------
     # Final evaluation + save
@@ -720,15 +721,19 @@ if __name__ == "__main__":
         rl_cfg["td3"]["tau"]          = float(cfg["tau"])
 
 
-    training(
-        rl_cfg,
-        mujoco_cfg,
-        project_root,
-        continue_training=rl_cfg["training"]["continue_training"],
-        env_step=env_step,
-        env_type=env_type,
-        tmp_name=tmp_name if env_type == "real" else None,
-    )
+    try:
+        training(
+            rl_cfg,
+            mujoco_cfg,
+            project_root,
+            continue_training=rl_cfg["training"]["continue_training"],
+            env_step=env_step,
+            env_type=env_type,
+            tmp_name=tmp_name if env_type == "real" else None,
+        )
+    finally:
+        if rl_cfg["training"]["use_wandb"]:
+            wandb.finish()
 
     if env_type == "sim" and tmp_xml_path is not None:
         try:

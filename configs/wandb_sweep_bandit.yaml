@@ -1,4 +1,4 @@
-program: src/golf_robot/contextual_bandit2_0.py  # <-- adjust if filename differs
+program: src/golf_robot/contextual_bandit2_5.py  # <-- adjust if filename differs
 method: bayes   # or "random" if you prefer
 
 metric:
