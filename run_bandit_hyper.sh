@@ -13,8 +13,13 @@ module load cuda/11.8
 module load python3/3.10.13
 
 # Activate your env
+
 cd ~/golf_robot
 source golf_venv/bin/activate
+
+export WANDB_CONSOLE=off
+export WANDB_DISABLE_CODE=true
+export WANDB_START_METHOD=thread
 
 # Run the wandb sweep agent
 # --count controls how many trials this job will run
