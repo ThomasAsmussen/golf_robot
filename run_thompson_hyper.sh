@@ -24,4 +24,4 @@ export WANDB_DISABLE_STATS=true
 
 # Run the wandb sweep agent
 # --count controls how many trials this job will run
-wandb agent --count 5 rl_golf/golf_robot-src_golf_robot/nub7rje8
+wandb agent --count 5 rl_golf/golf_robot-src_golf_robot/d43t9q1i
