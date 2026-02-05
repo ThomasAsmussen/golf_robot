@@ -119,7 +119,7 @@ def relog_jsonl_to_wandb(
         if "speed_at_hole" in ep:
             payload["speed_at_hole"] = ep["speed_at_hole"]
         if "out_of_bounds" in ep:
-            payload["out_of_bounds"] = ep["out_of_bounds"]
+            payload["out_of_bounds"] = float(ep["out_of_bounds"])
         if "cem_best_score" in ep:
             payload["cem_best_score"] = float(ep["cem_best_score"])
             payload["cem_std_mean"] = float(ep["cem_std_mean"])

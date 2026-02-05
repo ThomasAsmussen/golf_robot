@@ -1,4 +1,10 @@
 import os
+
+# Only make the *run* offline. The agent stays online.
+os.environ["WANDB_MODE"] = "offline"   # or "disabled" if you don't even want local logs
+os.environ["WANDB_CONSOLE"] = "off"
+os.environ["WANDB_DISABLE_CODE"] = "true"
+
 from pathlib import Path
 import sys
 import yaml
@@ -114,7 +120,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
     if use_wandb:
         # wandb.watch(actor,  log="gradients", log_freq=100)
         # wandb.watch(critic, log="gradients", log_freq=100)
-        run_name = wandb.run.name.replace("-", "_")
+        run_name = f"run_{wandb.run.id}"
     else:
         run_name = "local_run"
 
@@ -624,24 +630,13 @@ if __name__ == "__main__":
 
     # Optional: wandb sweeps
     if rl_cfg["training"]["use_wandb"]:
-        sweep_config = {
-            "actor_lr":          rl_cfg["training"]["actor_lr"],
-            "critic_lr":         rl_cfg["training"]["critic_lr"],
-            "noise_std":         rl_cfg["training"]["noise_std"],
-            "hidden_dim":        rl_cfg["model"]["hidden_dim"],
-            "batch_size":        rl_cfg["training"]["batch_size"],
-            "grad_steps":        rl_cfg["training"]["grad_steps"],
-        }
 
         project_name = rl_cfg["training"].get("project_name", "rl_golf_wandb")
         wandb.init(
             project=project_name,
-            group = "ddpg-1step",
-            config={
-                **sweep_config,
-                "rl_config":     rl_cfg,
-                "mujoco_config": mujoco_cfg,
-            },
+            group="ddpg_1step",
+            settings=wandb.Settings(mode="offline", console="off", disable_code=True),
+            config={"rl_config": rl_cfg, "mujoco_config": mujoco_cfg},
         )
 
         cfg = wandb.config

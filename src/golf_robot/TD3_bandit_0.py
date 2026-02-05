@@ -1,5 +1,9 @@
 # td3_bandit.py
 import os
+# Only make the *run* offline. The agent stays online.
+os.environ["WANDB_MODE"] = "offline"   # or "disabled" if you don't even want local logs
+os.environ["WANDB_CONSOLE"] = "off"
+os.environ["WANDB_DISABLE_CODE"] = "true"
 from pathlib import Path
 import sys
 import yaml
@@ -203,7 +207,7 @@ def training(
         # wandb.watch(actor, log="gradients", log_freq=100)
         # wandb.watch(q1,    log="gradients", log_freq=100)
         # wandb.watch(q2,    log="gradients", log_freq=100)
-        run_name = wandb.run.name.replace("-", "_")
+        run_name = f"run_{wandb.run.id}"
     else:
         run_name = "local_run"
 
@@ -700,12 +704,10 @@ if __name__ == "__main__":
         
         project_name = rl_cfg["training"].get("project_name", "rl_golf_wandb")
         wandb.init(
-            project=project_name, 
-            group="td3",  
-            config={
-                "rl_config":     rl_cfg,
-                "mujoco_config": mujoco_cfg,
-            },
+            project=project_name,
+            group="td3",
+            settings=wandb.Settings(mode="offline", console="off", disable_code=True),
+            config={"rl_config": rl_cfg, "mujoco_config": mujoco_cfg},
         )
 
         cfg = wandb.config

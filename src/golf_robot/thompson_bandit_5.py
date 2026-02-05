@@ -11,7 +11,7 @@ import uuid
 # import time
 # import cv2
 
-from rl_common_1_no_noise import *
+from rl_common_5_no_noise import *
 
 
 # =========================================================
@@ -446,9 +446,10 @@ def training(
         # Step env
         # -------------------------------------------------
         if env_type == "sim":
-            # disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3), (2.4, -0.2), (2.4, 0.2)] # with 5 static discs
+            disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3), (2.4, -0.2), (2.4, 0.2)] # with 5 static discs
             # disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3)] # with 3 static discs
-            disc_positions = [(2.1, 0.0)] # with 1 static disc
+            # disc_positions = [(2.1, 0.0)] # with 1 static disc
+            # disc_positions = [] # no discs
             result = env_step(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
         else:
             result = env_step(
@@ -737,14 +738,7 @@ if __name__ == "__main__":
     
     if env_type == "sim" and rl_cfg["training"].get("use_wandb", False):
         project_name = rl_cfg["training"].get("project_name", "rl_golf_wandb")
-        wandb.init(
-            project=project_name,
-            group="dqn-bts",
-            config={
-                "rl_config": rl_cfg,
-                "mujoco_config": mujoco_cfg,
-            },
-        )
+        wandb.init()
 
     if wandb.run is not None:
         cfg = wandb.config

@@ -17,7 +17,7 @@ from matplotlib.figure import Figure
 from PIL import Image, ImageTk
 import cv2
 #from contextual_bandit2 import training
-from SAC_bandit import training
+# from SAC_bandit import training
 from vision.ball2hole_distance import get_ball_final_position
 from vision.ball_start_position import get_ball_start_position
 from planning.generate_trajectory_csv import generate_trajectory_csv
@@ -30,7 +30,7 @@ from hand_designed_agent import hand_tuned_policy
 
 
 OPERATING_SYSTEM = "linux"  # "windows" or "linux"
-CAMERA_INDEX_START = 2  # starting camera index for real robot
+CAMERA_INDEX_START = 4  # starting camera index for real robot
 CAMERA_INDEX_END   = 4  # ending camera index for real robot
 actor_name = "hand_tuned_policy"  # "hand_tuned_policy", "SAC_bandit", "thompson_bandit", "contextual_bandit2"
 planner = "quintic"  # "quintic" or "linear"
@@ -52,8 +52,8 @@ def real_init_parameters(camera_index, chosen_hole=None):
     
     # Holes
     if chosen_hole is None:
-        #chosen_hole = random.choice([1,2,3])
-        chosen_hole = 3
+        # chosen_hole = random.choice([1,2,3])
+        chosen_hole = 2
     # chosen_hole = 1  # for testing purposes
     here = Path(__file__).resolve().parent
     config_dir = here.parents[1] / "configs"
@@ -163,20 +163,20 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
         traj_cmd.connect((HOST, PORT_cmd))
 
         print("Sending swing...")
-        x_ball_origo=-0.64026
+        x_ball_origo=-0.62823
         ball_radius=0.021335
-        offset = 0.20 # 0.33 max
-        z_buffer = 0.015
+        offset = 0.30 # 0.33 max
+        z_buffer = 0.01
         x_start=x_ball_origo+ball_radius-offset   + ball_start_position[0]
         x_end=x_ball_origo+ball_radius+offset   + ball_start_position[0]
-        y_ball_origo=-0.59278 #-0.546
+        y_ball_origo=-0.57480 #-0.546
         y_ball = y_ball_origo + ball_start_position[1]
         z_ball=0.15512+z_buffer #-0.006
 
         swing_meta = send_swing(traj_cmd, x_start=x_start, x_end=x_end,
             y_ball=y_ball, z_ball=z_ball,#0.01+Z_PALLET, #-0.040 old
             path_angle_deg=swing_angle, attack_angle_deg=0.0,
-            vel=impact_velocity, acc=4.5)
+            vel=impact_velocity, acc=5.5)
 
         # swing_meta = prompter.run_with_spinner("Shooting", 
         #     send_swing(traj_cmd, x_start=x_start, x_end=x_end,
@@ -383,6 +383,13 @@ def main():
 
     if LOG_SHOTS:
         obs_replay_start()
+        project_root = here.parents[1]
+        episode_log_path = project_root / "log" / "real_episodes" / "episode_logger_thompson_eval.jsonl"
+        print("Episode log path:", episode_log_path)
+        episode_logger = EpisodeLoggerJsonl(episode_log_path)
+
+    else:
+        episode_logger = None
 
     project_root       = here.parents[1]
     mujoco_config_path = project_root / "configs" / "mujoco_config.yaml"
@@ -397,11 +404,12 @@ def main():
     actor, device = load_correct_actor(actor_name, rl_cfg)
     device = "cpu"
     # actor = hand_tuned_policy
+    
     try:
         if actor_name == "hand_tuned_policy":
-            evaluation_policy_hand_tuned(actor, mujoco_cfg, rl_cfg, num_episodes=30, max_num_discs=0, env_step=run_real, env_type="real", input_func=real_init_parameters, planner=planner)
+            evaluation_policy_hand_tuned(actor, mujoco_cfg, rl_cfg, num_episodes=30, max_num_discs=0, env_step=run_real, env_type="real", input_func=real_init_parameters, planner=planner, camera_index=CAMERA_INDEX_START)
         else:
-            evaluation_policy_short(actor, device, mujoco_cfg, rl_cfg, num_episodes=20, max_num_discs=0, env_step=run_real, env_type="real", input_func=real_init_parameters)
+            evaluation_policy_short(actor, device, mujoco_cfg, rl_cfg, num_episodes=12, max_num_discs=0, env_step=run_real, env_type="real", input_func=real_init_parameters, big_episode_logger=episode_logger)
     finally:
         # Always close the Tk window (even on exceptions / sys.exit)
         if LOG_SHOTS:

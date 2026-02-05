@@ -1,4 +1,5 @@
 program: src/golf_robot/SAC_bandit_0.py  # <-- adjust if filename differs
+project: golf_robot_sac_v1000
 method: bayes   # bayes or grid or "random" if you prefer
 
 metric:

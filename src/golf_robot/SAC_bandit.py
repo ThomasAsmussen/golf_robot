@@ -9,7 +9,7 @@ import wandb
 import uuid
 import time
 
-from rl_common import *  # expects SACActor and QNetwork to exist in rl_common.py
+from rl_common_5_no_noise import *  # expects SACActor and QNetwork to exist in rl_common.py
 
 
 # ---------------------------------------------------------
@@ -148,7 +148,7 @@ def training(
                 log_alpha = torch.tensor(float(log_alpha))
             log_alpha = log_alpha.to(device).detach().clone().requires_grad_(True)
         else:
-            log_alpha = torch.tensor(np.log(0.2), device=device, requires_grad=True)
+            log_alpha = torch.tensor(np.log(rl_cfg["sac"].get("alpha_init", 0.2)), device=device, requires_grad=True)
 
         actor.train()
         q1.train()
@@ -174,7 +174,8 @@ def training(
                 log_alpha = torch.tensor(float(log_alpha))
             log_alpha = log_alpha.to(device).detach().clone().requires_grad_(True)
         else:
-            log_alpha = torch.tensor(np.log(0.2), device=device, requires_grad=True)
+            log_alpha = torch.tensor(np.log(rl_cfg["sac"].get("alpha_init", 0.2)), device=device, requires_grad=True)
+
 
         print("Continuing SAC training from model:", model_name)
         actor.train()
@@ -185,7 +186,9 @@ def training(
         actor = SACActor(state_dim, action_dim, hidden_dim).to(device)
         q1    = QNetwork(state_dim, action_dim, hidden_dim).to(device)
         q2    = QNetwork(state_dim, action_dim, hidden_dim).to(device)
-        log_alpha = torch.tensor(np.log(0.2), device=device, requires_grad=True)
+        alpha0 = rl_cfg.get("sac", {}).get("alpha_init", 0.2)
+        log_alpha = torch.tensor(np.log(alpha0), device=device, requires_grad=True)
+
 
     print(f"Using device: {device}")
 
@@ -193,18 +196,18 @@ def training(
     actor_optimizer = torch.optim.Adam(actor.parameters(), lr=actor_lr)
     q1_optimizer    = torch.optim.Adam(q1.parameters(), lr=critic_lr)
     q2_optimizer    = torch.optim.Adam(q2.parameters(), lr=critic_lr)
-    alpha_optimizer = torch.optim.Adam([log_alpha], lr=actor_lr)
+    alpha_optimizer = torch.optim.Adam([log_alpha], lr=actor_lr * rl_cfg["sac"].get("alpha_lr_mult", 1.0))
 
     # Entropy target
-    target_entropy = -6.0 #-float(action_dim)
+    target_entropy = rl_cfg["sac"].get("target_entropy", -action_dim)
 
     replay_buffer_big = ReplayBuffer(capacity=rl_cfg["training"]["replay_buffer_capacity"])
     replay_buffer_recent = ReplayBuffer(1000)
 
     if use_wandb:
-        wandb.watch(actor, log="gradients", log_freq=100)
-        wandb.watch(q1,    log="gradients", log_freq=100)
-        wandb.watch(q2,    log="gradients", log_freq=100)
+        # wandb.watch(actor, log="gradients", log_freq=100)
+        # wandb.watch(q1,    log="gradients", log_freq=100)
+        # wandb.watch(q2,    log="gradients", log_freq=100)
         run_name = wandb.run.name.replace("-", "_")
     else:
         run_name = "local_run"
@@ -283,7 +286,7 @@ def training(
 
         MAX_DISCS_FEATS = 5  # must match encode_state_with_discs call
 
-        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, max_num_discs=MAX_DISCS_FEATS)
+        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, max_num_discs=0)
         state_norm = scale_state_vec(state_vec) # 19 states
         
         if rl_cfg["model"]["state_dim"] == 37: # 37 states from augmented states
@@ -316,6 +319,10 @@ def training(
         # One-step environment: simulate and get reward
         # -------------------------------------------------
         if env_type == "sim":
+            disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3), (2.4, -0.2), (2.4, 0.2)] # with 5 static discs
+            # disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3)] # with 3 static discs
+            # disc_positions = [(2.1, 0.0)] # with 1 static disc
+            # disc_positions = [] # with 0 discs
             result = env_step(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
         else:
             result = env_step(
@@ -621,23 +628,24 @@ def training(
                 log_dict["avg_reward"]           = avg_reward_eval
                 log_dict["avg_distance_to_hole"] = avg_distance_to_hole_eval
                 log_dict["alpha"]                = float(log_alpha.exp().detach().cpu().item())
+                wandb.log(log_dict, step=episode)
 
-        if use_wandb:
-            if env_type == "sim":
-                distance_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
-            else:
-                # best effort (hole_pos not defined in real path)
-                distance_to_hole = float(np.linalg.norm(np.array([ball_x, ball_y]) - np.array(hole_pos_obs)))
+        # if use_wandb:
+        #     if env_type == "sim":
+        #         distance_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
+        #     else:
+        #         # best effort (hole_pos not defined in real path)
+        #         distance_to_hole = float(np.linalg.norm(np.array([ball_x, ball_y]) - np.array(hole_pos_obs)))
 
-            log_dict["reward"]           = float(max(rewards)) if using_all_holes else float(reward)
-            log_dict["distance_to_hole"] = distance_to_hole
-            log_dict["max_num_discs"]    = max_num_discs
-            if critic_loss_value is not None:
-                log_dict["critic_loss"] = critic_loss_value
-            if actor_loss_value is not None:
-                log_dict["actor_loss"]  = actor_loss_value
+        #     log_dict["reward"]           = float(max(rewards)) if using_all_holes else float(reward)
+        #     log_dict["distance_to_hole"] = distance_to_hole
+        #     log_dict["max_num_discs"]    = max_num_discs
+        #     if critic_loss_value is not None:
+        #         log_dict["critic_loss"] = critic_loss_value
+        #     if actor_loss_value is not None:
+        #         log_dict["actor_loss"]  = actor_loss_value
 
-            wandb.log(log_dict, step=episode)
+        #     wandb.log(log_dict, step=episode)
 
     # -------------------------------------------------
     # Final evaluation + save
@@ -712,20 +720,12 @@ if __name__ == "__main__":
 
     # Optional: wandb sweeps
     if rl_cfg["training"]["use_wandb"]:
-        sweep_config = {
-            "actor_lr":          rl_cfg["training"]["actor_lr"],
-            "critic_lr":         rl_cfg["training"]["critic_lr"],
-            "hidden_dim":        rl_cfg["model"]["hidden_dim"],
-            "batch_size":        rl_cfg["training"]["batch_size"],
-            "grad_steps":        rl_cfg["training"]["grad_steps"],
-        }
 
         project_name = rl_cfg["training"].get("project_name", "rl_golf_wandb")
         wandb.init(
             project=project_name, 
             group="sac",  
             config={
-                **sweep_config,
                 "rl_config":     rl_cfg,
                 "mujoco_config": mujoco_cfg,
             },
@@ -738,16 +738,26 @@ if __name__ == "__main__":
         rl_cfg["reward"]["optimal_speed"]       = cfg.get("optimal_speed", rl_cfg["reward"]["optimal_speed"])
         rl_cfg["reward"]["dist_at_hole_scale"]  = cfg.get("dist_at_hole_scale", rl_cfg["reward"]["dist_at_hole_scale"])
         rl_cfg["reward"]["optimal_speed_scale"] = cfg.get("optimal_speed_scale", rl_cfg["reward"]["optimal_speed_scale"])
+        rl_cfg["training"]["actor_lr"]        = cfg["actor_lr"]
+        rl_cfg["training"]["critic_lr"]       = cfg["critic_lr"]
+        rl_cfg["sac"]["target_entropy"]     = cfg["target_entropy"]
+        rl_cfg["sac"]["alpha_init"]         = cfg["alpha_init"]
+        rl_cfg["sac"]["alpha_lr_mult"]      = cfg["alpha_lr_mult"]
 
-    training(
-        rl_cfg,
-        mujoco_cfg,
-        project_root,
-        continue_training=rl_cfg["training"]["continue_training"],
-        env_step=env_step,
-        env_type=env_type,
-        tmp_name=tmp_name if env_type == "real" else None,
-    )
+
+    try:
+        training(
+            rl_cfg,
+            mujoco_cfg,
+            project_root,
+            continue_training=rl_cfg["training"]["continue_training"],
+            env_step=env_step,
+            env_type=env_type,
+            tmp_name=tmp_name if env_type == "real" else None,
+        )
+    finally:
+        if rl_cfg["training"]["use_wandb"]:
+            wandb.finish()
 
     if env_type == "sim" and tmp_xml_path is not None:
         try:

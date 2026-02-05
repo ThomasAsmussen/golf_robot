@@ -17,7 +17,7 @@ from PIL import Image, ImageTk
 import cv2
 #from contextual_bandit2 import training
 # from SAC_bandit import training
-from thompson_bandit import training2
+from thompson_bandit import training
 from vision.ball2hole_distance import get_ball_final_position
 from vision.ball_start_position import get_ball_start_position
 from planning.generate_trajectory_csv import generate_trajectory_csv
@@ -28,7 +28,7 @@ from gui.gui import *
 
 
 OPERATING_SYSTEM = "linux"  # "windows" or "linux"
-CAMERA_INDEX_START = 2  # starting camera index for real robot
+CAMERA_INDEX_START = 4  # starting camera index for real robot
 CAMERA_INDEX_END   = 2  # ending camera index for real robot
 # CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#7&23aa88cc&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
 #CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
@@ -48,8 +48,8 @@ def real_init_parameters(camera_index, cap=None, chosen_hole=None):
     
     # Holes
     if chosen_hole is None:
-        chosen_hole = random.choice([1,2,3])
-        #chosen_hole = 1
+        chosen_hole = np.random.choice([1,2,3])
+        # chosen_hole = 2
     # chosen_hole = 1  # for testing purposes
     here = Path(__file__).resolve().parent
     config_dir = here.parents[1] / "configs"
@@ -335,7 +335,7 @@ def main():
 
     try:
         print("Starting training...")
-        training2(
+        training(
             rl_cfg=rl_cfg,
             mujoco_cfg=mujoco_cfg,
             project_root=project_root,
