@@ -699,14 +699,7 @@ if __name__ == "__main__":
     if rl_cfg["training"]["use_wandb"]:
         
         project_name = rl_cfg["training"].get("project_name", "rl_golf_wandb")
-        wandb.init(
-            project=project_name, 
-            group="td3",  
-            config={
-                "rl_config":     rl_cfg,
-                "mujoco_config": mujoco_cfg,
-            },
-        )
+        wandb.init()
 
         cfg = wandb.config
         rl_cfg["reward"]["distance_scale"]      = cfg.get("distance_scale", rl_cfg["reward"]["distance_scale"])

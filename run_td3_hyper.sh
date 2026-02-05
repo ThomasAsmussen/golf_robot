@@ -17,11 +17,6 @@ module load python3/3.10.13
 cd ~/golf_robot
 source golf_venv/bin/activate
 
-export WANDB_CONSOLE=off
-export WANDB_DISABLE_CODE=true
-export WANDB_START_METHOD=thread
-export WANDB_DISABLE_STATS=true
-
 # Run the wandb sweep agent
 # --count controls how many trials this job will run
-wandb agent --count 5 rl_golf/golf_robot-src_golf_robot/5ur9ico2
+wandb agent --count 5 rl_golf/golf_robot_td3_v0/lljeiced

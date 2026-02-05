@@ -608,6 +608,7 @@ def training(
                 log_dict["avg_distance_to_hole"] = avg_distance_to_hole_eval
                 log_dict["exploration_noise"]    = exploration_noise
                 wandb.log(log_dict, step=episode)
+
         # if use_wandb:
         #     if env_type == "sim":
         #         distance_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
@@ -698,14 +699,7 @@ if __name__ == "__main__":
     if rl_cfg["training"]["use_wandb"]:
         
         project_name = rl_cfg["training"].get("project_name", "rl_golf_wandb")
-        wandb.init(
-            project=project_name, 
-            group="td3",  
-            config={
-                "rl_config":     rl_cfg,
-                "mujoco_config": mujoco_cfg,
-            },
-        )
+        wandb.init()
 
         cfg = wandb.config
         rl_cfg["reward"]["distance_scale"]      = cfg.get("distance_scale", rl_cfg["reward"]["distance_scale"])

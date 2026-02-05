@@ -1,6 +1,6 @@
-program: src/golf_robot/thompson_bandit_0_no_noise.py
+program: src/golf_robot/thompson_bandit_5.py
 method: bayes
-project: golf_robot_thompson_v0
+project: golf_robot_thompson_v5
 
 metric:
   name: final_success_rate
