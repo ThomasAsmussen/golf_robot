@@ -17,4 +17,4 @@ source golf_venv/bin/activate
 
 # Run the wandb sweep agent
 # --count controls how many trials this job will run
-wandb agent --count 2 rl_golf/golf_robot-src_golf_robot/su5xpvhy
+wandb agent --count 2 rl_golf/golf_robot_ucb_test/su5xpvhy
