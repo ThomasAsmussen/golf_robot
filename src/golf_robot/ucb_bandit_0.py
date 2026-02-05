@@ -264,8 +264,8 @@ def training(
     # ---- wandb
     if use_wandb:
         # wandb.watch(critics[0], log="gradients", log_freq=100)
-        # run_name = wandb.run.name.replace("-", "_")
-        run_name = f"run_{wandb.run.id}"
+        run_name = wandb.run.name.replace("-", "_")
+        # run_name = f"run_{wandb.run.id}"
     else:
         run_name = "local_run"
 
@@ -609,13 +609,7 @@ if __name__ == "__main__":
 
     if rl_cfg["training"].get("use_wandb", False):
         project_name = rl_cfg["training"].get("project_name", "rl_golf_wandb")
-        wandb.init(
-            settings=wandb.Settings(
-                console="off",
-                disable_code=True,
-                _disable_stats=True,  # big one for HPC stability
-            )
-        )
+        wandb.init()
 
 
         cfg = wandb.config
