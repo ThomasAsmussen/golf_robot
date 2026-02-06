@@ -764,12 +764,12 @@ def compute_reward(
             speed_at_hole = multiple_speed_at_hole
 
         else:
-            dist_at_hole = meta.get("dist_at_hole", None)
+            dist_at_hole = meta.get("dist_at_hole", None) 
             speed_at_hole = meta.get("speed_at_hole", None)
 
         if dist_at_hole is not None and speed_at_hole is not None:
-            dist_at_hole = float(dist_at_hole)
-            speed_at_hole = float(speed_at_hole)
+            dist_at_hole = float(dist_at_hole) + np.random.normal(0, 0.01)  # add small noise to prevent overfitting to exact values
+            speed_at_hole = float(speed_at_hole) + np.random.normal(0, 0.05)  # add small noise to prevent overfitting to exact values
 
             # print(f"Dist at hole: {dist_at_hole:.4f} m, Speed at hole: {speed_at_hole:.4f} m/s")
             # You can tune these shaping terms globally
