@@ -13,7 +13,7 @@ import wandb
 import uuid
 import time
 
-from rl_common_3_no_noise import *
+from rl_common_3_noise import *
 
 
 
@@ -199,13 +199,13 @@ def training(
 
     # UCB parameters (constant beta by default, optional linear anneal)
     ucb_beta = float(rl_cfg["ucb"].get("ucb_beta", 1.0))
-    ucb_beta_final = float(rl_cfg["training"].get("ucb_beta_final", 0.2))
+    ucb_beta_final = float(rl_cfg["ucb"].get("ucb_beta_final", 0.2))
 
-    cem_pop = rl_cfg["training"].get("cem_pop", 256)
-    cem_iters = rl_cfg["training"].get("cem_iters", 2)
-    cem_elite_frac = rl_cfg["training"].get("cem_elite_frac", 0.2)
+    cem_pop = rl_cfg["ucb"].get("cem_pop", 256)
+    cem_iters = rl_cfg["ucb"].get("cem_iters", 2)
+    cem_elite_frac = rl_cfg["ucb"].get("cem_elite_frac", 0.2)
     cem_init_std = rl_cfg["ucb"].get("cem_init_std", 0.4)
-    cem_min_std = rl_cfg["training"].get("cem_min_std", 0.1)
+    cem_min_std = rl_cfg["ucb"].get("cem_min_std", 0.1)
     use_cem_warm_start = bool(rl_cfg["training"].get("cem_warm_start", True))
 
     state_dim  = rl_cfg["model"]["state_dim"]
@@ -259,7 +259,7 @@ def training(
 
     # ---- buffers
     replay_buffer_big = ReplayBuffer(capacity=rl_cfg["training"]["replay_buffer_capacity"])
-    replay_buffer_recent = ReplayBuffer(1000)
+    replay_buffer_recent = ReplayBuffer(rl_cfg["training"].get("replay_recent_size", 1000))
 
     # ---- wandb
     if use_wandb:
@@ -512,7 +512,7 @@ def training(
                 states_b, actions_b, rewards_b = sample_mixed(
                     replay_buffer_recent,
                     replay_buffer_big,
-                    recent_ratio=0.7,
+                    recent_ratio=rl_cfg["training"].get("mixed_replay_ratio", 0.5),
                     batch_size=batch_size,
                 )
                 states_b = states_b.to(device)
@@ -613,18 +613,23 @@ if __name__ == "__main__":
 
 
         cfg = wandb.config
-        rl_cfg["reward"]["distance_scale"]      = cfg.get("distance_scale", rl_cfg["reward"]["distance_scale"])
-        rl_cfg["reward"]["in_hole_reward"]      = cfg.get("in_hole_reward", rl_cfg["reward"]["in_hole_reward"])
-        rl_cfg["reward"]["w_distance"]          = cfg.get("w_distance", rl_cfg["reward"]["w_distance"])
-        rl_cfg["reward"]["optimal_speed"]       = cfg.get("optimal_speed", rl_cfg["reward"]["optimal_speed"])
-        rl_cfg["reward"]["dist_at_hole_scale"]  = cfg.get("dist_at_hole_scale", rl_cfg["reward"]["dist_at_hole_scale"])
-        rl_cfg["reward"]["optimal_speed_scale"] = cfg.get("optimal_speed_scale", rl_cfg["reward"]["optimal_speed_scale"])
+        # rl_cfg["reward"]["distance_scale"]      = cfg.get("distance_scale", rl_cfg["reward"]["distance_scale"])
+        # rl_cfg["reward"]["in_hole_reward"]      = cfg.get("in_hole_reward", rl_cfg["reward"]["in_hole_reward"])
+        # rl_cfg["reward"]["w_distance"]          = cfg.get("w_distance", rl_cfg["reward"]["w_distance"])
+        # rl_cfg["reward"]["optimal_speed"]       = cfg.get("optimal_speed", rl_cfg["reward"]["optimal_speed"])
+        # rl_cfg["reward"]["dist_at_hole_scale"]  = cfg.get("dist_at_hole_scale", rl_cfg["reward"]["dist_at_hole_scale"])
+        # rl_cfg["reward"]["optimal_speed_scale"] = cfg.get("optimal_speed_scale", rl_cfg["reward"]["optimal_speed_scale"])
 
         rl_cfg["training"]["critic_lr"]         = cfg["critic_lr"]
+        rl_cfg["training"]["replay_recent_size"]         = cfg["replay_recent_size"]
+        rl_cfg["training"]["mixed_replay_ratio"]         = cfg["mixed_replay_ratio"]
         rl_cfg["ucb"]["ucb_beta"]               = cfg["ucb_beta"]
         rl_cfg["ucb"]["bootstrap_p"]            = cfg["bootstrap_p"]
         rl_cfg["ucb"]["cem_init_std"]           = cfg["cem_init_std"]
-
+        rl_cfg["ucb"]["cem_iters"]              = cfg["cem_iters"]
+        rl_cfg["ucb"]["cem_pop"]                = cfg["cem_pop"]
+        rl_cfg["ucb"]["cem_elite_frac"]         = cfg["cem_elite_frac"]
+        rl_cfg["ucb"]["ucb_beta_final"]         = cfg["ucb_beta_final"]
     try:
         training(
             rl_cfg,
