@@ -55,9 +55,9 @@ model:
   angle_high: 20.0
 
 reward:
-  distance_scale: 3.0
-  in_hole_reward: 5.0
-  w_distance: 1.0
-  optimal_speed: 0.8
-  dist_at_hole_scale: 5.0
-  optimal_speed_scale: 2.0
+  distance_scale: 2.1
+  in_hole_reward: 5.3
+  w_distance: 0.7
+  optimal_speed: 0.7
+  dist_at_hole_scale: 6.0
+  optimal_speed_scale: 1.5
