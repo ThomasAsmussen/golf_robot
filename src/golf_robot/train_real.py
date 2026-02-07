@@ -17,7 +17,7 @@ from PIL import Image, ImageTk
 import cv2
 #from contextual_bandit2 import training
 # from SAC_bandit import training
-from thompson_bandit import training2
+from thompson_bandit import training
 from vision.ball2hole_distance import get_ball_final_position
 from vision.ball_start_position import get_ball_start_position
 from planning.generate_trajectory_csv import generate_trajectory_csv

@@ -433,3 +433,26 @@ class HumanPrompter:
             self._root.destroy()
         except tk.TclError:
             pass
+        
+def main():
+    prompter = HumanPrompter(title="Golf Prompter")
+
+
+    # Ask which hole user thinks was targeted (optional; you can remove this)
+    hole = prompter.ask_which_hole()
+    print(f"User selected hole: {hole}")
+
+    prompter.show_hole(hole) # Show big hole number
+    prompter.confirm_or_exit("Trajectory ready. Continue to execute?")
+    # Ask what happened to the ball
+    outcome = prompter.ask_hole_oob(chosen_hole=hole)
+    print(f"User outcome: {outcome}")
+
+    # Wait for user to close or say we are done
+    prompter.confirm_continue("Done! Press Continue to exit.")
+
+    prompter.close()
+
+
+if __name__ == "__main__":
+    main()

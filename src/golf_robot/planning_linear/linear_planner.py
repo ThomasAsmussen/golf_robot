@@ -1,8 +1,6 @@
 import numpy as np
 import threading
-#from ur10_logger import UR10Logger
 import time
-#from ur10_logger import UR10Logger
 import socket
 
 #Z_PALLET = 0.145  # from config.py
@@ -77,6 +75,8 @@ def send_swing(
     #home = (-2.11202641, -2.45037247, -1.67584054,  0.95906874,  0.53322783,  0.36131151)
     # moved ever so slightly with base
     home = (-2.51202641, -2.45037247, -1.37584054,  0.95906874,  0.53322783,  0.4131151),
+    #home = (-147.88*np.pi/180, -163.86*np.pi/180, -27.81*np.pi/180, 37.84*np.pi/180, 72.60*np.pi/180, 5.21*np.pi/180),
+    follow = (-56.05*np.pi/180, -111.29*np.pi/180, -115.02*np.pi/180, 36.43*np.pi/180, 9.17*np.pi/180, 20.39*np.pi/180),
     settle_s=0.5
 ):
     """
@@ -128,6 +128,7 @@ def send_swing(
     p_start = _pose_p((x_start, y_start, z_start), Rtool)
     p_end   = _pose_p((x_end,   y_end,   z_end),   Rtool)
     p_mid   = _pose_p((x_ball,  y_ball,  z_ball),  Rtool)
+    p_after_mid = _pose_p((x_end+0.5*(x_end-x_ball), y_end+0.5*(y_end-y_ball), z_end), Rtool)
 
     # URScript
     prog = []
@@ -137,12 +138,16 @@ def send_swing(
     print(f"Mid:   {p_mid}")
     print(f"End:   {p_end}")
     prog.append(f"  movej({list(home)}, 0.2, 0.2)")
-    prog.append(f"  movel({p_start}, a=0.2, v=0.2)")
-    prog.append(f"  movel({p_end},   a={acc:.3f}, v={vel:.3f})")
+    #prog.append(f"  q_start = get_inverse_kin({p_start})")
+    #prog.append(f"  movej(q_start, {acc:.3f}, {vel:.3f}, 0, 0.1)")          # no blend yet
+    prog.append(f"  movel({p_start}, 0.2, 0.2)")          # no named args
+    prog.append(f"  movel({p_end}, {acc:.3f}, {vel:.3f}, 0, 0.30)")          # no named args
+    #prog.append(f"  q_follow = get_inverse_kin({follow})")
+    #prog.append(f"  movej({list(follow)}, {acc:.3f}, {vel*0.5:.3f}, 0, 0.1)")          # no blend yet
     if settle_s and settle_s > 0:
         prog.append(f"  sleep({float(settle_s):.3f})")
     
-    prog.append(f"  movej({list(home)}, 0.2, 0.2)")
+    prog.append(f"  movej({list(home)}, 4.5, 0.5)")
     # prog.append(f"  movel({p_mid}, a=0.2, v=0.2)")
     prog.append("end")
     prog.append("swing()")
@@ -164,6 +169,7 @@ def send_swing(
 
 # ---------- example usage ----------
 if __name__ == "__main__":
+    from ur10_logger import UR10Logger
     #HOST = "192.168.56.101" #SIM
     HOST = "192.38.66.227"   # UR10
     PORT_logger = 30003
@@ -171,9 +177,9 @@ if __name__ == "__main__":
     time_sleep = 10.0
 
     # 1) Set up your logger on its own socket/connection
-    #logger = UR10Logger(HOST, port=PORT_logger, log_folder="log")
-    #logger.connect()
-    #logg#er.start_logging()#
+    logger = UR10Logger(HOST, port=PORT_logger, log_folder="log")
+    logger.connect()
+    logger.start_logging()
 
     # 2) Open a separate socket for sending the program
     cmd = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -182,7 +188,7 @@ if __name__ == "__main__":
     print("Sending swing...")
     x_ball_origo=-0.64026
     ball_radius=0.021335
-    offset = 0.33 # 0.33 max
+    offset = 0.40 # 0.33 max
     z_buffer = 0.015
     x_start=(x_ball_origo+ball_radius)-offset
     x_end=(x_ball_origo+ball_radius)+offset
@@ -191,7 +197,7 @@ if __name__ == "__main__":
     swing_meta = send_swing(cmd, x_start=x_start, x_end=x_end,
            y_ball=y_ball_origo, z_ball=z_ball,#0.01+Z_PALLET, #-0.040 old
            path_angle_deg=4.86, attack_angle_deg=0.0,
-           vel=1.5, acc=5.0)
+           vel=1.2, acc=4.5)
 
     # 3) Let the swing run and the logger collect a bit extra
     time.sleep(time_sleep)   # 8.0 adjust to cover your full motion
@@ -205,16 +211,16 @@ if __name__ == "__main__":
     
 
     #logger.stop_logging()
-    #logger.close()
+    logger.close()
 
-    #report = logger.remove_outliers()
-    #print(report)
+    report = logger.remove_outliers()
+    print(report)
 
     # 5) Save whatever streams you want (no plotting here)
     csv_path = logger.save_csv(which=("tcp","dtcp","q","dq"), suffix="swing")
     print(f"Saved: {csv_path}")
 
-    show = False
+    show = True
     # If you want plots, call your own helpers elsewhere, e.g.:
     logger.plot("q",   pi_axis=True,  save=True, show=show)
     logger.plot("dq",  pi_axis=False, save=True, show=show)
