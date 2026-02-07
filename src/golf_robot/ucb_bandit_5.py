@@ -259,7 +259,7 @@ def training(
 
     # ---- buffers
     replay_buffer_big = ReplayBuffer(capacity=rl_cfg["training"]["replay_buffer_capacity"])
-    replay_buffer_recent = ReplayBuffer(rl_cfg["training"].get("replay_recent_size", 1000))
+    replay_buffer_recent = ReplayBuffer(int(rl_cfg["training"].get("replay_recent_size", 1000)))
 
     # ---- wandb
     if use_wandb:
