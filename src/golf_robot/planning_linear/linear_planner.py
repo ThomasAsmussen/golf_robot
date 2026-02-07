@@ -2,7 +2,7 @@ import numpy as np
 import threading
 #from ur10_logger import UR10Logger
 import time
-#from ur10_logger import UR10Logger
+# from ur10_logger import UR10Logger
 import socket
 
 #Z_PALLET = 0.145  # from config.py
@@ -171,27 +171,29 @@ if __name__ == "__main__":
     time_sleep = 10.0
 
     # 1) Set up your logger on its own socket/connection
-    #logger = UR10Logger(HOST, port=PORT_logger, log_folder="log")
-    #logger.connect()
-    #logg#er.start_logging()#
+    # logger = UR10Logger(HOST, port=PORT_logger, log_folder="log")
+    # logger.connect()
+    # logger.start_logging()#
 
     # 2) Open a separate socket for sending the program
     cmd = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     cmd.connect((HOST, PORT_cmd))
 
     print("Sending swing...")
-    x_ball_origo=-0.64026
+
+
+    x_ball_origo=-0.62823
     ball_radius=0.021335
-    offset = 0.33 # 0.33 max
-    z_buffer = 0.015
+    offset = 0.3 # 0.33 max
+    z_buffer = 0.01
     x_start=(x_ball_origo+ball_radius)-offset
     x_end=(x_ball_origo+ball_radius)+offset
-    y_ball_origo=-0.59278 +0.01 #-0.546
+    y_ball_origo=-0.57480 #-0.546
     z_ball=0.15512+z_buffer #-0.006
     swing_meta = send_swing(cmd, x_start=x_start, x_end=x_end,
            y_ball=y_ball_origo, z_ball=z_ball,#0.01+Z_PALLET, #-0.040 old
-           path_angle_deg=4.86, attack_angle_deg=0.0,
-           vel=1.5, acc=5.0)
+           path_angle_deg=-2.35, attack_angle_deg=0.0,
+           vel=1.45, acc=5.5)
 
     # 3) Let the swing run and the logger collect a bit extra
     time.sleep(time_sleep)   # 8.0 adjust to cover your full motion
@@ -204,25 +206,25 @@ if __name__ == "__main__":
     cmd.close()
     
 
-    #logger.stop_logging()
-    #logger.close()
+    # logger.stop_logging()
+    # logger.close()
 
-    #report = logger.remove_outliers()
-    #print(report)
+    # report = logger.remove_outliers()
+    # print(report)
 
-    # 5) Save whatever streams you want (no plotting here)
-    csv_path = logger.save_csv(which=("tcp","dtcp","q","dq"), suffix="swing")
-    print(f"Saved: {csv_path}")
+    # # 5) Save whatever streams you want (no plotting here)
+    # csv_path = logger.save_csv(which=("tcp","dtcp","q","dq"), suffix="swing")
+    # print(f"Saved: {csv_path}")
 
-    show = False
-    # If you want plots, call your own helpers elsewhere, e.g.:
-    logger.plot("q",   pi_axis=True,  save=True, show=show)
-    logger.plot("dq",  pi_axis=False, save=True, show=show)
-    # Pose time-series from FK:
-    logger.plot_tcp("tcp",  show=show,  ztool=0.0)                 # x,y,z,rx,ry,rz
-    # Twist time-series from FK-differences:
-    logger.plot_tcp("dtcp", show=show,  ztool=0.0, smoothing=5)    # vx..wz
-    logger.plot_tcp_xy(save=True, show=show, fk=True)  # XY path with equal axes (square)
-    logger.plot_tcp_xyz(save=True, show=show, fk=True)        # 3D path (equal axis)
-    logger.plot_tcp_speed(save=True, show=show)  # speed vs time
+    # show = False
+    # # If you want plots, call your own helpers elsewhere, e.g.:
+    # logger.plot("q",   pi_axis=True,  save=True, show=show)
+    # logger.plot("dq",  pi_axis=False, save=True, show=show)
+    # # Pose time-series from FK:
+    # logger.plot_tcp("tcp",  show=show,  ztool=0.0)                 # x,y,z,rx,ry,rz
+    # # Twist time-series from FK-differences:
+    # logger.plot_tcp("dtcp", show=show,  ztool=0.0, smoothing=5)    # vx..wz
+    # logger.plot_tcp_xy(save=True, show=show, fk=True)  # XY path with equal axes (square)
+    # logger.plot_tcp_xyz(save=True, show=show, fk=True)        # 3D path (equal axis)
+    # logger.plot_tcp_speed(save=True, show=show)  # speed vs time
     # and you can use swing_meta to annotate the ball/planes in your own plot code.
