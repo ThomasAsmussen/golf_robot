@@ -1,5 +1,6 @@
-program: src/golf_robot/contextual_bandit2_5.py  # <-- adjust if filename differs
-method: bayes   # or "random" if you prefer
+program: src/golf_robot/ucb_bandit_5.py
+method: bayes
+project: golf_robot_ucb_v5
 
 metric:
   name: final_success_rate
@@ -42,17 +43,28 @@ parameters:
     min: 0.3
     max: 10.0
 
-  actor_lr:
-    distribution: log_uniform_values
-    min: 1e-4
-    max: 5e-3
-
   critic_lr:
     distribution: log_uniform_values
-    min: 1e-4
+    min: 5e-4
     max: 5e-3
 
-  noise_std:
+  # ---------- Ensemble-UCB exploration ----------
+  # exploration bonus weight: score = mean(Q) + beta * std(Q)
+  ucb_beta:
     distribution: uniform
-    min: 0.1
-    max: 0.5
+    min: 0.0
+    max: 2.0
+
+  # ---------- Bootstrapped ensemble diversity ----------
+  # probability of including a sample in each head's bootstrap mask
+  bootstrap_p:
+    distribution: uniform
+    min: 0.5
+    max: 0.95
+
+  # ---------- CEM planning search width ----------
+  # initial std of Gaussian action distribution in CEM
+  cem_init_std:
+    distribution: uniform
+    min: 0.2
+    max: 0.8

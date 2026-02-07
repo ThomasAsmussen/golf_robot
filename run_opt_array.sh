@@ -5,8 +5,8 @@
 #BSUB -R "span[hosts=1]"
 #BSUB -R "rusage[mem=500MB]"
 #BSUB -W 23:59
-#BSUB -o outputs/Output_%J_%I.out
-#BSUB -e outputs/Error_%J_%I.err
+#BSUB -o outputs/opt_start_end_%J_%I.out
+#BSUB -e outputs/opt_start_end_%J_%I.err
 
 echo "Running start/end offset optimization array job..."
 echo "JobID: $LSB_JOBID  Index: $LSB_JOBINDEX"

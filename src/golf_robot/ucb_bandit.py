@@ -191,16 +191,16 @@ def training(
     grad_steps = rl_cfg["training"]["grad_steps"]
 
     K = rl_cfg["training"].get("num_heads", 8)
-    bootstrap_p = rl_cfg["training"].get("bootstrap_p", 0.8)
+    bootstrap_p = rl_cfg["ucb"].get("bootstrap_p", 0.8)
 
     # UCB parameters (constant beta by default, optional linear anneal)
-    ucb_beta = float(rl_cfg["training"].get("ucb_beta", 1.0))
+    ucb_beta = float(rl_cfg["ucb"].get("ucb_beta", 1.0))
     ucb_beta_final = float(rl_cfg["training"].get("ucb_beta_final", 0.2))
 
     cem_pop = rl_cfg["training"].get("cem_pop", 256)
     cem_iters = rl_cfg["training"].get("cem_iters", 2)
     cem_elite_frac = rl_cfg["training"].get("cem_elite_frac", 0.2)
-    cem_init_std = rl_cfg["training"].get("cem_init_std", 0.4)
+    cem_init_std = rl_cfg["ucb"].get("cem_init_std", 0.4)
     cem_min_std = rl_cfg["training"].get("cem_min_std", 0.1)
     use_cem_warm_start = bool(rl_cfg["training"].get("cem_warm_start", True))
 
@@ -259,7 +259,7 @@ def training(
 
     # ---- wandb
     if use_wandb:
-        wandb.watch(critics[0], log="gradients", log_freq=100)
+        # wandb.watch(critics[0], log="gradients", log_freq=100)
         run_name = wandb.run.name.replace("-", "_")
     else:
         run_name = "local_run"
@@ -345,7 +345,7 @@ def training(
         # -------------------------------------------------
         # Encode + scale state
         # -------------------------------------------------
-        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 5)
+        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 0)
         state_norm = scale_state_vec(state_vec)
         s = torch.tensor(state_norm, dtype=torch.float32, device=device)
 
@@ -397,6 +397,10 @@ def training(
         # Step env
         # -------------------------------------------------
         if env_type == "sim":
+            # disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3), (2.4, -0.2), (2.4, 0.2)] # with 5 static discs
+            # disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3)] # with 3 static discs
+            # disc_positions = [(2.1, 0.0)] # with 1 static disc
+            # disc_positions = [] # with 0 discs
             result = env_step(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
         else:
             result = env_step(
@@ -531,8 +535,8 @@ def training(
             print("========================================")
             print(f"Episode {episode + 1}/{episodes}, Reward: {reward:.4f}, beta: {beta_t:.3f}")
 
-        if use_wandb:
-            wandb.log({"reward": float(reward), "ucb_beta": float(beta_t)}, step=episode)
+        # if use_wandb:
+        #     wandb.log({"reward": float(reward), "ucb_beta": float(beta_t)}, step=episode)
 
     # -------------------------------------------------
     # Final evaluation + save
@@ -608,16 +612,32 @@ if __name__ == "__main__":
                 "mujoco_config": mujoco_cfg,
             },
         )
+        cfg = wandb.config
+        rl_cfg["reward"]["distance_scale"]      = cfg.get("distance_scale", rl_cfg["reward"]["distance_scale"])
+        rl_cfg["reward"]["in_hole_reward"]      = cfg.get("in_hole_reward", rl_cfg["reward"]["in_hole_reward"])
+        rl_cfg["reward"]["w_distance"]          = cfg.get("w_distance", rl_cfg["reward"]["w_distance"])
+        rl_cfg["reward"]["optimal_speed"]       = cfg.get("optimal_speed", rl_cfg["reward"]["optimal_speed"])
+        rl_cfg["reward"]["dist_at_hole_scale"]  = cfg.get("dist_at_hole_scale", rl_cfg["reward"]["dist_at_hole_scale"])
+        rl_cfg["reward"]["optimal_speed_scale"] = cfg.get("optimal_speed_scale", rl_cfg["reward"]["optimal_speed_scale"])
 
-    training(
-        rl_cfg,
-        mujoco_cfg,
-        project_root,
-        continue_training=rl_cfg["training"].get("continue_training", False),
-        env_step=env_step,
-        env_type=env_type,
-        tmp_name=tmp_name if env_type == "real" else None,
-    )
+        rl_cfg["training"]["critic_lr"]         = cfg["critic_lr"]
+        rl_cfg["ucb"]["ucb_beta"]               = cfg["ucb_beta"]
+        rl_cfg["ucb"]["bootstrap_p"]            = cfg["bootstrap_p"]
+        rl_cfg["ucb"]["cem_init_std"]           = cfg["cem_init_std"]
+
+    try:
+        training(
+            rl_cfg,
+            mujoco_cfg,
+            project_root,
+            continue_training=rl_cfg["training"]["continue_training"],
+            env_step=env_step,
+            env_type=env_type,
+            tmp_name=tmp_name if env_type == "real" else None,
+        )
+    finally:
+        if rl_cfg["training"]["use_wandb"]:
+            wandb.finish()
 
     if env_type == "sim" and tmp_xml_path is not None:
         try:

@@ -101,10 +101,10 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
 
     print(f"Using device: {device}")
 
-    actor_optimizer  = torch.optim.Adam(actor.parameters(),  lr=actor_lr)
-    critic_optimizer = torch.optim.Adam(critic.parameters(), lr=critic_lr)
-    actor_optimizer  = torch.optim.Adam(actor.parameters(),  lr=actor_lr)
-    critic_optimizer = torch.optim.Adam(critic.parameters(), lr=critic_lr)
+    actor_optimizer  = torch.optim.Adam(actor.parameters(),  lr=actor_lr, weight_decay=1e-5)
+    critic_optimizer = torch.optim.Adam(critic.parameters(), lr=critic_lr, weight_decay=1e-5)
+    # actor_optimizer  = torch.optim.Adam(actor.parameters(),  lr=actor_lr)
+    # critic_optimizer = torch.optim.Adam(critic.parameters(), lr=critic_lr)
     # actor_optimizer  = torch.optim.SGD(actor.parameters(),  lr=actor_lr)
     # critic_optimizer = torch.optim.SGD(critic.parameters(), lr=critic_lr)
 
@@ -195,7 +195,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
             original_hole_num = chosen_hole
 
 
-        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 5)
+        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 0)
         # state_vec = np.concatenate([ball_start_obs, hole_pos_obs])  # No discs for now
 
         state_norm = scale_state_vec(state_vec)
@@ -231,6 +231,10 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
         # One-step environment: simulate and get reward
         # -------------------------------------------------
         if env_type == "sim":
+            # disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3), (2.4, -0.2), (2.4, 0.2)] # with 5 static discs
+            # disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3)] # with 3 static discs
+            # disc_positions = [(2.1, 0.0)] # with 1 static disc
+            # disc_positions = [] # with 0 discs
             result = env_step(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
         if env_type == "real":
             result = env_step(impact_velocity=speed, swing_angle=angle_deg, ball_start_position=ball_start_obs, planner="quintic", check_rtt=True, chosen_hole=chosen_hole)
@@ -502,7 +506,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_fu
             if max_num_discs >= 3:
                 horizon = 6000
             else:
-                horizon = 20000
+                horizon = episodes
 
             frac = min(1.0, stage_len / horizon)
             noise_std = noise_std_stage_start + frac * (noise_std_end - noise_std_stage_start)
@@ -645,17 +649,24 @@ if __name__ == "__main__":
         rl_cfg["reward"]["optimal_speed"]    = cfg.get("optimal_speed", rl_cfg["reward"]["optimal_speed"])
         rl_cfg["reward"]["dist_at_hole_scale"] = cfg.get("dist_at_hole_scale", rl_cfg["reward"]["dist_at_hole_scale"])
         rl_cfg["reward"]["optimal_speed_scale"] = cfg.get("optimal_speed_scale", rl_cfg["reward"]["optimal_speed_scale"])
+        rl_cfg["training"]["actor_lr"]      = float(cfg["actor_lr"])
+        rl_cfg["training"]["critic_lr"]     = float(cfg["critic_lr"])
+        rl_cfg["training"]["noise_std"]     = float(cfg["noise_std"])
 
     # Train policy
-    training(
-        rl_cfg,
-        mujoco_cfg,
-        project_root,
-        continue_training=rl_cfg["training"]["continue_training"],
-        env_step=env_step,
-        env_type=env_type,
-        tmp_name=tmp_name if env_type == "real" else None,
-    )
+    try:
+        training(
+            rl_cfg,
+            mujoco_cfg,
+            project_root,
+            continue_training=rl_cfg["training"]["continue_training"],
+            env_step=env_step,
+            env_type=env_type,
+            tmp_name=tmp_name if env_type == "real" else None,
+        )
+    finally:
+        if rl_cfg["training"]["use_wandb"]:
+            wandb.finish()
 
     # Clean up temporary XML if it exists (sim only)
     if env_type == "sim" and tmp_xml_path is not None:

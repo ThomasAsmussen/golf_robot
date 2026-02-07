@@ -4,99 +4,37 @@ import sys
 import yaml
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import wandb
 import uuid
 import time
-
-from rl_common_5_no_noise import *  # expects SACActor and QNetwork to exist in rl_common.py
+from rl_common_5_no_noise import *
 
 
 # ---------------------------------------------------------
-# SAC checkpoint helpers (local to keep changes self-contained)
+# Training loop 
 # ---------------------------------------------------------
-def _load_sac_actor(model_path: Path, rl_cfg):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    state_dim  = rl_cfg["model"]["state_dim"]
-    action_dim = rl_cfg["model"]["action_dim"]
-    hidden_dim = rl_cfg["model"]["hidden_dim"]
-    actor = SACActor(state_dim, action_dim, hidden_dim).to(device)
-    actor.load_state_dict(torch.load(model_path, map_location=device))
-    actor.eval()
-    return actor, device
-
-
-def _load_q(model_path: Path, rl_cfg, device=None):
-    if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    state_dim  = rl_cfg["model"]["state_dim"]
-    action_dim = rl_cfg["model"]["action_dim"]
-    hidden_dim = rl_cfg["model"]["hidden_dim"]
-    qnet = QNetwork(state_dim, action_dim, hidden_dim).to(device)
-    qnet.load_state_dict(torch.load(model_path, map_location=device))
-    qnet.eval()
-    return qnet
-
-
-def find_latest_sac_checkpoint(model_dir: Path, prefix: str | None = None):
+def training(rl_cfg, mujoco_cfg, project_root, continue_training=False, input_func=None, env_step=None, env_type="sim", tmp_name=None, camera_index_start=None):
     """
-    Find newest SAC checkpoint trio: (actor, q1, q2) and optional log_alpha.
-    If prefix is given, only match files containing that prefix.
-    """
-    actor_files = list(model_dir.glob("sac_actor_*.pth"))
-    if prefix is not None:
-        actor_files = [f for f in actor_files if prefix in f.stem]
-
-    if not actor_files:
-        raise FileNotFoundError("No matching SAC actor checkpoints found.")
-
-    actor_file = max(actor_files, key=lambda f: f.stat().st_mtime)
-
-    q1_file = actor_file.with_name(actor_file.name.replace("sac_actor_", "sac_q1_"))
-    q2_file = actor_file.with_name(actor_file.name.replace("sac_actor_", "sac_q2_"))
-    alpha_file = actor_file.with_name(actor_file.name.replace("sac_actor_", "sac_log_alpha_"))
-
-    if not q1_file.exists():
-        raise FileNotFoundError(f"Matching q1 not found for {actor_file.name}")
-    if not q2_file.exists():
-        raise FileNotFoundError(f"Matching q2 not found for {actor_file.name}")
-    
-    print(f"loaded sac actor from {actor_file}")
-
-    return actor_file, q1_file, q2_file, (alpha_file if alpha_file.exists() else None)
-
-
-# ---------------------------------------------------------
-# Training loop (SAC, single-step / contextual bandit)
-# ---------------------------------------------------------
-def training(
-    rl_cfg,
-    mujoco_cfg,
-    project_root,
-    continue_training=False,
-    input_func=None,
-    env_step=None,
-    env_type="sim",
-    tmp_name=None,
-    camera_index_start=None,
-):
-    """
-    SAC training loop for golf robot (single-step contextual bandit):
+    Training loop for golf robot:
       - context = (ball_start_obs, hole_pos_obs, discs)
-      - action  = (speed, angle) in normalized [-1,1]^2 then mapped to physical
+      - action  = (speed, angle)
       - reward  = f(final ball position, hole position, in_hole)
 
-    No next_state, no bootstrapping. Critics regress Q(s,a) ≈ E[r|s,a].
-    Actor maximizes E[Q - alpha*logpi] (equivalently minimize alpha*logpi - Q).
+    No bootstrapping, no next_state.
+    Critic learns Q(s,a) ≈ E[r | s,a].
+    Actor learns to maximize Q(s, π(s)).
     """
     if env_step is None:
         raise ValueError("training() requires env_step (sim or real environment function).")
 
-    print("Starting training with SAC Bandit...")
+    print("Starting training with Contextual Bandit 2...")
     episodes   = rl_cfg["training"]["episodes"]
     batch_size = rl_cfg["training"]["batch_size"]
     actor_lr   = rl_cfg["training"]["actor_lr"]
     critic_lr  = rl_cfg["training"]["critic_lr"]
+    noise_std  = rl_cfg["training"]["noise_std"]     # policy exploration noise
     grad_steps = rl_cfg["training"]["grad_steps"]
 
     state_dim  = rl_cfg["model"]["state_dim"]
@@ -116,114 +54,89 @@ def training(
 
     hole_positions = get_hole_positions()
 
-    # Wandb only in sim by default
-    use_wandb = rl_cfg["training"]["use_wandb"] if env_type == "sim" else False
+    # Linear schedule for exploration noise (policy noise)
+    noise_std_start = noise_std
+    noise_std_end   = 0.05
+
+    if env_type == "sim":
+        use_wandb = rl_cfg["training"]["use_wandb"]
+    else:
+        use_wandb = False
+
     model_name = rl_cfg["training"].get("model_name", None)
 
     # -------------------------
-    # Initialize models (SAC)
+    # Initialize models
     # -------------------------
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    model_dir = project_root / "models" / "rl" / "sac"
-    model_dir.mkdir(parents=True, exist_ok=True)
-
     if continue_training and env_type == "real":
-        actor_path, q1_path, q2_path, alpha_path = find_latest_sac_checkpoint(model_dir, prefix=None)
-        print("Loading latest SAC checkpoints:")
-        print(f"  Actor: {actor_path.name}")
-        print(f"  Q1   : {q1_path.name}")
-        print(f"  Q2   : {q2_path.name}")
-        if alpha_path is not None:
-            print(f"  Alpha: {alpha_path.name}")
 
-        actor, device = _load_sac_actor(actor_path, rl_cfg)
-        q1 = _load_q(q1_path, rl_cfg, device=device)
-        q2 = _load_q(q2_path, rl_cfg, device=device)
+        model_dir = project_root / "models" / "rl" / "bandit"
 
-        # log_alpha (optional)
-        if alpha_path is not None:
-            log_alpha = torch.load(alpha_path, map_location=device)
-            if not torch.is_tensor(log_alpha):
-                log_alpha = torch.tensor(float(log_alpha))
-            log_alpha = log_alpha.to(device).detach().clone().requires_grad_(True)
-        else:
-            log_alpha = torch.tensor(np.log(rl_cfg["sac"].get("alpha_init", 0.2)), device=device, requires_grad=True)
+        actor_path, critic_path = find_latest_ddpg_checkpoint(
+            model_dir,
+            prefix=None,   # or None to load absolutely newest
+        )
 
-        actor.train()
-        q1.train()
-        q2.train()
+        print(f"Loading latest checkpoints:")
+        print(f"  Actor : {actor_path.name}")
+        print(f"  Critic: {critic_path.name}")
+
+        actor, device = load_actor(actor_path, rl_cfg)
+        critic, _     = load_critic(critic_path, rl_cfg)
 
     elif continue_training:
-        # Expect explicit model_name (kept similar to old behavior)
-        if model_name is None:
-            raise ValueError("continue_training=True but rl_cfg['training']['model_name'] is None")
-
-        actor_path = model_dir / f"sac_actor_{model_name}"
-        q1_path    = model_dir / f"sac_q1_{model_name}"
-        q2_path    = model_dir / f"sac_q2_{model_name}"
-        alpha_path = model_dir / f"sac_log_alpha_{model_name}"
-
-        actor, device = _load_sac_actor(actor_path, rl_cfg)
-        q1 = _load_q(q1_path, rl_cfg, device=device)
-        q2 = _load_q(q2_path, rl_cfg, device=device)
-
-        if alpha_path.exists():
-            log_alpha = torch.load(alpha_path, map_location=device)
-            if not torch.is_tensor(log_alpha):
-                log_alpha = torch.tensor(float(log_alpha))
-            log_alpha = log_alpha.to(device).detach().clone().requires_grad_(True)
-        else:
-            log_alpha = torch.tensor(np.log(rl_cfg["sac"].get("alpha_init", 0.2)), device=device, requires_grad=True)
-
-
-        print("Continuing SAC training from model:", model_name)
-        actor.train()
-        q1.train()
-        q2.train()
-
+        actor, device = load_actor(
+            model_path=project_root / "models" / "rl" / "bandit" / f"ddpg_actor_{model_name}",
+            rl_cfg=rl_cfg,
+        )
+        critic, _ = load_critic(
+            model_path=project_root / "models" / "rl" / "bandit" / f"ddpg_critic_{model_name}",
+            rl_cfg=rl_cfg,
+        )
+        print("Continuing training from model:", model_name)
     else:
-        actor = SACActor(state_dim, action_dim, hidden_dim).to(device)
-        q1    = QNetwork(state_dim, action_dim, hidden_dim).to(device)
-        q2    = QNetwork(state_dim, action_dim, hidden_dim).to(device)
-        alpha0 = rl_cfg.get("sac", {}).get("alpha_init", 0.2)
-        log_alpha = torch.tensor(np.log(alpha0), device=device, requires_grad=True)
-
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        actor = Actor(state_dim, action_dim, hidden_dim).to(device)
+        critic = Critic(state_dim, action_dim, hidden_dim).to(device)
 
     print(f"Using device: {device}")
 
-    # SAC optimizers (Adam is strongly recommended)
-    actor_optimizer = torch.optim.Adam(actor.parameters(), lr=actor_lr)
-    q1_optimizer    = torch.optim.Adam(q1.parameters(), lr=critic_lr)
-    q2_optimizer    = torch.optim.Adam(q2.parameters(), lr=critic_lr)
-    alpha_optimizer = torch.optim.Adam([log_alpha], lr=actor_lr * rl_cfg["sac"].get("alpha_lr_mult", 1.0))
-
-    # Entropy target
-    target_entropy = rl_cfg["sac"].get("target_entropy", -action_dim)
+    actor_optimizer  = torch.optim.Adam(actor.parameters(),  lr=actor_lr, weight_decay=1e-5)
+    critic_optimizer = torch.optim.Adam(critic.parameters(), lr=critic_lr, weight_decay=1e-5)
+    # actor_optimizer  = torch.optim.Adam(actor.parameters(),  lr=actor_lr)
+    # critic_optimizer = torch.optim.Adam(critic.parameters(), lr=critic_lr)
+    # actor_optimizer  = torch.optim.SGD(actor.parameters(),  lr=actor_lr)
+    # critic_optimizer = torch.optim.SGD(critic.parameters(), lr=critic_lr)
 
     replay_buffer_big = ReplayBuffer(capacity=rl_cfg["training"]["replay_buffer_capacity"])
-    replay_buffer_recent = ReplayBuffer(1000)
+    replay_buffer_recent = ReplayBuffer(1000)  # Smaller buffer for recent experiences
 
     if use_wandb:
-        # wandb.watch(actor, log="gradients", log_freq=100)
-        # wandb.watch(q1,    log="gradients", log_freq=100)
-        # wandb.watch(q2,    log="gradients", log_freq=100)
+        # wandb.watch(actor,  log="gradients", log_freq=100)
+        # wandb.watch(critic, log="gradients", log_freq=100)
         run_name = wandb.run.name.replace("-", "_")
     else:
         run_name = "local_run"
 
+    model_dir = project_root / "models" / "rl" / "bandit"
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    actor.train()
+    critic.train()
     log_dict = {}
     last_success_rate = 0.0
     last_last_success_rate = 0.0
-
+    # For now we don't actually place discs, but the state format reserves 5.
+    
     max_num_discs = rl_cfg["training"]["max_num_discs"]
     stage_start_episode = 0
+    noise_std_stage_start = noise_std
 
     episode_logger = None
     episode_log_path = None
 
     if env_type == "real":
-        episode_log_path = project_root / "log" / "sac" / "real_episodes" / "episode_logger.jsonl"
+        episode_log_path = project_root / "log" / "real_episodes" / "episode_logger.jsonl"
         episode_logger = EpisodeLoggerJsonl(episode_log_path)
 
         loaded_n = load_replay_from_jsonl(
@@ -237,14 +150,13 @@ def training(
             print(f"Loaded {loaded_n} episodes from {episode_log_path} into replay buffer.")
         else:
             print(f"No existing episode log found at {episode_log_path}. Starting fresh.")
-
-    # ---------------------------------------------------------
-    # Main loop
-    # ---------------------------------------------------------
+    
     for episode in range(episodes):
-
-        # Periodic eval (real): keep your existing trigger logic
-        if env_type == "real" and episode_logger.get_length() % 1 == 0:
+        # -------------------------------------------------
+        # Sample a context (ball start + hole + discs)
+        # -------------------------------------------------
+                # Periodic evaluation of greedy policy (no exploration noise)
+        if env_type == "real" and episode_logger.get_length() % 10000 == 0:
             (
                 success_rate_eval,
                 avg_reward_eval,
@@ -265,54 +177,54 @@ def training(
                 f"[EVAL] Success Rate after {episode + 1} episodes: "
                 f"{success_rate_eval:.2f}, Avg Reward: {avg_reward_eval:.3f}"
             )
-
-        # Sample context
         if env_type == "sim":
+
             if last_success_rate > 0.9 and last_last_success_rate > 0.9 and False:
                 max_num_discs = min(MAX_DISCS, max_num_discs + 1)
                 last_success_rate = 0.0
                 last_last_success_rate = 0.0
+                noise_std = 0.15
+                noise_std_stage_start = noise_std
                 stage_start_episode = episode
                 replay_buffer_recent.clear()
+            
+            ball_start_obs, hole_pos_obs, disc_positions, x, y, hole_pos = sim_init_parameters(mujoco_cfg, max_num_discs)
 
-            ball_start_obs, hole_pos_obs, disc_positions, x, y, hole_pos = sim_init_parameters(
-                mujoco_cfg, max_num_discs
-            )
-        else:
-            ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(
-                camera_index=camera_index_start
-            )
+        if env_type == "real":
+            ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(camera_index=camera_index_start)
             original_hole_num = chosen_hole
 
-        MAX_DISCS_FEATS = 5  # must match encode_state_with_discs call
 
-        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, max_num_discs=0)
-        state_norm = scale_state_vec(state_vec) # 19 states
-        
-        if rl_cfg["model"]["state_dim"] == 37: # 37 states from augmented states
-            aug = augment_state_features(state_vec, max_num_discs=MAX_DISCS_FEATS, dist_clip=5.0)
-            aug_norm = scale_aug_features(aug, max_num_discs=MAX_DISCS_FEATS, dist_clip=5.0)
+        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 0)
+        # state_vec = np.concatenate([ball_start_obs, hole_pos_obs])  # No discs for now
 
-            state_norm = np.concatenate([state_norm, aug_norm], axis=0)
+        state_norm = scale_state_vec(state_vec)
 
-        s = torch.tensor(state_norm, dtype=torch.float32, device=device)
+        s = torch.tensor(state_norm, dtype=torch.float32).to(device)
+        # critic_loss_value = None
+        # actor_loss_value = None
 
         # -------------------------------------------------
-        # SAC policy action: sample a_norm in [-1,1]^2
+        # Policy: a = π(s) + exploration_noise
         # -------------------------------------------------
         with torch.no_grad():
-            a_noisy, _, _ = actor.sample(s.unsqueeze(0))
-            a_noisy = a_noisy.squeeze(0)
+            a_norm = actor(s.unsqueeze(0)).squeeze(0)
+            noise = torch.normal(
+                mean=torch.zeros_like(a_norm),
+                std=noise_std * torch.ones_like(a_norm),
+            )
+        a_noisy = torch.clamp(a_norm + noise, -1.0, 1.0)
+
 
         speed, angle_deg = get_input_parameters(
             a_noisy.cpu().numpy(), speed_low, speed_high, angle_low, angle_high
         )
 
-        # Keep actuator noise for sim (optional)
+        # Environment / actuator noise
         if env_type == "sim":
-            speed_noise     = np.random.normal(0, SPEED_NOISE_STD)
-            angle_deg_noise = np.random.normal(0, ANGLE_NOISE_STD)
-            speed     = np.clip(speed + speed_noise,     speed_low,  speed_high)
+            speed_noise      = np.random.normal(0, SPEED_NOISE_STD)
+            angle_deg_noise  = np.random.normal(0, ANGLE_NOISE_STD)
+            speed     = np.clip(speed + speed_noise,     speed_low, speed_high)
             angle_deg = np.clip(angle_deg + angle_deg_noise, angle_low, angle_high)
 
         # -------------------------------------------------
@@ -324,38 +236,22 @@ def training(
             # disc_positions = [(2.1, 0.0)] # with 1 static disc
             # disc_positions = [] # with 0 discs
             result = env_step(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
-        else:
-            result = env_step(
-                impact_velocity=speed,
-                swing_angle=angle_deg,
-                ball_start_position=ball_start_obs,
-                planner="quintic",
-                check_rtt=True,
-                chosen_hole=chosen_hole,
-            )
+        if env_type == "real":
+            result = env_step(impact_velocity=speed, swing_angle=angle_deg, ball_start_position=ball_start_obs, planner="quintic", check_rtt=True, chosen_hole=chosen_hole)
 
         if result is None:
-            # retry once
             if env_type == "sim":
                 result = env_step(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
-            else:
-                result = env_step(
-                    impact_velocity=speed,
-                    swing_angle=angle_deg,
-                    ball_start_position=ball_start_obs,
-                    planner="quintic",
-                    check_rtt=True,
-                    chosen_hole=chosen_hole,
-                )
+            if env_type == "real":
+                result = env_step(impact_velocity=speed, swing_angle=angle_deg, ball_start_position=ball_start_obs, planner="quintic", check_rtt=True, chosen_hole=chosen_hole)
 
             if result is None:
                 print(
-                    f"Episode {episode + 1}: Environment failed twice. "
+                    f"Episode {episode + 1}: Simulation failed again. "
                     f"Bad action: speed={speed}, angle={angle_deg}"
                 )
-                if env_type == "sim":
-                    print(f"  Hole Position: x={x:.4f}, y={y:.4f}")
-                if rl_cfg["training"]["error_hard_stop"] and env_type == "sim" and not mujoco_cfg["sim"]["render"]:
+                print(f"  Hole Position: x={x:.4f}, y={y:.4f}")
+                if rl_cfg["training"]["error_hard_stop"] and not mujoco_cfg["sim"]["render"]:
                     raise RuntimeError("Simulation failed twice — aborting training.")
                 else:
                     continue
@@ -369,12 +265,10 @@ def training(
         using_all_holes = False
         if env_type == "real" and isinstance(meta, dict):
             is_out_of_bounds = bool(meta.get("out_of_bounds", False))
-            if meta.get("wrong_hole", None) is not None:
+            if meta["wrong_hole"] is not None:
                 chosen_hole = meta["wrong_hole"]
-                hole_pos_obs = np.array(
-                    [get_hole_positions()[chosen_hole]["x"], get_hole_positions()[chosen_hole]["y"]]
-                )
-            elif not in_hole:
+                hole_pos_obs = np.array([get_hole_positions()[chosen_hole]["x"], get_hole_positions()[chosen_hole]["y"]])
+            elif not in_hole and not is_out_of_bounds and not meta["on_green"]:
                 using_all_holes = True
                 hole1 = np.array([get_hole_positions()[1]["x"], get_hole_positions()[1]["y"]])
                 hole2 = np.array([get_hole_positions()[2]["x"], get_hole_positions()[2]["y"]])
@@ -423,14 +317,17 @@ def training(
                 optimal_speed_scale=optimal_speed_scale,
             )
 
-        # Real logging behavior kept
-
         if env_type == "real" and isinstance(meta, dict):
             used_for_training = bool(meta.get("used_for_training", True))
             out_of_bounds = bool(meta.get("out_of_bounds", False))
 
             if not used_for_training:
                 print("Episode discarded by user; not adding to replay buffer.")
+                continue_training_ = meta.get("continue_training", True)
+                if not continue_training_:
+                    print("Training aborted by user.")
+                    break   # 👈 clean exit
+
                 continue
             else:
                 print(f"Storing episode")
@@ -494,7 +391,6 @@ def training(
                     # print(f"Logging episode data: {logging_dict}")
                     episode_logger.log(logging_dict)
 
-        # Store transition
         s_train = s.detach().cpu()
         a_train = a_noisy.detach().cpu()
 
@@ -513,15 +409,18 @@ def training(
             replay_buffer_big.add(s_train, a_train, reward)
             replay_buffer_recent.add(s_train, a_train, reward)
 
-        # -------------------------------------------------
-        # SAC update (single-step)
-        # -------------------------------------------------
-        critic_loss_value = None
-        actor_loss_value = None
 
+        # -------------------------------------------------
+        # TD-style supervised update: Q(s,a) -> r
+        # -------------------------------------------------
         if len(replay_buffer_big.data) >= batch_size:
+            update_actor = True
             if env_type == "real":
                 print("Updating networks...")
+                update_actor = False
+                if episode_logger.get_length() % 10 == 0:
+                    print(f"Updating actor")
+                    update_actor = True
 
             for _ in range(grad_steps):
                 states_b, actions_b, rewards_b = sample_mixed_zero_mean(
@@ -529,78 +428,63 @@ def training(
                     replay_buffer_big,
                     recent_ratio=0.7,
                     batch_size=batch_size,
-                    ball_xy_idx=(0,1)
+                    ball_xy_idx=(0, 1),
                 )
+
+                bxby_mean = states_b[:, [0,1]].mean(dim=0).cpu().numpy()
+                print("batch mean ball_xy (norm):", bxby_mean)
+
 
                 states_b  = states_b.to(device)
                 actions_b = actions_b.to(device)
                 rewards_b = rewards_b.to(device)
 
-                # Critic targets are just rewards (bandit)
-                y = rewards_b
+                
+                td_target = rewards_b
 
-                q1_pred = q1(states_b, actions_b)
-                q2_pred = q2(states_b, actions_b)
-                q1_loss = F.mse_loss(q1_pred, y)
-                q2_loss = F.mse_loss(q2_pred, y)
+                q_pred = critic(states_b, actions_b)
+                # critic_loss = F.mse_loss(q_pred, td_target)
+                critic_loss = F.smooth_l1_loss(q_pred, td_target)
 
-                q1_optimizer.zero_grad()
-                q1_loss.backward()
-                q1_optimizer.step()
+                critic_optimizer.zero_grad()
+                critic_loss.backward()
+                critic_optimizer.step()
 
-                q2_optimizer.zero_grad()
-                q2_loss.backward()
-                q2_optimizer.step()
+                # Actor tries to maximize Q(s, π(s))
+                if update_actor:
+                    a_for_actor = actor(states_b)
+                    actor_loss  = -critic(states_b, a_for_actor).mean()
 
-                # Actor update
-                a_new, logp, _ = actor.sample(states_b)
-                q_new = torch.min(q1(states_b, a_new), q2(states_b, a_new))
+                    actor_optimizer.zero_grad()
+                    actor_loss.backward()
+                    actor_optimizer.step()
 
-                alpha = log_alpha.exp().detach()
-                actor_loss = (alpha * logp - q_new).mean()
+            # critic_loss_value = critic_loss.item()
+            # actor_loss_value  = actor_loss.item()
 
-                actor_optimizer.zero_grad()
-                actor_loss.backward()
-                actor_optimizer.step()
-
-                # Temperature update (auto alpha)
-                alpha_loss = -(log_alpha * (logp + target_entropy).detach()).mean()
-
-                alpha_optimizer.zero_grad()
-                alpha_loss.backward()
-                alpha_optimizer.step()
-
-            critic_loss_value = 0.5 * (q1_loss.item() + q2_loss.item())
-            actor_loss_value  = actor_loss.item()
-
-            # Save during real training
             if env_type == "real":
-                if tmp_name is not None:
-                    torch.save(actor.state_dict(), model_dir / f"sac_actor_{tmp_name}.pth")
-                    torch.save(q1.state_dict(),    model_dir / f"sac_q1_{tmp_name}.pth")
-                    torch.save(q2.state_dict(),    model_dir / f"sac_q2_{tmp_name}.pth")
-                    torch.save(log_alpha.detach().cpu(), model_dir / f"sac_log_alpha_{tmp_name}.pth")
-                else:
+                if tmp_name is not None: 
+                    torch.save(actor.state_dict(),  model_dir / f"ddpg_actor_{tmp_name}.pth")
+                    torch.save(critic.state_dict(), model_dir / f"ddpg_critic_{tmp_name}.pth")
+                else: 
                     print("No tmp_name provided; models not saved during real robot training.")
-
-        if env_type == "real" and isinstance(meta, dict):
+        if env_type == "real":
             if not meta.get("continue_training", True):
                 print("Training aborted by user.")
-                break
+                break   # 👈 clean exit
+
 
         # -------------------------------------------------
-        # Prints / logging
+        # Logging / prints
         # -------------------------------------------------
         if rl_cfg["training"]["do_prints"]:
             print("========================================")
-            if using_all_holes:
-                # show best of the three
-                best_r = float(max(rewards)) if rewards else 0.0
-                print(f"Episode {episode + 1}/{episodes}, Reward(best): {best_r:.4f}")
-            else:
-                print(f"Episode {episode + 1}/{episodes}, Reward: {reward:.4f}")
+            print(f"Episode {episode + 1}/{episodes}, Reward: {reward:.4f}")
+            dist_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
+            print(f"  Distance to Hole: {dist_to_hole:.4f}, In Hole: {in_hole}")
 
-        if (episode) % rl_cfg["training"]["eval_interval"] == 24 and env_type == "sim":
+
+        if (episode) % rl_cfg["training"]["eval_interval"] == 2 and env_type == "sim":
             (
                 success_rate_eval,
                 avg_reward_eval,
@@ -616,6 +500,18 @@ def training(
                 env_type=env_type,
             )
 
+            # Linearly decay policy exploration noise
+            stage_len = max(1, episode - stage_start_episode)
+            
+            if max_num_discs >= 3:
+                horizon = 6000
+            else:
+                horizon = episodes
+
+            frac = min(1.0, stage_len / horizon)
+            noise_std = noise_std_stage_start + frac * (noise_std_end - noise_std_stage_start)
+            # frac = episode / max(1, episodes)
+            # noise_std = noise_std_start + frac * (noise_std_end - noise_std_start)
             last_last_success_rate = last_success_rate
             last_success_rate = success_rate_eval
             print(
@@ -624,34 +520,30 @@ def training(
             )
 
             if use_wandb:
-                log_dict["success_rate"]         = success_rate_eval
-                log_dict["avg_reward"]           = avg_reward_eval
-                log_dict["avg_distance_to_hole"] = avg_distance_to_hole_eval
-                log_dict["alpha"]                = float(log_alpha.exp().detach().cpu().item())
+                log_dict["success_rate"]          = success_rate_eval
+                log_dict["avg_reward"]            = avg_reward_eval
+                log_dict["avg_distance_to_hole"]  = avg_distance_to_hole_eval
+                log_dict["noise_std"]             = noise_std
                 wandb.log(log_dict, step=episode)
 
         # if use_wandb:
-        #     if env_type == "sim":
-        #         distance_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
-        #     else:
-        #         # best effort (hole_pos not defined in real path)
-        #         distance_to_hole = float(np.linalg.norm(np.array([ball_x, ball_y]) - np.array(hole_pos_obs)))
-
-        #     log_dict["reward"]           = float(max(rewards)) if using_all_holes else float(reward)
-        #     log_dict["distance_to_hole"] = distance_to_hole
-        #     log_dict["max_num_discs"]    = max_num_discs
-        #     if critic_loss_value is not None:
-        #         log_dict["critic_loss"] = critic_loss_value
-        #     if actor_loss_value is not None:
-        #         log_dict["actor_loss"]  = actor_loss_value
+        #     distance_to_hole = np.linalg.norm(np.array([ball_x, ball_y]) - hole_pos)
+        #     log_dict["reward"]            = reward
+        #     log_dict["distance_to_hole"]  = distance_to_hole
+        #     log_dict["max_num_discs"]     = max_num_discs
+        #     # if critic_loss_value is not None:
+        #     #     log_dict["critic_loss"] = critic_loss_value
+        #     # if actor_loss_value is not None:
+        #     #     log_dict["actor_loss"]  = actor_loss_value
 
         #     wandb.log(log_dict, step=episode)
+        
 
     # -------------------------------------------------
-    # Final evaluation + save
+    # Final evaluation
     # -------------------------------------------------
     if env_type == "sim":
-        final_success_rate, final_avg_reward, final_avg_distance_to_hole = evaluation_policy_short(
+        (final_success_rate, final_avg_reward, final_avg_distance_to_hole,) = evaluation_policy_short(
             actor,
             device,
             mujoco_cfg,
@@ -662,30 +554,25 @@ def training(
             env_type=env_type,
         )
 
-        if use_wandb:
-            wandb.log({"final_avg_reward": final_avg_reward})
-            wandb.log({"final_success_rate": final_success_rate})
-            wandb.log({"final_avg_distance_to_hole": final_avg_distance_to_hole})
-
-            torch.save(actor.state_dict(), model_dir / f"sac_actor_{run_name}.pth")
-            torch.save(q1.state_dict(),    model_dir / f"sac_q1_{run_name}.pth")
-            torch.save(q2.state_dict(),    model_dir / f"sac_q2_{run_name}.pth")
-            torch.save(log_alpha.detach().cpu(), model_dir / f"sac_log_alpha_{run_name}.pth")
-            print("Sweep complete. SAC models saved.")
-
+    if use_wandb:
+        wandb.log({"final_avg_reward":           final_avg_reward})
+        wandb.log({"final_success_rate":         final_success_rate})
+        wandb.log({"final_avg_distance_to_hole": final_avg_distance_to_hole})
+        torch.save(actor.state_dict(),  model_dir / f"ddpg_actor_{run_name}.pth")
+        torch.save(critic.state_dict(), model_dir / f"ddpg_critic_{run_name}.pth")
+        print("Sweep complete. Models saved.")
+    
     if episode_logger is not None:
         episode_logger.close()
 
     elif tmp_name is not None:
-        torch.save(actor.state_dict(), model_dir / f"sac_actor_{tmp_name}.pth")
-        torch.save(q1.state_dict(),    model_dir / f"sac_q1_{tmp_name}.pth")
-        torch.save(q2.state_dict(),    model_dir / f"sac_q2_{tmp_name}.pth")
-        torch.save(log_alpha.detach().cpu(), model_dir / f"sac_log_alpha_{tmp_name}.pth")
-        print("Training complete. SAC models saved.")
+        torch.save(actor.state_dict(),  model_dir / f"ddpg_actor_{tmp_name}.pth")
+        torch.save(critic.state_dict(), model_dir / f"ddpg_critic_{tmp_name}.pth")
+        print("Training complete. Models saved.")
 
 
 # ---------------------------------------------------------
-# Main (kept the same structure)
+# Main
 # ---------------------------------------------------------
 if __name__ == "__main__":
     here    = Path(__file__).resolve().parent
@@ -702,49 +589,64 @@ if __name__ == "__main__":
     with open(rl_config_path, "r") as f:
         rl_cfg = yaml.safe_load(f)
 
+    # ------------------------------------------------------------------
+    # Select environment: SIM vs REAL
+    # ------------------------------------------------------------------
     env_type = rl_cfg["training"].get("env_type", "sim")
 
     if env_type == "sim":
+        # Import simulator entry point
         from run_sim_rl import run_sim as env_step
 
+        # Temporary XML path (sim only)
         tmp_name     = f"golf_world_tmp_{os.getpid()}_{uuid.uuid4().hex}.xml"
         tmp_xml_path = project_root / "models" / "mujoco" / tmp_name
         mujoco_cfg["sim"]["xml_path"] = str(tmp_xml_path)
-
     elif env_type == "real":
+        """
+        For the real robot, you should implement a function with the same
+        signature as run_sim:
+
+            def run_real(angle_deg, speed, hole_xy, env_cfg, disc_positions):
+                ...
+                return ball_x, ball_y, in_hole, trajectory
+
+        and place it e.g. in run_real_rl.py next to run_sim_rl.py
+        """
         from run_real_rl import run_real as env_step
+
+        # For real robot, the mujoco_cfg may be unused or used only for
+        # shared parameters; we do NOT create a temporary XML.
         tmp_xml_path = None
-        tmp_name = f"real_sac_{os.getpid()}_{uuid.uuid4().hex}"
     else:
         raise ValueError(f"Unknown env_type: {env_type} (expected 'sim' or 'real')")
 
     # Optional: wandb sweeps
     if rl_cfg["training"]["use_wandb"]:
+        sweep_config = {
+            "actor_lr":          rl_cfg["training"]["actor_lr"],
+            "critic_lr":         rl_cfg["training"]["critic_lr"],
+            "noise_std":         rl_cfg["training"]["noise_std"],
+            "hidden_dim":        rl_cfg["model"]["hidden_dim"],
+            "batch_size":        rl_cfg["training"]["batch_size"],
+            "grad_steps":        rl_cfg["training"]["grad_steps"],
+        }
 
         project_name = rl_cfg["training"].get("project_name", "rl_golf_wandb")
-        wandb.init(
-            project=project_name, 
-            group="sac",  
-            config={
-                "rl_config":     rl_cfg,
-                "mujoco_config": mujoco_cfg,
-            },
-        )
+        wandb.init()
 
         cfg = wandb.config
-        rl_cfg["reward"]["distance_scale"]      = cfg.get("distance_scale", rl_cfg["reward"]["distance_scale"])
-        rl_cfg["reward"]["in_hole_reward"]      = cfg.get("in_hole_reward", rl_cfg["reward"]["in_hole_reward"])
-        rl_cfg["reward"]["w_distance"]          = cfg.get("w_distance", rl_cfg["reward"]["w_distance"])
-        rl_cfg["reward"]["optimal_speed"]       = cfg.get("optimal_speed", rl_cfg["reward"]["optimal_speed"])
-        rl_cfg["reward"]["dist_at_hole_scale"]  = cfg.get("dist_at_hole_scale", rl_cfg["reward"]["dist_at_hole_scale"])
+        rl_cfg["reward"]["distance_scale"]   = cfg.get("distance_scale", rl_cfg["reward"]["distance_scale"])
+        rl_cfg["reward"]["in_hole_reward"]   = cfg.get("in_hole_reward", rl_cfg["reward"]["in_hole_reward"])
+        rl_cfg["reward"]["w_distance"]       = cfg.get("w_distance", rl_cfg["reward"]["w_distance"])
+        rl_cfg["reward"]["optimal_speed"]    = cfg.get("optimal_speed", rl_cfg["reward"]["optimal_speed"])
+        rl_cfg["reward"]["dist_at_hole_scale"] = cfg.get("dist_at_hole_scale", rl_cfg["reward"]["dist_at_hole_scale"])
         rl_cfg["reward"]["optimal_speed_scale"] = cfg.get("optimal_speed_scale", rl_cfg["reward"]["optimal_speed_scale"])
-        rl_cfg["training"]["actor_lr"]        = cfg["actor_lr"]
-        rl_cfg["training"]["critic_lr"]       = cfg["critic_lr"]
-        rl_cfg["sac"]["target_entropy"]     = cfg["target_entropy"]
-        rl_cfg["sac"]["alpha_init"]         = cfg["alpha_init"]
-        rl_cfg["sac"]["alpha_lr_mult"]      = cfg["alpha_lr_mult"]
+        rl_cfg["training"]["actor_lr"]      = float(cfg["actor_lr"])
+        rl_cfg["training"]["critic_lr"]     = float(cfg["critic_lr"])
+        rl_cfg["training"]["noise_std"]     = float(cfg["noise_std"])
 
-
+    # Train policy
     try:
         training(
             rl_cfg,
@@ -759,6 +661,7 @@ if __name__ == "__main__":
         if rl_cfg["training"]["use_wandb"]:
             wandb.finish()
 
+    # Clean up temporary XML if it exists (sim only)
     if env_type == "sim" and tmp_xml_path is not None:
         try:
             os.remove(tmp_xml_path)

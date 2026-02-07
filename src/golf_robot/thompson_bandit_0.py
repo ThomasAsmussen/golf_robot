@@ -11,7 +11,7 @@ import uuid
 # import time
 # import cv2
 
-from rl_common import *
+from rl_common_0_no_noise import *
 
 
 # =========================================================
@@ -294,8 +294,8 @@ def training(
 
     # ---- wandb
     if use_wandb:
-        wandb.watch(critics1[0], log="gradients", log_freq=100)
-        wandb.watch(critics2[0], log="gradients", log_freq=100)
+        # wandb.watch(critics1[0], log="gradients", log_freq=100)
+        # wandb.watch(critics2[0], log="gradients", log_freq=100)
         run_name = wandb.run.name.replace("-", "_")
     else:
         run_name = "local_run"
@@ -326,14 +326,14 @@ def training(
                 global_ep0 = sum(1 for _ in f)
     
 
-    ball_table = wandb.Table(columns=[
-        "step",
-        "x",
-        "y",
-        "reward",
-        "in_hole",
-        "planner",
-    ])
+    # ball_table = wandb.Table(columns=[
+    #     "step",
+    #     "x",
+    #     "y",
+    #     "reward",
+    #     "in_hole",
+    #     "planner",
+    # ])
 
 
     # Warm-start memory
@@ -402,7 +402,7 @@ def training(
         # -------------------------------------------------
         # Encode + scale state (NO engineered features)
         # -------------------------------------------------
-        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 5)
+        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 0)
         state_norm = scale_state_vec(state_vec)
         s = torch.tensor(state_norm, dtype=torch.float32, device=device)
 
@@ -437,16 +437,19 @@ def training(
 
         # sim actuator noise
         if env_type == "sim":
+            # print(f"Before noise: speed={speed:.3f}, angle={angle_deg:.3f}")
             speed = np.clip(speed + np.random.normal(0, SPEED_NOISE_STD), speed_low, speed_high)
             angle_deg = np.clip(angle_deg + np.random.normal(0, ANGLE_NOISE_STD), angle_low, angle_high)
+            # print(f"After noise: speed={speed:.3f}, angle={angle_deg:.3f}")
 
         # -------------------------------------------------
         # Step env
         # -------------------------------------------------
         if env_type == "sim":
-            disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3), (2.4, -0.2), (2.4, 0.2)] # with 5 static discs
+            # disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3), (2.4, -0.2), (2.4, 0.2)] # with 5 static discs
             # disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3)] # with 3 static discs
             # disc_positions = [(2.1, 0.0)] # with 1 static disc
+            disc_positions = [] # no discs
             result = env_step(angle_deg, speed, [x, y], mujoco_cfg, disc_positions)
         else:
             result = env_step(
@@ -735,14 +738,7 @@ if __name__ == "__main__":
     
     if env_type == "sim" and rl_cfg["training"].get("use_wandb", False):
         project_name = rl_cfg["training"].get("project_name", "rl_golf_wandb")
-        wandb.init(
-            project=project_name,
-            group="dqn-bts",
-            config={
-                "rl_config": rl_cfg,
-                "mujoco_config": mujoco_cfg,
-            },
-        )
+        wandb.init()
 
     if wandb.run is not None:
         cfg = wandb.config
@@ -759,15 +755,19 @@ if __name__ == "__main__":
         rl_cfg["training"]["bootstrap_p"]     = float(cfg.get("bootstrap_p", rl_cfg["training"]["bootstrap_p"]))
 
     print("RL Config:", rl_cfg)
-    training(
-        rl_cfg,
-        mujoco_cfg,
-        project_root,
-        continue_training=rl_cfg["training"].get("continue_training", False),
-        env_step=env_step,
-        env_type=env_type,
-        tmp_name=tmp_name if env_type == "real" else None,
-    )
+    try:
+        training(
+            rl_cfg,
+            mujoco_cfg,
+            project_root,
+            continue_training=rl_cfg["training"]["continue_training"],
+            env_step=env_step,
+            env_type=env_type,
+            tmp_name=tmp_name if env_type == "real" else None,
+        )
+    finally:
+        if rl_cfg["training"]["use_wandb"]:
+            wandb.finish()
 
     if env_type == "sim" and tmp_xml_path is not None:
         try:

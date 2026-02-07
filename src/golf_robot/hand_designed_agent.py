@@ -24,10 +24,13 @@ def hand_tuned_policy(state_vec: np.ndarray) -> np.ndarray:
     direction = hole_position - ball_position
     
     angle_rad = np.arctan2(direction[1], direction[0])
-    angle_deg = np.degrees(angle_rad)
+    angle_deg = 2.4 # linear variability
+    # angle_deg = np.degrees(angle_rad) + 2.2 # hole 2
+    # angle_deg = np.degrees(angle_rad) + 1.2 # hole 3
 
     # Define a fixed power for the shot
     distance = np.linalg.norm(direction)
     # speed = min(distance * 0.55, 2.0)  # Scale power based on distance, capped at 1.8   
-    speed = min(distance * 0.44, 1.8)
+    # speed = min(distance * 0.42, 1.8)
+    speed = 1.65 # linear variability
     return speed, angle_deg

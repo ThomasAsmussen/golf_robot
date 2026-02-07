@@ -1,12 +1,12 @@
 #!/bin/bash
 #BSUB -q hpc          # or a CPU queue if you don't use GPU
-#BSUB -J td3_sweep
+#BSUB -J thompson_sweep
 #BSUB -n 1
 #BSUB -R "span[hosts=1]"
-#BSUB -R "rusage[mem=2GB]"
+#BSUB -R "rusage[mem=1GB]"
 #BSUB -W 23:59            # walltime (hh:mm)
-#BSUB -o outputs/td3_sweep_%J.out
-#BSUB -e outputs/td3_sweep_%J.err
+#BSUB -o outputs/thompson_sweep_%J.out
+#BSUB -e outputs/thompson_sweep_%J.err
 #BSUB -N
 # Load modules
 
@@ -19,4 +19,4 @@ source golf_venv/bin/activate
 
 # Run the wandb sweep agent
 # --count controls how many trials this job will run
-wandb agent --count 5 rl_golf/golf_robot_td3_v5/13bdhu0b
+wandb agent --count 5 rl_golf/golf_robot_thompson_v5/tp1ocfd3

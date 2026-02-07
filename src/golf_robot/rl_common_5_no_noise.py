@@ -1001,7 +1001,8 @@ def sim_init_parameters(
     x, y = random_hole_in_rectangle(rng=rng)
     hole_pos = np.array([x, y], dtype=float)
     hole_pos_obs = hole_pos + rng.normal(0.0, HOLE_OBS_NOISE_STD, size=(2,))
-
+    # print(f"Real hole position: x={x:.3f}, y={y:.3f}")
+    # print(f"Observed hole position: x={hole_pos_obs[0]:.3f}, y={hole_pos_obs[1]:.3f}")
     disc_positions = generate_disc_positions(
         max_num_discs,
         x - 2.0, x,
@@ -1244,6 +1245,7 @@ def evaluation_policy_short(
                 disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3), (2.4, -0.2), (2.4, 0.2)] # with 5 static discs
                 # disc_positions = [(2.0, -0.3), (2.1, 0.0), (2.0, 0.3)] # with 3 static discs
                 # disc_positions = [(2.1, 0.0)] # with 1 static disc
+                # disc_positions = [] # with 0 discs
                 ball_x, ball_y, in_hole, meta = env_step(
                     angle_deg, speed, [x, y], mujoco_cfg, disc_positions
                 )
