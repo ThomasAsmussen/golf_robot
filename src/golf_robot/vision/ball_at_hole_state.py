@@ -8,15 +8,26 @@ import matplotlib.pyplot as plt
 import time
 import csv
 import json
-from vision.vision_utils import (
-    KalmanFilterCV2D,
-    load_camera_params,
-    rectify_with_chessboard,
-    pixel_to_plane,
-    compute_wb_gains_from_corners,
-    apply_white_balance,
-    plane_to_pixel
-)
+try:
+    from vision.vision_utils import (
+        KalmanFilterCV2D,
+        load_camera_params,
+        rectify_with_chessboard,
+        pixel_to_plane,
+        compute_wb_gains_from_corners,
+        apply_white_balance,
+        plane_to_pixel
+    )
+except ImportError:
+    from vision_utils import (
+        KalmanFilterCV2D,
+        load_camera_params,
+        rectify_with_chessboard,
+        pixel_to_plane,
+        compute_wb_gains_from_corners,
+        apply_white_balance,
+        plane_to_pixel
+    )
 
 
 def get_ref_tl_corner_px(corners_px):
@@ -239,10 +250,9 @@ def process_video(
     dt = 1.0 / src_fps
     kf = KalmanFilterCV2D(
         dt=dt,
-        q_pos=1e-3,      # tune these
-        q_vel=1e-4,
+        sigma_a=0.1,  # m/s²
         meas_std=0.005,  # meters (≈ 5 mm)
-        gate_threshold=15.0
+        gate_threshold=11.83
     )
 
 
@@ -256,6 +266,7 @@ def process_video(
     outside_count = 0
     out_cnt_to_reset = 5
     xs_hist, ys_hist, ts_hist = [], [], []
+    vxs_hist, vys_hist = [], []
     prev_fx = None
     crossed_once = False
     ROI_R = 140  # pixels (tune)
@@ -263,6 +274,8 @@ def process_video(
     DIAM_TOL_M = 0.05
     INIT_CONSEC = 2
     init_streak = 0
+
+    prev_t_s = None
 
     while True:
         ret, frame_raw = cap.read()
@@ -384,14 +397,31 @@ def process_video(
             init_streak = 0
             
         # --- Kalman step ---
-        filt_x, filt_y, filt_vx, filt_vy, used_meas = kf.step(meas)
         t_s = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+
+        # Compute actual dt
+        if prev_t_s is None:
+            dt_k = 1.0 / src_fps
+        else:
+            dt_k = t_s - prev_t_s
+            # Clamp dt to avoid blow-ups on bad timestamps / seeks
+            dt_k = float(np.clip(dt_k, 1e-3, 0.2))  # 1ms..200ms, tune if needed
+
+        prev_t_s = t_s
+
+        # --- Kalman step (use dt_k) ---
+        filt_x, filt_y, filt_vx, filt_vy, used_meas = kf.step(meas, dt=dt_k, t=t_s)
+
+        # filt_x, filt_y, filt_vx, filt_vy, used_meas = kf.step(meas)
+        # t_s = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
         
         if filt_x is not None:
             # 1) store filtered positions
             xs_hist.append(float(filt_x))
             ys_hist.append(float(filt_y))
             ts_hist.append(float(t_s))
+            vxs_hist.append(float(filt_vx))
+            vys_hist.append(float(filt_vy))
 
             # 2) crossing detection on filtered X
             if (not crossed_once) and (prev_fx is not None):
@@ -476,26 +506,63 @@ def process_video(
                                     label="Holes",
                                     zorder=5
                                 )
-                                plt.scatter(
-                                    bx,
-                                    by,
-                                    s=150,
-                                    c="orange",
-                                    marker="o",
-                                    edgecolors="white",
-                                    linewidths=1,
-                                    label="Holes",
-                                    zorder=5
-                                )
+                                # plt.scatter(
+                                #     bx,
+                                #     by,
+                                #     s=150,
+                                #     c="orange",
+                                #     marker="o",
+                                #     edgecolors="white",
+                                #     linewidths=1,
+                                #     label="Holes",
+                                #     zorder=5
+                                # )
                                 plt.gca().set_aspect("equal", "box")
                                 plt.xlabel("X [m]")
                                 plt.ylabel("Y [m]")
-                                plt.title("Ball trajectory on plane (Kalman filtered)")
+                                # plt.title("Ball trajectory on plane (Kalman filtered)")
                                 plt.grid()
                                 plt.draw()
                                 plt.waitforbuttonpress(0)
                                 plt.close(fig)
-                                
+
+                                if len(ts_hist) > 5:
+                                        ts = np.array(ts_hist)
+                                        xs = np.array(xs_hist)
+                                        ys = np.array(ys_hist)
+                                        vxs = np.array(vxs_hist)
+                                        vys = np.array(vys_hist)
+
+                                        speed = np.sqrt(vxs**2 + vys**2)
+
+                                        plt.figure()
+                                        plt.plot(ts, xs, label="x(t)")
+                                        plt.plot(ts, ys, label="y(t)")
+                                        plt.xlabel("Time [s]")
+                                        plt.ylabel("Position [m]")
+                                        # plt.title("Kalman Filtered Position vs Time")
+                                        plt.grid()
+                                        plt.legend()
+                                        plt.show()
+
+                                        plt.figure()
+                                        plt.plot(ts, vxs, label="vx(t)")
+                                        plt.plot(ts, vys, label="vy(t)")
+                                        plt.xlabel("Time [s]")
+                                        plt.ylabel("Velocity [m/s]")
+                                        plt.title("Kalman Filtered Velocity vs Time")
+                                        plt.grid()
+                                        plt.legend()
+                                        plt.show()
+
+                                        plt.figure()
+                                        plt.plot(ts, speed, label="|v(t)|")
+                                        plt.xlabel("Time [s]")
+                                        plt.ylabel("Speed [m/s]")
+                                        # plt.title("Ball Speed vs Time")
+                                        plt.grid()
+                                        plt.legend()
+                                        plt.show()
                                 return dist, spd
                         
                     else:
@@ -557,10 +624,13 @@ def process_video(
             key = cv2.waitKey(int(1000 / src_fps)) & 0xFF
             if key == 27 or key == ord('q'):  # ESC or 'q' to quit early
                 break
-        
+    
+
     cap.release()
     cv2.destroyAllWindows()
+    # ---- Plot filtered position + velocity ----
     
+
     print("No returns from video trajectory")
     if GUI_mode:
         return None, None, None, None, None, None, None, None
@@ -616,14 +686,14 @@ def process_video(
     # #return ts, xs, ys, vxs, vys, speed, csv_path
     
 if __name__ == "__main__":
-    video_path = "data/OBS_saved_replay_buffer/Replay_2026-01-13_15-18-40.mp4"
+    video_path = "data/OBS_saved_replay_buffer/2026-01-30_11-10-15.mp4"
 
     process_video(
         video_path,
-        chosen_hole=1,
+        chosen_hole=2,
         real_time_show=True,
         GUI_mode=False,   # turn off GUI if running batch
-        compute_all_holes=True
+        compute_all_holes=False
     )
 
     #print("Trajectory CSV:", csv_path)

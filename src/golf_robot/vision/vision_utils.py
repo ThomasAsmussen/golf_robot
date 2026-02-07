@@ -17,19 +17,38 @@ class KalmanFilterCV2D:
     Optional outlier rejection via Mahalanobis gating.
     """
     def __init__(self, dt,
-                 q_pos=1e-4,
-                 q_vel=1e-3,
-                 meas_std=0.005,
-                 gate_threshold=0.005):
+                 sigma_a=1.0,      # [m/s^2] accel noise std
+                 meas_std=0.005,   # [m]
+                 gate_threshold=20):
         """
-        dt            : time step [s] (e.g. 1 / src_fps)
-        q_pos         : process noise on position
-        q_vel         : process noise on velocity
+        dt            : nominal time step [s]
+        sigma_a       : std dev of (white) acceleration noise [m/s^2]
         meas_std      : measurement std dev [m]
         gate_threshold: Mahalanobis distance^2 for gating (≈9 ≈ 3σ in 2D)
         """
+        self.dt = float(dt)
+        self.sigma_a = float(sigma_a)
+        self.init_buffer = []
+        self.init_N = 3
 
+        self.H = np.array([
+            [1, 0, 0, 0],
+            [0, 1, 0, 0]
+        ], dtype=np.float32)
+
+        self.R = (meas_std**2) * np.eye(2, dtype=np.float32)
+
+        self.x = None  # state (4x1)
+        self.P = None  # covariance (4x4)
+        self.gate_threshold = gate_threshold
+
+        # Initialize F and Q from dt
+        self._set_dt(self.dt)
+
+    def _set_dt(self, dt):
+        dt = float(dt)
         self.dt = dt
+
         self.F = np.array([
             [1, 0, dt, 0],
             [0, 1, 0, dt],
@@ -37,75 +56,95 @@ class KalmanFilterCV2D:
             [0, 0, 0,  1]
         ], dtype=np.float32)
 
-        self.H = np.array([
-            [1, 0, 0, 0],
-            [0, 1, 0, 0]
+        dt2 = dt * dt
+        dt3 = dt2 * dt
+        sa2 = self.sigma_a * self.sigma_a
+
+        self.Q = sa2 * np.array([
+            [1/3 * dt3, 0.0,         0.5 * dt2,  0.0],
+            [0.0,        1/3 * dt3,  0.0,        0.5 * dt2],
+            [0.5 * dt2,  0.0,         dt,        0.0],
+            [0.0,        0.5 * dt2,   0.0,        dt],
         ], dtype=np.float32)
 
-        self.Q = np.diag([q_pos, q_pos, q_vel, q_vel]).astype(np.float32)
-        self.R = (meas_std**2) * np.eye(2, dtype=np.float32)
-
-        self.x = None  # state (4x1)
-        self.P = None  # covariance (4x4)
-        self.gate_threshold = gate_threshold
-
-    def step(self, z):
+    def step(self, z, dt=None, t=None):
         """
         Perform one predict+update step.
-        z: measurement (x_m, y_m) in meters, or None for predict-only.
+        z : measurement (x_m, y_m) in meters, or None for predict-only.
+        dt: optional timestep override [s] (useful if frame intervals vary)
 
         Returns:
             x, y, vx, vy, used_measurement (bool)
         """
+        if dt is not None:
+            self._set_dt(dt)
+        if t is not None:
+            self.t = t
+        
         if self.x is None:
+
             if z is None:
-                # No measurement, no state yet: nothing to do
                 return None, None, None, None, False
 
-            # Initialize at first measurement with zero velocity
+            # Store measurement and time
             x_m, y_m = z
-            self.x = np.array([[x_m],
-                               [y_m],
-                               [0.0],
-                               [0.0]], dtype=np.float32)
-            self.P = np.eye(4, dtype=np.float32) * 1e-3
-            return float(x_m), float(y_m), 0.0, 0.0, True
+            self.init_buffer.append((x_m, y_m, self.t))
+
+            if len(self.init_buffer) < self.init_N:
+                return None, None, None, None, False
+
+            # Estimate velocity from buffer
+            x0, y0, t0 = self.init_buffer[0]
+            xN, yN, tN = self.init_buffer[-1]
+
+            vx0 = (xN - x0) / (tN - t0)
+            vy0 = (yN - y0) / (tN - t0)
+
+            # Initialize KF state
+            self.x = np.array([
+                [xN],
+                [yN],
+                [vx0],
+                [vy0]
+            ], dtype=np.float32)
+
+            # High velocity uncertainty
+            self.P = np.diag([0.005**2, 0.005**2, 1e-1**2, 1e-1**2])
+
+            return float(xN), float(yN), float(vx0), float(vy0), True
+
 
         # Predict
         x_pred = self.F @ self.x
         P_pred = self.F @ self.P @ self.F.T + self.Q
 
         if z is None:
-            # No measurement: just use prediction
-            self.x = x_pred
-            self.P = P_pred
+            self.x, self.P = x_pred, P_pred
             return float(self.x[0, 0]), float(self.x[1, 0]), float(self.x[2, 0]), float(self.x[3, 0]), False
 
         # Measurement update with gating
         z_vec = np.array([[z[0]], [z[1]]], dtype=np.float32)
-        y_k = z_vec - (self.H @ x_pred)        # innovation
+        y_k = z_vec - (self.H @ x_pred)  # innovation
         S = self.H @ P_pred @ self.H.T + self.R
 
         try:
             S_inv = np.linalg.inv(S)
             mahalanobis2 = float((y_k.T @ S_inv @ y_k)[0, 0])
         except np.linalg.LinAlgError:
+            # If S is singular, fall back to accepting measurement (or reject—your choice)
             mahalanobis2 = 0.0
+            S_inv = None
 
-        if mahalanobis2 < self.gate_threshold:
-            # Accept measurement
+        if mahalanobis2 < self.gate_threshold and S_inv is not None:
             K_gain = P_pred @ self.H.T @ S_inv
             self.x = x_pred + K_gain @ y_k
             self.P = (np.eye(4, dtype=np.float32) - K_gain @ self.H) @ P_pred
             used = True
         else:
-            # Reject measurement → keep prediction
-            self.x = x_pred
-            self.P = P_pred
+            self.x, self.P = x_pred, P_pred
             used = False
 
         return float(self.x[0, 0]), float(self.x[1, 0]), float(self.x[2, 0]), float(self.x[3, 0]), used
-
 
 
 def undistort_camera(image_glob: str = "data/calibration_images/*.jpg", 
