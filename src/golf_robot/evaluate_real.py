@@ -27,19 +27,19 @@ from vision.ball_at_hole_state import process_video
 from gui.gui import *
 from rl_common import *
 from hand_designed_agent import hand_tuned_policy
-
+import torch
 
 OPERATING_SYSTEM = "linux"  # "windows" or "linux"
 CAMERA_INDEX_START = 4  # starting camera index for real robot
 CAMERA_INDEX_END   = 4  # ending camera index for real robot
-actor_name = "hand_tuned_policy"  # "hand_tuned_policy", "SAC_bandit", "thompson_bandit", "contextual_bandit2"
+actor_name = "ucb"  # "hand_tuned_policy", "SAC_bandit", "thompson_bandit", "contextual_bandit2", "ucb"
 planner = "quintic"  # "quintic" or "linear"
 
 # CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#7&23aa88cc&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
 #CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
 #CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
 END_POS = [-2.47, -2.38, -1.55, 1.66, 0.49, -0.26]
-LOG_SHOTS = False
+LOG_SHOTS = True
 
 def real_init_parameters(camera_index, chosen_hole=None):
     # Ball
@@ -165,7 +165,7 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
         print("Sending swing...")
         x_ball_origo=-0.62823
         ball_radius=0.021335
-        offset = 0.30 # 0.33 max
+        offset = 0.25 # 0.33 max
         z_buffer = 0.01
         x_start=x_ball_origo+ball_radius-offset   + ball_start_position[0]
         x_end=x_ball_origo+ball_radius+offset   + ball_start_position[0]
@@ -366,7 +366,30 @@ def load_correct_actor(actor_name, rl_cfg):
         critics1, critics2, loaded_tag = load_doublecritics(model_dir, rl_cfg, tag_stem, device)
         return MeanPlannerActor(critics1, critics2, rl_cfg, device).to(device), None
 
-        
+
+    elif actor_name == "ucb":
+        # IMPORTANT: import from the file that actually defines MeanPlannerActor + checkpoint helpers
+        from ucb_bandit import find_latest_critic_checkpoint, load_critics, MeanPlannerActor
+
+        print("Using UCB bandit policy (MeanPlannerActor)")
+
+        # Prefer torch.device, not string
+        dev_str = rl_cfg["training"].get("device", "cpu")
+        device = torch.device(dev_str)
+
+        model_dir = project_root / "models" / "rl" / "ucb"
+        print("Model dir:", model_dir)
+
+        # find_latest_critic_checkpoint returns (path_to_head0, tag_stem)
+        _, tag_stem = find_latest_critic_checkpoint(model_dir, prefix=None)
+
+        # load_critics returns (critics_list, tag)
+        critics, _ = load_critics(model_dir, rl_cfg, tag_stem, device)
+
+        actor = MeanPlannerActor(critics=critics, rl_cfg=rl_cfg, device=device).to(device)
+        actor.eval()
+        return actor, device
+    
     
     elif actor_name == "contextual_bandit2":
         from contextual_bandit2 import load_actor
@@ -384,7 +407,7 @@ def main():
     if LOG_SHOTS:
         obs_replay_start()
         project_root = here.parents[1]
-        episode_log_path = project_root / "log" / "real_episodes" / "episode_logger_thompson_eval.jsonl"
+        episode_log_path = project_root / "log" / "real_episodes_eval" / "episode_logger_eval_ucb.jsonl"
         print("Episode log path:", episode_log_path)
         episode_logger = EpisodeLoggerJsonl(episode_log_path)
 
@@ -409,7 +432,7 @@ def main():
         if actor_name == "hand_tuned_policy":
             evaluation_policy_hand_tuned(actor, mujoco_cfg, rl_cfg, num_episodes=30, max_num_discs=0, env_step=run_real, env_type="real", input_func=real_init_parameters, planner=planner, camera_index=CAMERA_INDEX_START)
         else:
-            evaluation_policy_short(actor, device, mujoco_cfg, rl_cfg, num_episodes=12, max_num_discs=0, env_step=run_real, env_type="real", input_func=real_init_parameters, big_episode_logger=episode_logger)
+            evaluation_policy_short(actor, device, mujoco_cfg, rl_cfg, num_episodes=16, max_num_discs=0, env_step=run_real, env_type="real", input_func=real_init_parameters, big_episode_logger=episode_logger)
     finally:
         # Always close the Tk window (even on exceptions / sys.exit)
         if LOG_SHOTS:
