@@ -11,7 +11,7 @@ import uuid
 # import time
 # import cv2
 
-from rl_common_0_no_noise import *
+from rl_common_0_noise import *
 
 
 # =========================================================
@@ -742,13 +742,6 @@ if __name__ == "__main__":
 
     if wandb.run is not None:
         cfg = wandb.config
-
-        rl_cfg["reward"]["distance_scale"]     = float(cfg.get("distance_scale", rl_cfg["reward"]["distance_scale"]))
-        rl_cfg["reward"]["in_hole_reward"]     = float(cfg.get("in_hole_reward", rl_cfg["reward"]["in_hole_reward"]))
-        rl_cfg["reward"]["w_distance"]         = float(cfg.get("w_distance", rl_cfg["reward"]["w_distance"]))
-        rl_cfg["reward"]["optimal_speed"]      = float(cfg.get("optimal_speed", rl_cfg["reward"]["optimal_speed"]))
-        rl_cfg["reward"]["dist_at_hole_scale"] = float(cfg.get("dist_at_hole_scale", rl_cfg["reward"]["dist_at_hole_scale"]))
-        rl_cfg["reward"]["optimal_speed_scale"]= float(cfg.get("optimal_speed_scale", rl_cfg["reward"]["optimal_speed_scale"]))
         rl_cfg["training"]["cem_pop"]         = int(cfg.get("cem_pop", rl_cfg["training"]["cem_pop"]))
         rl_cfg["training"]["cem_iters"]       = int(cfg.get("cem_iters", rl_cfg["training"]["cem_iters"]))
         rl_cfg["training"]["critic_lr"]       = float(cfg.get("critic_lr", rl_cfg["training"]["critic_lr"]))

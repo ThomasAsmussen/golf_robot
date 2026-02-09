@@ -1,7 +1,7 @@
 training:
-  episodes: 10000
+  episodes: 1000
   actor_lr: 0.0003
-  critic_lr: 0.0003
+  critic_lr: 0.0015
   noise_std: 0.0
   batch_size: 128
   grad_steps: 2
@@ -15,16 +15,19 @@ training:
   error_hard_stop: True
   do_prints: False
   env_type: "sim"
-  model_name: "woven_sweep_153"
-  wandb_run_id: "real_robot_22_01_2026_19_00"  # for continuing runs
+  # model_name: None
+  wandb_run_id: "real_robot_07_02_2026_18_30"  # for continuing runs
   max_num_discs: 0
   # cem_init_std: 0.25 #real
   # cem_min_std: 0.12
-  cem_init_std: 0.3
-  cem_min_std: 0.05
-  cem_pop: 256
+  cem_init_std: 0.75
+  cem_min_std: 0.1
+  cem_pop: 384
   cem_iters: 3
   bootstrap_p: 0.8
+  replay_recent_size: 300
+  mixed_replay_ratio: 0.2
+  angle_adjustment_deg: 1.0
 
 cont_bandit_training:
   actor_lr: 0.0003
@@ -42,8 +45,13 @@ sac:
 
 ucb:
   ucb_beta: 0.5
-  bootstrap_p: 0.8
-  cem_init_std: 0.3
+  bootstrap_p: 0.7
+  cem_init_std: 0.75
+  cem_iters: 2
+  cem_pop: 384
+  cem_elite_frac: 0.16
+  ucb_beta_final: 0.1
+  cem_min_std: 0.1
 
 model:
   state_dim: 4
@@ -58,6 +66,7 @@ reward:
   distance_scale: 2.1
   in_hole_reward: 5.3
   w_distance: 0.7
-  optimal_speed: 0.7
+  optimal_speed: 0.65
   dist_at_hole_scale: 6.0
   optimal_speed_scale: 1.5
+
