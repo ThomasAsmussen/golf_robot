@@ -1,17 +1,17 @@
 training:
   episodes: 1000
   actor_lr: 0.001
-  critic_lr: 0.0018 # #at 215 steps before 0.0008
+  critic_lr: 0.0002 # #at 215 steps before 0.0008
   noise_std: 0.0
   batch_size: 128
   grad_steps: 2
   replay_buffer_capacity: 100000
   use_wandb: True
   project_name: "real_fewer_neurons_sim"
-  eval_interval: 20
+  eval_interval: 200
   eval_episodes: 20
   target_update_rho: 0.000
-  continue_training: True
+  continue_training: False
   error_hard_stop: True
   do_prints: False
   env_type: "sim"
@@ -25,8 +25,8 @@ training:
   cem_pop: 384
   cem_iters: 3
   bootstrap_p: 0.75
-  replay_recent_size: 550 # at 215 steps before 100
-  mixed_replay_ratio: 0.2 # at 215 steps before 0.2
+  replay_recent_size: 300 # at 215 steps before 100
+  mixed_replay_ratio: 0.6 # at 215 steps before 0.2
   angle_adjustment_deg: 1.0
 
 cont_bandit_training:
@@ -44,13 +44,13 @@ sac:
   alpha_lr_mult: 1.0
 
 ucb:
-  ucb_beta: 1.8
-  bootstrap_p: 0.6
+  ucb_beta: 1.0
+  bootstrap_p: 0.7
   cem_init_std: 0.75
   cem_iters: 2
   cem_pop: 384
   cem_elite_frac: 0.16
-  ucb_beta_final: 0.08
+  ucb_beta_final: 0.4
   cem_min_std: 0.1
   cem_warm_start: False
 
