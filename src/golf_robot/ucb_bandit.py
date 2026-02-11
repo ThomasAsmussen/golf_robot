@@ -383,13 +383,19 @@ def training(
         # -------------------------------------------------
         # UCB + CEM on ensemble Q_k
         # -------------------------------------------------
-        if ucb_beta_final != ucb_beta and episode_logger.get_length() > 1:
-            starting_episode_beta_decay = float(len(replay_buffer_big) - 354)#episode_logger.get_length() - 355
-            frac = min(1, starting_episode_beta_decay / float(250 - 1))
-            beta_t = (1.0 - frac) * ucb_beta + frac * ucb_beta_final
-            # print(f"!!!!!!!!!!!!!!!!!!!!!!!!Episode {episode}: Annealed UCB beta -> {beta_t:.3f} (frac={frac:.3f})")
-        else:
-            beta_t = ucb_beta
+        if env_type == "real":
+            if ucb_beta_final != ucb_beta and episode_logger.get_length() > 1:
+                starting_episode_beta_decay = float(len(replay_buffer_big) - 354)#episode_logger.get_length() - 355
+                frac = min(1, starting_episode_beta_decay / float(250 - 1))
+                beta_t = (1.0 - frac) * ucb_beta + frac * ucb_beta_final
+                # print(f"!!!!!!!!!!!!!!!!!!!!!!!!Episode {episode}: Annealed UCB beta -> {beta_t:.3f} (frac={frac:.3f})")
+            else:
+                beta_t = ucb_beta
+        elif env_type == "sim":
+            if ucb_beta_final != ucb_beta:
+                frac = episode / float(episodes - 1)
+                beta_t = (1.0 - frac) * ucb_beta + frac * ucb_beta_final
+                # print(f"Episode {episode}: Annealed UCB beta -> {beta_t:.3f} (frac={frac:.3f})")
 
         @torch.no_grad()
         def score_fn(s_batch, a_batch):
