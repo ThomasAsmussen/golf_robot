@@ -361,6 +361,7 @@ def training(
                         },
                         step=episode,
                     )
+                    print(f"Logged evaluation metrics to wandb at episode {episode}.")
 
         # -------------------------------------------------
         # Sample context
