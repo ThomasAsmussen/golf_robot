@@ -321,7 +321,7 @@ def training(
     last_success_rate = 0.0
 
     for episode in range(episodes):
-        print(f"Episodes in replay buffer: {len(replay_buffer_big)}, recent buffer: {len(replay_buffer_recent)}")
+        # print(f"Episodes in replay buffer: {len(replay_buffer_big)}, recent buffer: {len(replay_buffer_recent)}")
         # -------------------------------------------------
         # Periodic evaluation
         # -------------------------------------------------
