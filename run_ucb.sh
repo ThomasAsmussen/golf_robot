@@ -16,4 +16,4 @@ module load python3/3.10.13
 cd ~/golf_robot
 source golf_venv/bin/activate
 
-python3 /zhome/41/d/156422/golf_robot/src/golf_robot/ucb_bandit.py > log/run_ucb$(date +"%d-%m-%y")_$(date +'%H:%M:%S').log
+python3 /zhome/41/d/156422/golf_robot/src/golf_robot/ucb_bandit_0.py > log/run_ucb$(date +"%d-%m-%y")_$(date +'%H:%M:%S').log

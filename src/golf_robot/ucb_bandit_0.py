@@ -13,7 +13,7 @@ import wandb
 import uuid
 import time
 
-from rl_common_0_no_noise import *
+from rl_common_0_noise import *
 
 
 
@@ -613,17 +613,17 @@ if __name__ == "__main__":
 
 
         cfg = wandb.config
-        rl_cfg["reward"]["distance_scale"]      = cfg.get("distance_scale", rl_cfg["reward"]["distance_scale"])
-        rl_cfg["reward"]["in_hole_reward"]      = cfg.get("in_hole_reward", rl_cfg["reward"]["in_hole_reward"])
-        rl_cfg["reward"]["w_distance"]          = cfg.get("w_distance", rl_cfg["reward"]["w_distance"])
-        rl_cfg["reward"]["optimal_speed"]       = cfg.get("optimal_speed", rl_cfg["reward"]["optimal_speed"])
-        rl_cfg["reward"]["dist_at_hole_scale"]  = cfg.get("dist_at_hole_scale", rl_cfg["reward"]["dist_at_hole_scale"])
-        rl_cfg["reward"]["optimal_speed_scale"] = cfg.get("optimal_speed_scale", rl_cfg["reward"]["optimal_speed_scale"])
+        # rl_cfg["reward"]["distance_scale"]      = cfg.get("distance_scale", rl_cfg["reward"]["distance_scale"])
+        # rl_cfg["reward"]["in_hole_reward"]      = cfg.get("in_hole_reward", rl_cfg["reward"]["in_hole_reward"])
+        # rl_cfg["reward"]["w_distance"]          = cfg.get("w_distance", rl_cfg["reward"]["w_distance"])
+        # rl_cfg["reward"]["optimal_speed"]       = cfg.get("optimal_speed", rl_cfg["reward"]["optimal_speed"])
+        # rl_cfg["reward"]["dist_at_hole_scale"]  = cfg.get("dist_at_hole_scale", rl_cfg["reward"]["dist_at_hole_scale"])
+        # rl_cfg["reward"]["optimal_speed_scale"] = cfg.get("optimal_speed_scale", rl_cfg["reward"]["optimal_speed_scale"])
 
-        rl_cfg["training"]["critic_lr"]         = cfg["critic_lr"]
-        rl_cfg["ucb"]["ucb_beta"]               = cfg["ucb_beta"]
-        rl_cfg["ucb"]["bootstrap_p"]            = cfg["bootstrap_p"]
-        rl_cfg["ucb"]["cem_init_std"]           = cfg["cem_init_std"]
+        # rl_cfg["training"]["critic_lr"]         = cfg["critic_lr"]
+        # rl_cfg["ucb"]["ucb_beta"]               = cfg["ucb_beta"]
+        # rl_cfg["ucb"]["bootstrap_p"]            = cfg["bootstrap_p"]
+        # rl_cfg["ucb"]["cem_init_std"]           = cfg["cem_init_std"]
 
     try:
         training(

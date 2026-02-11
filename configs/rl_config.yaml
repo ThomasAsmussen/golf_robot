@@ -45,14 +45,14 @@ sac:
 
 ucb:
   ucb_beta: 1.8
-  bootstrap_p: 0.6
+  bootstrap_p: 0.7
   cem_init_std: 0.75
   cem_iters: 2
   cem_pop: 384
   cem_elite_frac: 0.16
   ucb_beta_final: 0.08
   cem_min_std: 0.1
-  cem_warm_start: False
+  cem_warm_start: True
 
 model:
   state_dim: 4
