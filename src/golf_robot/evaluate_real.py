@@ -18,6 +18,8 @@ from PIL import Image, ImageTk
 import cv2
 #from contextual_bandit2 import training
 # from SAC_bandit import training
+# from golf_robot.thompson_bandit import BestMinOverHeadsActor
+# from golf_robot.thompson_bandit import BestHeadThenThompsonActor
 from vision.ball2hole_distance import get_ball_final_position
 from vision.ball_start_position import get_ball_start_position
 from planning.generate_trajectory_csv import generate_trajectory_csv
@@ -32,7 +34,7 @@ import torch
 OPERATING_SYSTEM = "linux"  # "windows" or "linux"
 CAMERA_INDEX_START = 4  # starting camera index for real robot
 CAMERA_INDEX_END   = 4  # ending camera index for real robot
-actor_name = "ucb"  # "hand_tuned_policy", "SAC_bandit", "thompson_bandit", "contextual_bandit2", "ucb"
+actor_name = "thompson_bandit"  # "hand_tuned_policy", "SAC_bandit", "thompson_bandit", "contextual_bandit2", "ucb"
 planner = "quintic"  # "quintic" or "linear"
 
 # CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#7&23aa88cc&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
@@ -40,6 +42,14 @@ planner = "quintic"  # "quintic" or "linear"
 #CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
 END_POS = [-2.47, -2.38, -1.55, 1.66, 0.49, -0.26]
 LOG_SHOTS = True
+
+def ban_self_from_cores(cores):
+    allowed = set(os.sched_getaffinity(0))
+    ban = set(cores)
+    new_allowed = allowed - ban
+    if new_allowed != allowed:
+        os.sched_setaffinity(0, new_allowed)
+        print(f"[Affinity] Python allowed cores now: {sorted(new_allowed)}")
 
 def real_init_parameters(camera_index, chosen_hole=None):
     # Ball
@@ -99,19 +109,19 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
 
                 print("RTTs (ms):", rtts)
                 print("avg:", sum(rtts)/len(rtts))
-        elif OPERATING_SYSTEM == "linux":
-            if check_rtt:
-                out = subprocess.check_output(
-                    ["ping", "-c", "3", "192.38.66.227"], text=True
-                )
+        # elif OPERATING_SYSTEM == "linux":
+        #     if check_rtt:
+        #         out = subprocess.check_output(
+        #             ["ping", "-c", "3", "192.38.66.227"], text=True
+        #         )
 
-                rtts = [
-                    float(m.group(1))
-                    for m in re.finditer(r'time=([\d.]+)\s*ms', out)
-                ]
+        #         rtts = [
+        #             float(m.group(1))
+        #             for m in re.finditer(r'time=([\d.]+)\s*ms', out)
+        #         ]
 
-                print("RTTs (ms):", rtts)
-                print("avg:", sum(rtts)/len(rtts))
+        #         print("RTTs (ms):", rtts)
+        #         print("avg:", sum(rtts)/len(rtts))
         
         
         prompter.confirm_or_exit("Ready to execute trajectory. Continue?")
@@ -119,30 +129,56 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
         here = Path(__file__).resolve().parent
         traj_exe = here / "communication" / "traj_streamer"
 
-        if OPERATING_SYSTEM == "linux":
-            traj_cmd = [str(traj_exe)]
+        # if OPERATING_SYSTEM == "linux":
+        #     traj_cmd = [str(traj_exe)]
 
-        elif OPERATING_SYSTEM == "windows":
-            win_path = here / "communication" / "traj_streamer"
-            wsl_path = subprocess.check_output(
-                ["wsl", "wslpath", "-a", str(win_path)],
-                text=True
-            ).strip()
-            traj_cmd = ["wsl", wsl_path]
+        # elif OPERATING_SYSTEM == "windows":
+        #     win_path = here / "communication" / "traj_streamer"
+        #     wsl_path = subprocess.check_output(
+        #         ["wsl", "wslpath", "-a", str(win_path)],
+        #         text=True
+        #     ).strip()
+        #     traj_cmd = ["wsl", wsl_path]
 
-        else:
-            raise RuntimeError(f"Unsupported OS: {OPERATING_SYSTEM}")
-        
+        # else:
+        #     raise RuntimeError(f"Unsupported OS: {OPERATING_SYSTEM}")
+
+        # def run_traj():
+        #     with open(os.devnull, "w") as dn:
+        #         return subprocess.run(
+        #             traj_cmd,
+        #             check=False,
+        #             stdout=dn,
+        #             stderr=dn,
+        #         )
+
+        # # result = prompter.run_with_spinner("Shooting", run_traj)
+        # result = prompter.run_blocking("Shooting…", run_traj)
         def run_traj():
-            return subprocess.run(
-                traj_cmd,
-                check=False,
-                capture_output=False,
-                text=True,
-            )
+            with open(os.devnull, "w") as dn:
+                # Start the real binary directly (no sudo/taskset wrapper)
+                p = subprocess.Popen([str(traj_exe)], stdout=dn, stderr=dn)
 
-        result = prompter.run_with_spinner("Shooting", run_traj)
+                # Pin it to cores 10-11
+                os.sched_setaffinity(p.pid, {10, 11})
+                print("[Affinity] traj_streamer allowed cores:", sorted(os.sched_getaffinity(p.pid)))
 
+                # Optional: try to raise to FIFO (will fail unless permitted)
+                rt = subprocess.run(
+                    ["sudo", "-n", "/usr/bin/chrt", "-f", "-p", "80", str(p.pid)],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True
+                )
+                if rt.returncode != 0:
+                    # Not fatal; just means you don't have RT permission
+                    if rt.stderr.strip():
+                        print("[chrt stderr]:", rt.stderr.strip())
+                else: 
+                    print("[chrt check stderr]:", rt.stderr.strip())
+                rc = p.wait()
+                return subprocess.CompletedProcess(args=[str(traj_exe)], returncode=rc)
+        
+        # result = prompter.run_with_spinner("Shooting", run_traj)
+        result = prompter.run_blocking("Shooting…", run_traj)
         print("Trajectory streamer output:")
         print(result.stdout)
 
@@ -197,24 +233,24 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
         
         
 
-    if LOG_SHOTS:
+    # if LOG_SHOTS:
 
-        time.sleep(2.0)
-        # Stop vision recording
-        print("Saving recording from replay buffer")
-        obs_replay_save()
+        # time.sleep(2.0)
+        # # Stop vision recording
+        # print("Saving recording from replay buffer")
+        # obs_replay_save()
 
-        print("Recording thread joined. Done.")
+        # print("Recording thread joined. Done.")
 
-        data_dir = "data/OBS_saved_replay_buffer"
-        prefix ="Replay"
-        pattern = os.path.join(data_dir, f"{prefix}*")
-        # print(pattern)
-        files = glob.glob(pattern)
-        # print(files)
-        video_path = max(files, key=os.path.getmtime)
+        # data_dir = "data/OBS_saved_replay_buffer"
+        # prefix ="Replay"
+        # pattern = os.path.join(data_dir, f"{prefix}*")
+        # # print(pattern)
+        # files = glob.glob(pattern)
+        # # print(files)
+        # video_path = max(files, key=os.path.getmtime)
         
-        print("Recorded video path:", video_path)
+        # print("Recorded video path:", video_path)
 
     ur_movej(
         robot_ip="192.38.66.227",
@@ -225,8 +261,8 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
     if LOG_SHOTS:
         # Measure 
         # Deafaults
-        dist_at_hole = None
-        speed_at_hole = None
+        dist_at_hole = 0
+        speed_at_hole = 0
         ball_final_position = np.array([0.0, 0.0])  # optional: safe default
         continue_evaluation = False
         on_green = False
@@ -264,37 +300,37 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
         else:
             in_hole = False
             out_of_bounds = False
-            
+            on_green = False
         if not out_of_bounds and not in_hole:
-            on_green = prompter.ask_yes_no("Is ball on green?")
-            if on_green:
-                obs_screenshot()
-                ball_final_position = get_ball_final_position(camera_index=CAMERA_INDEX_END, chosen_hole=chosen_hole, use_cam=False, debug=True, operating_system=OPERATING_SYSTEM)
+        #     on_green = prompter.ask_yes_no("Is ball on green?")
+        #     if on_green:
+        #         obs_screenshot()
+        #         ball_final_position = get_ball_final_position(camera_index=CAMERA_INDEX_END, chosen_hole=chosen_hole, use_cam=False, debug=True, operating_system=OPERATING_SYSTEM)
             
-            else: 
-                compute_all_holes = False
-                traj_3_worked = False
-                if compute_all_holes:
-                    dist_at_hole = []
-                    speed_at_hole = []
+        #     else: 
+        #         compute_all_holes = False
+        #         traj_3_worked = False
+        #         if compute_all_holes:
+        #             dist_at_hole = []
+        #             speed_at_hole = []
                     
-                    for i in range(1,4):
-                        dist_at_hole_tmp, speed_at_hole_tmp, xs, ys, hole_xo, hole_yo, bx, by = process_video(
-                            video_path, chosen_hole=i, real_time_show=False, compute_all_holes=False
-                        )
-                        dist_at_hole.append(dist_at_hole_tmp)
-                        speed_at_hole.append(speed_at_hole_tmp)
-                    print("Distance at hole list:", dist_at_hole)
-                    print("Speed at hole list:", speed_at_hole)
-                    if dist_at_hole[2] is not None:
-                        traj_3_worked = True
+        #             for i in range(1,4):
+        #                 dist_at_hole_tmp, speed_at_hole_tmp, xs, ys, hole_xo, hole_yo, bx, by = process_video(
+        #                     video_path, chosen_hole=i, real_time_show=False, compute_all_holes=False
+        #                 )
+        #                 dist_at_hole.append(dist_at_hole_tmp)
+        #                 speed_at_hole.append(speed_at_hole_tmp)
+        #             print("Distance at hole list:", dist_at_hole)
+        #             print("Speed at hole list:", speed_at_hole)
+        #             if dist_at_hole[2] is not None:
+        #                 traj_3_worked = True
 
-                else:
-                    dist_at_hole, speed_at_hole, xs, ys, hole_xo, hole_yo, bx, by = process_video(
-                        video_path, chosen_hole=chosen_hole, real_time_show=False, compute_all_holes=False
-                    )
-                if dist_at_hole is not None and traj_3_worked:
-                    prompter.show_trajectory_plot(xs, ys, hole_xo, hole_yo, bx, by)
+        #         else:
+        #             dist_at_hole, speed_at_hole, xs, ys, hole_xo, hole_yo, bx, by = process_video(
+        #                 video_path, chosen_hole=chosen_hole, real_time_show=False, compute_all_holes=False
+        #             )
+        #         if dist_at_hole is not None and traj_3_worked:
+        #             prompter.show_trajectory_plot(xs, ys, hole_xo, hole_yo, bx, by)
 
                 ball_final_position = np.array([0, 0]) # dummy value
 
@@ -354,7 +390,9 @@ def load_correct_actor(actor_name, rl_cfg):
         print("Using SAC bandit policy")
         
     elif actor_name == "thompson_bandit":
-        from thompson_bandit import find_latest_doublecritic_checkpoint, load_doublecritics, MeanPlannerActor
+        from thompson_bandit import find_latest_doublecritic_checkpoint, load_doublecritics, TopMPlannerActor
+
+         # Prefer torch.device, not string
         device = rl_cfg["training"].get("device", "cpu")
         model_dir = project_root / "models" / "rl" / "dqn-bts"
         print("Model dir:", model_dir)
@@ -364,8 +402,12 @@ def load_correct_actor(actor_name, rl_cfg):
         print("Continuing training from latest double-critic checkpoints:")
         print(f"  Critic1_0 : {c1_h0.name}")
         critics1, critics2, loaded_tag = load_doublecritics(model_dir, rl_cfg, tag_stem, device)
-        return MeanPlannerActor(critics1, critics2, rl_cfg, device).to(device), None
 
+        # eval_actor = SingleHeadThompsonActor(critics1=critics1, critics2=critics2, rl_cfg=rl_cfg, device=device).to(device)
+        # eval_actor = MedianPlannerActor(critics1=critics1, critics2=critics2, rl_cfg=rl_cfg, device=device).to(device)
+        eval_actor = TopMPlannerActor(critics1, critics2, rl_cfg, device, m=3)
+        # eval_actor.eval()
+        return eval_actor, device
 
     elif actor_name == "ucb":
         # IMPORTANT: import from the file that actually defines MeanPlannerActor + checkpoint helpers
@@ -398,6 +440,7 @@ def load_correct_actor(actor_name, rl_cfg):
     return load_actor(actor_name, rl_cfg)
 
 def main():
+    ban_self_from_cores([10, 11]) # Ban self from cores 10-11 to free them for traj_streamer
     global prompter
 
     prompter = HumanPrompter()
@@ -405,9 +448,9 @@ def main():
     here = Path(__file__).resolve().parent
 
     if LOG_SHOTS:
-        obs_replay_start()
+        # obs_replay_start()
         project_root = here.parents[1]
-        episode_log_path = project_root / "log" / "real_episodes_eval" / "episode_logger_eval_ucb.jsonl"
+        episode_log_path = project_root / "log" / "real_episodes_eval" / "episode_logger_eval_thompson.jsonl"
         print("Episode log path:", episode_log_path)
         episode_logger = EpisodeLoggerJsonl(episode_log_path)
 
@@ -425,20 +468,20 @@ def main():
         rl_cfg = yaml.safe_load(f)
 
     actor, device = load_correct_actor(actor_name, rl_cfg)
-    device = "cpu"
+    # device = "cpu"
     # actor = hand_tuned_policy
     
     try:
         if actor_name == "hand_tuned_policy":
             evaluation_policy_hand_tuned(actor, mujoco_cfg, rl_cfg, num_episodes=30, max_num_discs=0, env_step=run_real, env_type="real", input_func=real_init_parameters, planner=planner, camera_index=CAMERA_INDEX_START)
         else:
-            evaluation_policy_short(actor, device, mujoco_cfg, rl_cfg, num_episodes=16, max_num_discs=0, env_step=run_real, env_type="real", input_func=real_init_parameters, big_episode_logger=episode_logger)
+            evaluation_policy_short(actor, device, mujoco_cfg, rl_cfg, num_episodes=21, max_num_discs=0, env_step=run_real, env_type="real", input_func=real_init_parameters, big_episode_logger=episode_logger)
     finally:
         # Always close the Tk window (even on exceptions / sys.exit)
         if LOG_SHOTS:
             try:
                 prompter.close()
-                obs_replay_stop()
+                # obs_replay_stop()
             except Exception:
                 pass
 

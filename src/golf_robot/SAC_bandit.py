@@ -9,7 +9,7 @@ import wandb
 import uuid
 import time
 
-from rl_common_5_no_noise import *  # expects SACActor and QNetwork to exist in rl_common.py
+from rl_common import *  # expects SACActor and QNetwork to exist in rl_common.py
 
 
 # ---------------------------------------------------------

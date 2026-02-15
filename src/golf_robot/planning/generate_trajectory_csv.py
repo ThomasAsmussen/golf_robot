@@ -15,10 +15,13 @@ import matplotlib.pyplot as plt
 try:
     from planning.kinematics import numeric_jacobian
     from planning.trajectory import tcp_path_from_Q, generate_trajectory
+    from planning.warmstart_knn import load_warmstart_knn
 except ImportError:
     from kinematics import fk_ur10, numeric_jacobian
     from trajectory import tcp_path_from_Q, generate_trajectory
+    from warmstart_knn import load_warmstart_knn
 
+_WARM_KNN = None
 # Toggle to True to show TCP position and TCP velocity plots after planning
 SAVE_PLOTS = False
 SHOW_PLOTS = False
@@ -37,7 +40,32 @@ def generate_trajectory_csv(impact_speed, impact_direction, ball_x_offset, ball_
     outputs:
     - results: dict from generate_trajectory() containing planned trajectory data or None on failure
     """
-    results = generate_trajectory(impact_speed, impact_direction, ball_x_offset=ball_x_offset, ball_y_offset=ball_y_offset)
+    global _WARM_KNN
+    if _WARM_KNN is None:
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+        start_end_jsonl_path = os.path.join(project_root, 'log', 'end_start_points', 'speed_angle_grid_start_end_all.jsonl')
+        print(f"[INFO] Loading warmstart KNN from: {start_end_jsonl_path}")
+        _WARM_KNN = load_warmstart_knn(start_end_jsonl_path)  # adjust path
+
+    warm_pairs = _WARM_KNN.query(
+        impact_speed=float(impact_speed),
+        impact_angle_deg=float(impact_direction),   # your arg name is "impact_direction" but it’s actually angle deg in your usage
+        ball_x_offset=float(ball_x_offset),
+        ball_y_offset=float(ball_y_offset),
+        k=25,
+        n_keep=8,
+        prefer_low_J=True,
+    )
+
+    results = generate_trajectory(
+        impact_speed,
+        impact_direction,
+        ball_x_offset=ball_x_offset,
+        ball_y_offset=ball_y_offset,
+        warmstart_off_pairs=warm_pairs,
+    )
+
+    # results = generate_trajectory(impact_speed, impact_direction, ball_x_offset=ball_x_offset, ball_y_offset=ball_y_offset)
 
     if results is None:
         print("[ERROR] Trajectory generation failed")
@@ -47,7 +75,10 @@ def generate_trajectory_csv(impact_speed, impact_direction, ball_x_offset, ball_
     t_plan = results.get('t_plan')
     Q_all  = results.get('Q_plan')
     dQ_all = results.get('dQ_plan')
-    
+    ddQ_all = results.get('ddQ_plan')
+    peak_ddq = np.max(np.abs(ddQ_all)) if ddQ_all is not None else None
+    # print(f"[INFO] Peak joint accel: {peak_ddq:.2f} rad/s²")
+
     # Basic validity checks
     if t_plan is None or Q_all is None or dQ_all is None:
         print("[ERROR] Planner did not return a complete trajectory")
@@ -311,6 +342,7 @@ def make_angle_reachability_heatmap(
             for ang in angles_deg:
                 print(f"Checking offset ({x_off:.2f}, {y_off:.2f}), angle {ang:.1f}°")
                 # Call planner directly; it may print warnings/errors if infeasible
+
                 results = generate_trajectory(
                     impact_speed,
                     ang,  # impact angle in degrees (same as in main())
@@ -514,8 +546,8 @@ def plot_tcp_path_with_waypoints(
 
 def main():
     csv_out = CSV_OUTPUT_PATH
-    impact_speed = 1.6  # m/s
-    impact_angle = 4.16  # desired impact angle (degrees)
+    impact_speed = 1.5  # m/s
+    impact_angle = 0.0  # desired impact angle (degrees)
     ball_x_offset = 0.0  # desired ball x offset
     ball_y_offset = 0.0  # desired ball y offset
 

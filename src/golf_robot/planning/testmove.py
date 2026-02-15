@@ -14,26 +14,27 @@ s.connect((HOST1, PORT1))
 # s.send(b'movej([1,-1.4 ,1,-1.57, 1,0],0.5,0.5)\n')
 # s.send(b'movej([0, -0.3581, -0.6049, -2.1786, 0, 0],0.2,0.2)\n')
 # s.send(b'movej([-2.7813, -2.7835, 0.6049, -0.9630, 2.7813, 0],0.5,0.5)\n')
-q_start = np.array([np.deg2rad(-126.33), np.deg2rad(-139.79), np.deg2rad(-96.62), np.deg2rad(55.14), np.deg2rad(35.87), np.deg2rad(20.47)], dtype=float)
-
+# q_start = np.array([np.deg2rad(-126.33), np.deg2rad(-139.79), np.deg2rad(-96.62), np.deg2rad(55.14), np.deg2rad(35.87), np.deg2rad(20.47)], dtype=float)
+q_start = np.array([-2.11202641, -2.45037247, -1.67584054,  0.95906874,  0.53322783,  0.36131151]) 
+q_start = move_point_xyz(0.012, 0.018, 0.0, q_start, q_start)[0]
 # q_start = np.array([-2.18539977, -2.44831034, -1.85033569,  1.15618144,  0.61460362,  0.50125766], dtype=float)
-q_start = move_point_xyz(0.05, -0.057, -0.005, q_start, q_start)[0]
+# q_start = move_point_xyz(0.05, -0.057, -0.005, q_start, q_start)[0]
 # print(q_start)
 # 1. FK of current pose
-T = fk_ur10(q_start)[-1]
+# T = fk_ur10(q_start)[-1]
 
-# 2. Rotate TCP about world Z by +5°
-Rz = rotation_z(np.deg2rad(20))
-T_rot = T.copy()
-T_rot[:3, :3] = Rz @ T[:3, :3]
+# # 2. Rotate TCP about world Z by +5°
+# Rz = rotation_z(np.deg2rad(0))
+# T_rot = T.copy()
+# T_rot[:3, :3] = Rz @ T[:3, :3]
 
-# 3. Solve IK near q_start
-q_rot, err = pick_ik_solution(T_rot, q_start)
+# # 3. Solve IK near q_start
+# q_rot, err = pick_ik_solution(T_rot, q_start)
 
-if q_rot is None or err == 1:
-    raise RuntimeError("IK failed for rotated TCP pose")
+# if q_rot is None or err == 1:
+#     raise RuntimeError("IK failed for rotated TCP pose")
 
-q_start = q_rot
+# q_start = q_rot
 # R_des = rotation_z(np.deg2rad(5))
 # q_start = move_point_xyz(0.0, 0.0, 0.0, q_start, q_start, R_desired=R_des)[0]
 # q_start = move_point_xyz(0.0, 0.0, 0.0, q_start, q_start)[0]

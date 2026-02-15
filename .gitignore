@@ -14,9 +14,11 @@ tuning_results/
 models/rl/ddpg/
 models/rl/bandit/
 models/rl/older/
+models/rl/
 data/
 models/mujoco/golf_world_tmp*.xml
 srs/golf_robot/vision/
+data/holes_pixel_config.json
 # Mac OS-specific storage files
 .DS_Store
 

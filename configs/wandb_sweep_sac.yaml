@@ -1,6 +1,6 @@
-program: src/golf_robot/SAC_bandit_0.py  # <-- adjust if filename differs
-project: golf_robot_sac_v1000
+program: src/golf_robot/SAC_bandit_5.py  # <-- adjust if filename differs
 method: bayes   # bayes or grid or "random" if you prefer
+project: golf_robot_sac_v5
 
 metric:
   name: final_success_rate

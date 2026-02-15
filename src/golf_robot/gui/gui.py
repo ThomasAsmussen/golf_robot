@@ -12,7 +12,7 @@ from matplotlib.figure import Figure
 from PIL import Image, ImageTk
 import cv2
 #from contextual_bandit2 import training
-from SAC_bandit import training
+# from SAC_bandit import training
 from vision.ball2hole_distance import get_ball_final_position
 from vision.ball_start_position import get_ball_start_position
 from planning.generate_trajectory_csv import generate_trajectory_csv
@@ -354,6 +354,29 @@ class HumanPrompter:
         self._clear_content()
         self._busy_label = None
 
+    def run_blocking(self, text, fn, *args, **kwargs):
+        # Show a static busy label
+        self._clear_content()
+        self._set_message("")  # optional
+        lbl = tk.Label(
+            self._content,
+            text=text,
+            font=("TkDefaultFont", 18, "bold"),
+            justify="center",
+        )
+        lbl.pack(expand=True)
+
+        # One update to paint the label, then do NOTHING GUI-wise
+        self._root.update_idletasks()
+        self._root.update()
+
+        # Run blocking work in the SAME thread
+        try:
+            out = fn(*args, **kwargs)
+        finally:
+            self._clear_content()
+        return out
+
     def run_with_spinner(self, text, fn, *args, **kwargs):
         """
         Run a blocking function in a worker thread while showing spinner.
@@ -433,7 +456,26 @@ class HumanPrompter:
             self._root.destroy()
         except tk.TclError:
             pass
-        
+
+
+def pin_and_prioritize(core: int, nice: int = -10):
+    """
+    preexec_fn for subprocess: runs in the child right before exec().
+    Pins the process to `core` and applies `nice`.
+    """
+    def fn():
+        # Pin to core
+        os.sched_setaffinity(0, {core})
+        # Lower nice value = higher priority. Negative may require privileges.
+        # try:
+        os.nice(nice)
+        # except PermissionError:
+        #     # Fall back gracefully: use a positive nice (lower priority) if you can't raise priority
+        #     # or just ignore. I'd rather not crash your shot.
+        #     pass
+    return fn
+
+
 def main():
     prompter = HumanPrompter(title="Golf Prompter")
 
@@ -452,6 +494,10 @@ def main():
     prompter.confirm_continue("Done! Press Continue to exit.")
 
     prompter.close()
+
+
+
+
 
 
 if __name__ == "__main__":

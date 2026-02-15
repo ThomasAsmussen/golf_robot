@@ -3,13 +3,15 @@ import os
 import json
 import sys
 import numpy as np
-from vision.hole_position_detection import find_holes, save_holes_config
-from vision.ball_position_detection import detect_ball_position
-from vision.vision_utils import apply_white_balance, compute_wb_gains_from_corners, rectify_with_chessboard, load_camera_params, pixel_to_plane, plane_to_pixel
+try :
+    from vision.hole_position_detection import find_holes, save_holes_config
+    from vision.ball_position_detection import detect_ball_position
+    from vision.vision_utils import apply_white_balance, compute_wb_gains_from_corners, rectify_with_chessboard, load_camera_params, pixel_to_plane, plane_to_pixel
+except ImportError:
+    from hole_position_detection import find_holes, save_holes_config
+    from ball_position_detection import detect_ball_position
+    from vision_utils import apply_white_balance, compute_wb_gains_from_corners, rectify_with_chessboard, load_camera_params, pixel_to_plane, plane_to_pixel
 
-# from hole_position_detection import find_holes, save_holes_config
-# from ball_position_detection import detect_ball_position
-# from vision_utils import apply_white_balance, compute_wb_gains_from_corners, rectify_with_chessboard, load_camera_params, pixel_to_plane, plane_to_pixel
 
 import cv2
 
@@ -82,6 +84,9 @@ def get_ball_final_position(camera_index=0, chosen_hole=None, use_cam=True, debu
             frame_width=frame_width,
             frame_height=frame_height,
         )
+        print(f"Captured image from camera {camera_index} with shape {img.shape}")
+        cv2.imshow("Captured Image", img)
+        cv2.waitKey(0)  # Show for 1 second
     else:
         img = cv2.imread("data/OBS_ball_on_green/ball_on_green.png")
     h, w = img.shape[:2]
@@ -268,5 +273,5 @@ def get_ball_final_position(camera_index=0, chosen_hole=None, use_cam=True, debu
 
 
 if __name__ == "__main__":
-    ball_final_position = get_ball_final_position(camera_index=2, chosen_hole=1, use_cam=False, debug=True, operating_system="linux")
+    ball_final_position = get_ball_final_position(camera_index=0, chosen_hole=1, use_cam=True, debug=True, operating_system="linux")
     print("Ball final position (bx, by) from origo:", ball_final_position)

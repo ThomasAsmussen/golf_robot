@@ -1,5 +1,6 @@
 program: src/golf_robot/contextual_bandit2_5.py  # <-- adjust if filename differs
 method: bayes   # or "random" if you prefer
+project: golf_robot_ddpg_v5
 
 metric:
   name: final_success_rate

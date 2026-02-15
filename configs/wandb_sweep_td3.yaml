@@ -1,6 +1,6 @@
-program: src/golf_robot/TD3_bandit_0.py
+program: src/golf_robot/TD3_bandit_5.py
 method: bayes     # or "random" if you want pure random search
-project: golf_robot_td3_v0
+project: golf_robot_td3_v5
 
 metric:
   name: final_success_rate

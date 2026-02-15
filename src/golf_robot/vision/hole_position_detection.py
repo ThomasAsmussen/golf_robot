@@ -112,15 +112,16 @@ def save_holes_config(detections, frame_shape, path, pixels_per_cm=6.5):
 # Example usage
 import cv2
 #from hole_detector import detect_hole_positions_pixels_undistorted
+if __name__ == "__main__":
+    #img = cv2.imread("data/hole_test_img.jpg")
+    img = cv2.imread("data/hole_pic_09_02.png")
+    hole_positions = find_holes(img, pixels_per_cm=6.5)
+    print(hole_positions)  # [((cx, cy), radius_px, diam_cm), ...]
 
-img = cv2.imread("data/hole_test_img.jpg")
-centers = find_holes(img, pixels_per_cm=6.5)
-print(centers)  # [(cx, cy), ...]
-
-# If you want to save a config JSON
-save_holes_config(
-    detections=centers,
-    frame_shape=img.shape,
-    path="data/holes_pixel_config.json",
-    pixels_per_cm=6.5
-)
+    # If you want to save a config JSON
+    save_holes_config(
+        detections=hole_positions,
+        frame_shape=img.shape,
+        path="data/holes_pixel_config.json",
+        pixels_per_cm=6.5
+    )

@@ -34,6 +34,8 @@
 //static const std::string CSV_IN   = "C:/Users/marti/'OneDrive - Danmarks Tekniske Universitet'/DTU/GitHub/golf_robot/log/trajectory_sim.csv";      // input
 static const std::string CSV_IN   = "log/trajectory_sim.csv";      // input
 static const std::string CSV_OUT  = "log/streamed_measurements.csv"; // output
+static const std::string CSV_CMD  = "log/commanded_velocity.csv";
+
 //static const std::string CSV_OUT =
 //    "/home/thomas/Documents/masters_project/golf_robot/log/streamed_measurements.csv";
 //static const std::string CSV_OUT =
@@ -53,21 +55,28 @@ static const double ACCEL  = 6.0;
 static const double DT     = 0.008;     // 8 ms
 static const double VCLAMP = 3.5;
 
-static const double kp = 0.0;
-static const double kd = 0.0;
-static const double ki = 0.0;
+// WORKS WELL ENOUGH
+// static constexpr double kp = 4;
+// static constexpr double kd = 0.0;
+// static constexpr double ki = 0.0;  // start small (0.1–1.0 typical)
 
-// Controller params
+static constexpr double kp = 5;
+static constexpr double kd = 0.0;
+static constexpr double ki = 0.2;  // start small (0.1–1.0 typical)
+
+// static constexpr double kp = 0.27;
+// static constexpr double kd = 4.5;
+
 static constexpr std::array<double,6> Kp_pos = {kp,kp,kp,kp,kp,kp};
 static constexpr std::array<double,6> Kd_vel = {kd,kd,kd,kd,kd,kd};
-static constexpr std::array<double,6> Ki_pos = {ki,ki,ki,ki,ki,ki};
+static constexpr std::array<double,6> Ki_int = {ki,ki,ki,ki,ki,ki};
 
 // Anti-windup / safety
-static const double ITERM_CLAMP = 1.0;  // max magnitude of integral contribution in rad/s
+static const double ITERM_CLAMP = 5;  // max magnitude of integral contribution in rad/s
 static const double IQ_CLAMP    = 10.0; // max magnitude of integral state in "rad*s" (backup clamp)
 
 
-static const double MAX_ERROR_DEG = 2.0;
+static const double MAX_ERROR_DEG = 1;
 static const double MAX_ERROR_RAD = MAX_ERROR_DEG * 3.14159265358979323846 / 180.0;
 
 #define USE_BASIC_KF 0
@@ -75,23 +84,23 @@ static const double MAX_ERROR_RAD = MAX_ERROR_DEG * 3.14159265358979323846 / 180
 static const bool   USE_KF   = true;
 static const double SIGMA_A  = 8.0e-1;     // rad/s^2 process accel noise
 static const double SIGMA_Q  = 1e-4;    // rad meas std
-static const double SIGMA_DQ = 10;    // rad/s meas std (NOTE: 1e-4 is often too optimistic on real robot)
-// static const std::array<double,6> TAU_CMD = {
-//     0.0180,  // joint 0
-//     0.0182,  // joint 1
-//     0.0165,  // joint 2
-//     0.0137,  // joint 3
-//     0.0137,  // joint 4
-//     0.0129   // joint 5
-// };
+static const double SIGMA_DQ = 1e-1;    // rad/s meas std (NOTE: 1e-4 is often too optimistic on real robot)
 static const std::array<double,6> TAU_CMD = {
-    1,  // joint 0
-    1,  // joint 1
-    1,  // joint 2
-    1,  // joint 3
-    1,  // joint 4
-    1   // joint 5
+    0.0180,  // joint 0
+    0.0182,  // joint 1
+    0.0165,  // joint 2
+    0.0137,  // joint 3
+    0.0137,  // joint 4
+    0.0129   // joint 5
 };
+// static const std::array<double,6> TAU_CMD = {
+//     1,  // joint 0
+//     1,  // joint 1
+//     1,  // joint 2
+//     1,  // joint 3
+//     1,  // joint 4
+//     1   // joint 5
+// };
 // static const double TAU_CMD  = 0.024;    // seconds: actuator time constant for dq tracking
 
 // -------------------- Utilities --------------------
@@ -419,20 +428,49 @@ int main(){
             return 1;
         }
         std::cout << "[INFO] Move-to-start reached target\n";
+        
     }
 
+    
     using clock = std::chrono::steady_clock;
     auto* state = mydriver.rt_interface_->robot_state_;
-    std::cout << "[GAINS] kp=" << kp << " kd=" << kd << " ki=" << ki
-          << " ITERM_CLAMP=" << ITERM_CLAMP << " IQ_CLAMP=" << IQ_CLAMP << "\n";
+    std::cout << "[GAINS] kp=" << kp << " kd=" << kd << " ki=" << ki << "\n";
 
-    // ---- KF init ----
-  
+    auto t0 = clock::now();
+    auto kf_time = t0;
+    auto next_tick = t0;
+
+    // ADDED
+    {
+        auto t_meas = clock::now();
+        auto q_meas  = state->getQActual();
+        auto dq_meas = state->getQdActual();
+        double tsec = std::chrono::duration<double>(t_meas - t0).count();
+
+        std::lock_guard<std::mutex> lk(meas_state_mtx);
+        for (int j=0;j<6;++j) {
+            last_q_meas_arr[j]  = q_meas[j];
+            last_dq_meas_arr[j] = dq_meas[j];
+        }
+        last_meas_t_sec.store(tsec, std::memory_order_release);
+    }
+    // ADDED
+
+    // ADDED
+    std::vector<double> q0 = state->getQActual();
     std::array<KFType,6> kf;
     for (int j=0;j<6;++j) {
-        kf[j].q = q_rows.front()[j];
+        kf[j].q  = q0[j];
         kf[j].dq = 0.0;
     }
+
+    // ---- KF init ----
+    // std::array<KFType,6> kf;
+    // for (int j=0;j<6;++j) {
+    //     kf[j].q = q_rows.front()[j];
+    //     kf[j].dq = 0.0;
+    // }
+    // ADDED
 
     // Command shared with KF thread
     std::array<std::atomic<double>,6> last_cmd;
@@ -443,7 +481,10 @@ int main(){
     // Logging buffers
     const size_t N = dq_rows.size();
     std::vector<std::array<double,13>> meas_events;
-    std::vector<std::array<double,13>> kf_pred(N);
+    std::vector<std::array<double,13>> kf_pred;
+    std::vector<std::array<double,7>> cmd_log;   // t + 6 commanded dq
+    kf_pred.reserve(N);
+    cmd_log.reserve(N);
     std::mutex meas_log_mtx;
 
     std::vector<double> last_q_meas(6, std::numeric_limits<double>::quiet_NaN());
@@ -451,9 +492,8 @@ int main(){
 
     std::mutex kf_mtx;
 
-    auto t0 = clock::now();
-    auto kf_time = t0;
-    auto next_tick = t0;
+
+
 
     // ---- Measurement thread: event-driven KF update ----
     std::atomic<bool> run_meas(true);
@@ -561,49 +601,51 @@ for (size_t i = 0; i < N && keep_running.load(); ++i) {
 
     // Predict KF to the send time (read-only copy prediction)
     std::array<double,6> q_hat{}, dq_hat{};
+    std::array<double,6> q_fb{};              // <-- declare here (outer scope)
+
+    const double tick_t = std::chrono::duration<double>(next_tick - t0).count();
+
+    // 1) KF prediction to tick (kf_mtx ONLY)
     {
         std::lock_guard<std::mutex> g(kf_mtx);
-        // ADDED
-        double tick_t = std::chrono::duration<double>(next_tick - t0).count();
-
-        std::array<double,6> q_fb{};
-        // ADDED
 
         if (USE_KF) {
             double dt_pred = std::chrono::duration<double>(next_tick - kf_time).count();
             if (dt_pred < 0) dt_pred = 0.0;
 
             std::array<double,6> u{};
-            for (int j = 0; j < 6; ++j) u[j] = last_cmd[j].load(std::memory_order_relaxed);
-
-            for (int j = 0; j < 6; ++j) {
-                KFType kf_copy = kf[j];
-                #if USE_BASIC_KF
-                    if (dt_pred > 0) kf_copy.predict(dt_pred, SIGMA_A);
-                #else
-                    if (dt_pred > 0) kf_copy.predict_cmd(dt_pred, u[j], TAU_CMD[j], SIGMA_A);
-                #endif
-                q_hat[j]  = kf_copy.q;
-                dq_hat[j] = kf_copy.dq;
-
-            //ADDED
-            std::lock_guard<std::mutex> lk(meas_state_mtx);
-            double t_meas = last_meas_t_sec.load(std::memory_order_acquire);
-            double dt_align = tick_t - t_meas;
-            if (dt_align < 0) dt_align = 0;          // shouldn't happen often
-            if (dt_align > 0.03) dt_align = 0.03;    // clamp (e.g. 30 ms)
+            for (int j=0;j<6;++j) u[j] = last_cmd[j].load(std::memory_order_relaxed);
 
             for (int j=0;j<6;++j) {
-                // Option A: align using dq_hat (preferred: smoother)
-                q_fb[j] = last_q_meas_arr[j] + dt_align * dq_hat[j];
-                        }
-            //ADDED
-
+                KFType kf_copy = kf[j];
+    #if USE_BASIC_KF
+                if (dt_pred > 0) kf_copy.predict(dt_pred, SIGMA_A);
+    #else
+                if (dt_pred > 0) kf_copy.predict_cmd(dt_pred, u[j], TAU_CMD[j], SIGMA_A);
+    #endif
+                q_hat[j]  = kf_copy.q;
+                dq_hat[j] = kf_copy.dq;
+            }
         } else {
-            for (int j = 0; j < 6; ++j) {
+            for (int j=0;j<6;++j) {
                 q_hat[j]  = std::isnan(last_q_meas[j])  ? q_rows[i][j]  : last_q_meas[j];
                 dq_hat[j] = std::isnan(last_dq_meas[j]) ? dq_rows[i][j] : last_dq_meas[j];
             }
+        }
+    } // <-- kf_mtx released here
+
+    // 2) Align last measurement to tick (meas_state_mtx ONLY)
+    {
+        std::lock_guard<std::mutex> lk(meas_state_mtx);
+        const double t_meas = last_meas_t_sec.load(std::memory_order_acquire);
+
+        double dt_align = tick_t - t_meas;
+        if (dt_align < 0.0) dt_align = 0.0;
+        if (dt_align > 0.03) dt_align = 0.03;
+
+        for (int j=0;j<6;++j) {
+            q_fb[j] = last_q_meas_arr[j] + dt_align * dq_hat[j];
+            // q_fb[j] = last_q_meas_arr[j];
         }
     }
 
@@ -617,8 +659,10 @@ for (size_t i = 0; i < N && keep_running.load(); ++i) {
         // ADDED
         // const double e_q  = q_rows[i][j] - q_hat[j];
         // const double e_dq = v_ff[j]      - dq_hat[j];
-        double e_q  = q_ref - q_fb[j];
-        double e_dq = dq_ref - dq_hat[j];
+        const double q_ref  = q_rows[i][j];
+        const double dq_ref = dq_rows[i][j];
+        const double e_q  = q_ref - q_fb[j];
+        const double e_dq = dq_ref - dq_hat[j];
         // ADDED
         
 
@@ -628,46 +672,59 @@ for (size_t i = 0; i < N && keep_running.load(); ++i) {
         }
 
         // ---- Controller (FF + PD + I on position) ----
-        // Use current integral state in the pre-sat command
+
+        // (A) Decide whether we are allowed to integrate this tick
+        // Gate integration to avoid integrating when we're far away (reduces windup).
+        const bool allow_int = (std::fabs(e_q) < EINT_MAX_RAD);
+
+        // (B) Form integral contribution (from previous Iq)
+        double i_term = Ki_int[j] * Iq[j];
+
+        // Clamp integral contribution (safety)
+        if (i_term >  ITERM_CLAMP) i_term =  ITERM_CLAMP;
+        if (i_term < -ITERM_CLAMP) i_term = -ITERM_CLAMP;
+
+        // (C) Pre-saturation command including I
         const double u_unsat =
             v_ff[j]
             + Kp_pos[j] * e_q
             + Kd_vel[j] * e_dq
-            + Ki_pos[j] * Iq[j];
+            + i_term;
 
-        // Saturate to speed limits
+        // (D) Saturate to speed limits
         double u_sat = u_unsat;
         if (u_sat >  VCLAMPs[j]) u_sat =  VCLAMPs[j];
         if (u_sat < -VCLAMPs[j]) u_sat = -VCLAMPs[j];
+
         const bool sat = (u_sat != u_unsat);
+        v_cmd[j] = u_sat;
 
-        // ---- Integrator update (gated) + soft back-calc anti-windup ----
-        double Iq_new = Iq[j];
+        // (E) Update integrator AFTER saturation (anti-windup)
+        //
+        // Two parts:
+        //  1) normal integration of position error
+        //  2) optional "back-calculation" to unwind when saturated
+        //
+        // Note: Iq is in rad*s, so it integrates e_q [rad] over time [s].
+        if (allow_int) {
+            // Normal integrate
+            Iq[j] += e_q * DT;
 
-        if (Ki_pos[j] > 0.0) {
-            // Integrate only when close AND not saturated
-            if (!sat && (std::fabs(e_q) < EINT_MAX_RAD)) {
-                Iq_new += e_q * DT;
+            // Hard clamp integral state (backup safety)
+            if (Iq[j] >  IQ_CLAMP) Iq[j] =  IQ_CLAMP;
+            if (Iq[j] < -IQ_CLAMP) Iq[j] = -IQ_CLAMP;
+
+            // Back-calculation (optional, helps when saturating)
+            // If saturated, u_sat-u_unsat is nonzero; feed that back to Iq to unwind.
+            if (sat && Ki_int[j] > 1e-9 && KAW > 0.0) {
+                // (u_sat - u_unsat) has units rad/s; divide by Ki to map back to Iq units.
+                Iq[j] += (KAW * (u_sat - u_unsat) / Ki_int[j]) * DT;
             }
-
-            // Soft back-calculation only when saturated
-            if (sat && (KAW > 0.0)) {
-                Iq_new += KAW * (u_sat - u_unsat) / Ki_pos[j];
-            }
-
-            // Backup clamp on raw integrator state
-            if (Iq_new >  IQ_CLAMP) Iq_new =  IQ_CLAMP;
-            if (Iq_new < -IQ_CLAMP) Iq_new = -IQ_CLAMP;
-
-            // Clamp integral contribution directly (most meaningful)
-            double iterm = Ki_pos[j] * Iq_new;
-            if (iterm >  ITERM_CLAMP) iterm =  ITERM_CLAMP;
-            if (iterm < -ITERM_CLAMP) iterm = -ITERM_CLAMP;
-            Iq_new = iterm / Ki_pos[j];
+        } else {
+            // If you want: slowly leak integrator to 0 when not allowed to integrate:
+            // Iq[j] *= 0.999;
         }
 
-        Iq[j]   = Iq_new;
-        v_cmd[j] = u_sat;
         // v_cmd[j] = u_unsat;
     }
 
@@ -690,7 +747,8 @@ for (size_t i = 0; i < N && keep_running.load(); ++i) {
         std::array<double,13> prow{};
         prow[0] = std::chrono::duration<double>(next_tick - t0).count();
         for (int j = 0; j < 6; ++j) { prow[j+1] = q_hat[j]; prow[j+7] = dq_hat[j]; }
-        kf_pred[i] = prow;
+        kf_pred.push_back(prow);
+        // kf_pred[i] = prow;
     }
 
     // Send on schedule
@@ -699,6 +757,12 @@ for (size_t i = 0; i < N && keep_running.load(); ++i) {
 
     // Publish last_cmd ONCE per tick, after we know what we actually sent
     for (int j = 0; j < 6; ++j) last_cmd[j].store(v_cmd[j], std::memory_order_relaxed);
+    {
+        std::array<double,7> crow{};
+        crow[0] = std::chrono::duration<double>(next_tick - t0).count(); // or tick_t
+        for (int j = 0; j < 6; ++j) crow[j+1] = v_cmd[j];
+        cmd_log.push_back(crow);
+    }
 }
 
 
@@ -753,6 +817,8 @@ for (size_t i = 0; i < N && keep_running.load(); ++i) {
 
     std::filesystem::path out_meas(CSV_OUT);
     std::filesystem::path out_kf   = out_meas.parent_path() / "kf_predictions.csv";
+    std::filesystem::path out_cmd  = out_meas.parent_path() / "commanded_velocity.csv";
+
 
     // Measurements (event-driven)
     {
@@ -790,9 +856,27 @@ for (size_t i = 0; i < N && keep_running.load(); ++i) {
             file << "\n";
         }
     }
+    // Commanded velocities at send ticks
+    {
+        std::ofstream file(out_cmd);
+        if (!file.is_open()) {
+            std::cerr << "[ERROR] could not open " << out_cmd << " for writing.\n";
+            return 1;
+        }
+        file << "t";
+        for (int j=0;j<6;++j) file << ",dq_cmd" << j;
+        file << "\n";
+
+        for (const auto& row : cmd_log) {
+            for (int c=0;c<7;++c) { file << row[c]; if (c<6) file << ","; }
+            file << "\n";
+        }
+    }
+
 
     std::cout << "[DONE] Logged measurements to " << out_meas << "\n";
     std::cout << "[DONE] Logged KF predictions to " << out_kf   << "\n";
+    std::cout << "[DONE] Logged commanded velocities to " << out_cmd << "\n";
     if (aborted_due_to_error) return 2;
     return 0;
 }

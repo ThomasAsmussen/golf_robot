@@ -1,17 +1,3 @@
-"""
-rl_common.py
-
-Reusable components for golf-ball contextual RL experiments.
-
-This module is intentionally algorithm-agnostic: it contains utilities for
-state/action scaling, reward shaping, trajectory meta extraction, simple replay
-buffers, JSONL episode logging, and environment parameter sampling helpers.
-
-Expected conventions (from your sim script):
-- trajectory rows are [t, x, y] (time in seconds, x/y in meters)
-- hole_pos is [x, y] (meters)
-"""
-
 from __future__ import annotations
 
 import json
@@ -751,7 +737,7 @@ def compute_reward(
     if is_out_of_bounds:
         reward = -1.0
         # print("out of bounds reward: ", reward)
-        print("Out of bounds. Reward:", reward)
+        # print("Out of bounds. Reward:", reward)
         return reward
 
 
@@ -1168,10 +1154,14 @@ def evaluation_policy_short(
         print("[EVAL] Real-world evaluation mode started.")
         # num_episodes = 3
 
-        here = Path(__file__).resolve().parent
-        project_root       = here.parents[1]
-        episode_log_path = project_root / "log" / "real_episodes_eval" / "episode_logger_eval.jsonl"
-        episode_logger = EpisodeLoggerJsonl(episode_log_path)
+        if big_episode_logger is not None:
+            print("[EVAL] Using provided big_episode_logger for logging.")
+            episode_logger = big_episode_logger
+            here = Path(__file__).resolve().parent
+            project_root       = here.parents[1]
+            episode_log_path = project_root / "log" / "real_episodes_eval" / "episode_logger_eval_ucb.jsonl"
+            print(f"[EVAL] Logging real evaluation episodes to: {episode_log_path}")
+            episode_logger = EpisodeLoggerJsonl(episode_log_path)
     
     # hole_positions = get_hole_positions()
     # print("Evaluating")
@@ -1180,7 +1170,7 @@ def evaluation_policy_short(
     distances_to_hole  = []
     # max_num_discs = 5
     # print("Actor: ", actor)
-    actor.eval()
+    # actor.eval()
     with torch.no_grad():
         for i in range(num_episodes):
             # New random context each eval episode
@@ -1188,8 +1178,9 @@ def evaluation_policy_short(
                 ball_start_obs, hole_pos_obs, disc_positions, x, y, hole_pos = sim_init_parameters(mujoco_cfg, max_num_discs)
             
             if env_type == "real":
-                chosen_hole = 2  # Cycle through holes 1-3
-                ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(camera_index=4, chosen_hole=chosen_hole)
+                actor.reset()
+                chosen_hole = (i % 3) + 1  # Cycle through holes 1-3
+                ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(camera_index=2, chosen_hole=chosen_hole)
                 hole_pos = np.array(hole_pos_obs)
     
             # Build state exactly matching the actor's expected state_dim
@@ -1251,6 +1242,8 @@ def evaluation_policy_short(
 
 
             if env_type == "real":
+                # angle_adjustment = rl_cfg["training"]["angle_adjustment_deg"]
+                # angle_deg += angle_adjustment
                 result = env_step(impact_velocity=speed, swing_angle=angle_deg, ball_start_position=ball_start_obs, planner="quintic", check_rtt=True, chosen_hole=chosen_hole)
                 ball_x, ball_y, in_hole, meta = result
                 is_out_of_bounds = meta["out_of_bounds"]
@@ -1290,7 +1283,7 @@ def evaluation_policy_short(
                     "speed_at_hole": meta.get("speed_at_hole", None),
                     "exploring": False,
                 }
-                episode_logger.log(logging_record)
+                # episode_logger.log(logging_record)
 
                 if meta["used_for_training"]:
                     big_episode_logger.log(logging_record)
@@ -1341,7 +1334,8 @@ def evaluation_policy_hand_tuned(
             ball_start_obs, hole_pos_obs, disc_positions, x, y, hole_pos = sim_init_parameters(mujoco_cfg, max_num_discs)
         
         if env_type == "real":
-            ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(camera_index=camera_index)
+            chosen_hole = 3
+            ball_start_obs, hole_pos_obs, disc_positions, chosen_hole = input_func(camera_index=camera_index, chosen_hole=chosen_hole)
             hole_pos = np.array(hole_pos_obs)
 
         state = encode_state_with_discs(
@@ -1365,7 +1359,7 @@ def evaluation_policy_hand_tuned(
             is_out_of_bounds = False
 
         if env_type == "real":
-            result = env_step(impact_velocity=speed, swing_angle=angle_deg, ball_start_position=ball_start_obs, planner=planner, check_rtt=True, chosen_hole=chosen_hole)
+            result = env_step(impact_velocity=speed, swing_angle=angle_deg, ball_start_position=ball_start_obs, planner=planner, check_rtt=False, chosen_hole=chosen_hole)
             ball_x, ball_y, in_hole, meta = result
             is_out_of_bounds = meta["out_of_bounds"]
 
@@ -1410,4 +1404,4 @@ def evaluation_policy_hand_tuned(
     return successes / num_episodes, float(np.mean(rewards)), avg_distance_to_hole
 
 if __name__ == "__main__":
-    print(np.array([get_hole_positions()[1]["x"], get_hole_positions()[1]["y"]]))
+    print(squash_to_range(0.0254980206489563, -20, 20))  

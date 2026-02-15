@@ -196,8 +196,8 @@ def plan_segment_start_to_hit(
     q_hit: np.ndarray,
     lin_velocity: np.ndarray,
     *,
-    T_max: float = 5.0,
-    time_penalty: float = 0.5,
+    T_max: float = 4.0,
+    time_penalty: float = 0.2,
 ):
     """
     Plan ONLY segment 0: q_start -> q_hit, enforcing the desired TCP velocity at impact
@@ -217,6 +217,7 @@ def plan_segment_start_to_hit(
         print(f"  Desired TCP velocity: {lin_velocity}, achievable: {v_tcp}")
         return None, None, None, None
 
+    # T_MAX = 1.5 # CHANGE HERE
     ts, Q, DQ, DDQ, feasible, T_seg = auto_time_and_discretize(
         q0, dq0, ddq0, qf, dqf, ddqf,
         T_max=T_max,
@@ -236,7 +237,7 @@ def plan_segment_hit_to_end(
     q_end: np.ndarray,
     lin_velocity: np.ndarray,
     *,
-    T_max: float = 5.0,
+    T_max: float = 4.0,
     time_penalty: float = 0.5,
 ):
     """
@@ -277,11 +278,11 @@ def plan_segment_hit_to_end(
 def auto_time_and_discretize(
     q0, dq0, ddq0, qf, dqf, ddqf,
     *,
-    T_max=8.0,
+    T_max=4.0,
     T_init=1.5,
     growth_gain=1.2,
     # --- objective: minimize peak |ddq| (+ optional time penalty) ---
-    time_penalty=0.001,     # objective = peak_ddq + time_penalty * T
+    time_penalty=0.01,     # objective = peak_ddq + time_penalty * T
     refine_steps=10,      # more = more accurate optimum if time_penalty > 0
     T_search_mode="log_grid",  # "log_grid" is robust
     # --- evaluation sampling (dense, to not miss peaks) ---
@@ -352,6 +353,7 @@ def auto_time_and_discretize(
                     return False, f"Wall crash, y={y}", None
 
         peak_ddq = float(np.max(np.abs(ddQ)))  # peak absolute accel across all joints/time
+        # print(f" Peak: {peak_ddq:.2f} rad/s² at T={T:.3f}s")
         return True, "None", peak_ddq
 
     def _objective(peak_ddq, T):
@@ -380,6 +382,7 @@ def auto_time_and_discretize(
     # ------------------------------------------------------------
     # 2) Optimize T over [feasible_T, T_max]
     # ------------------------------------------------------------
+    
     best_T = feasible_T
     best_peak = feasible_peak
     best_J = _objective(best_peak, best_T)
@@ -451,7 +454,8 @@ def auto_time_and_discretize(
     for i, t in enumerate(ts):
         for j in range(6):
             Q[i, j], dQ[i, j], ddQ[i, j] = eval_quintic(coeffs[j], t)
-
+    seg0_peak = np.max(np.abs(ddQ))
+    # print(f" Final segment peak |ddq|: {seg0_peak:.2f} rad/s² over T={T_final:.3f}s")
     return ts, Q, dQ, ddQ, True, T_final
 
 
@@ -554,10 +558,10 @@ def joint_vel_from_tcp(q, v_lin, damping=1e-4):
 def plan_piecewise_quintic(
     waypoints, impact_idx, lin_velocity,
     *,
-    T_max_default=5.0,
-    T_max_impact=6.0,
-    time_penalty_default=0.5,
-    time_penalty_impact=0.5,
+    T_max_default=4.0,
+    T_max_impact=4.0,
+    time_penalty_default=0.2,
+    time_penalty_impact=0.2,
 ):
     """
     Piecewise planner where EACH segment chooses its own optimal duration T
@@ -596,10 +600,17 @@ def plan_piecewise_quintic(
             T_search_mode="log_grid",
             refine_steps=12,
         )
-
+        # if seg == 1:
+        #     print(f" Segment {seg} planned with T_max={T_max}, time_penalty={time_penalty}")
+        #     ddq1_peak = np.max(np.abs(DDQ))
+        #     print(f"  Segment {seg} initial peak |ddq|: {ddq1_peak:.2f} rad/s² over T={T_seg:.3f}s")
         if not feasible:
             print(f"[ERROR] Could not find feasible trajectory for segment {seg} -> {seg+1}.")
             return None, None, None, None
+        if seg == 0 :
+            # print(f" Segment {seg} planned with T_max={T_max}, time_penalty={time_penalty}")
+            ddq0_peak = np.max(np.abs(DDQ))
+            print(f"  Segment {seg} initial peak |ddq|: {ddq0_peak:.2f} rad/s² over T={T_seg:.3f}s")
 
         segments.append({'ts': ts, 'Q': Q, 'DQ': DQ, 'DDQ': DDQ, 'T': T_seg})
         prev_end_dq = DQ[-1].copy()
@@ -608,7 +619,8 @@ def plan_piecewise_quintic(
     Q_blocks   = [segments[0]['Q']]
     dQ_blocks  = [segments[0]['DQ']]
     ddQ_blocks = [segments[0]['DDQ']]
-
+    seg0_peak = np.max(np.abs(segments[0]['DDQ']))
+    # print(f" Segment 0 peak |ddq|: {seg0_peak:.2f} rad/s² over T={segments[0]['T']:.3f}s")
     for seg in segments[1:]:
         Q_blocks.append(seg['Q'][1:])
         dQ_blocks.append(seg['DQ'][1:])
@@ -805,7 +817,7 @@ def score_abs_joint_accel(Q, DQ, DDQ, dt, impact_idx, ddq_max, window_half_width
 
 
 
-def generate_trajectory(impact_speed, impact_angle, ball_x_offset, ball_y_offset):
+def generate_trajectory(impact_speed, impact_angle, ball_x_offset, ball_y_offset, *, warmstart_off_pairs=None):
     """
     Generate a joint-space trajectory for the UR10 robot to achieve a specified
     TCP impact speed and direction at a designated waypoint.
@@ -840,43 +852,65 @@ def generate_trajectory(impact_speed, impact_angle, ball_x_offset, ball_y_offset
     # q0_hit  = np.array([-2.18480298, -2.68658532, -1.75772109,  1.30184109,  0.61400683,  0.50125856])  # reference impact joint config (+X direction)
     q0_hit  = np.array([-2.11202641, -2.45037247, -1.67584054,  0.95906874,  0.53322783,  0.36131151])  # From 8th Jan
     # q0_hit    = np.array([-2.24881973, -2.4917556,  -1.57452762,  0.90943969,  1.01899601,  0.34730125])
-    # q0_hit  = move_point_xyz(ball_x_offset, ball_y_offset, 0.01, q0_hit, q0_hit)[0]  # unwrap to near reference
-    q0_hit  = move_point_xyz(ball_x_offset+0.005, ball_y_offset+0.02, 0.005, q0_hit, q0_hit)[0]  # unwrap to near reference
-    # possible_start_points = []
-    # possible_end_points   = []
-    # for x in range(5):
-    #     for y in range(5):
-    #         for z in range(5):
-    #             possible_start_points.append(move_point_xyz(-0.6 + 0.05*x, -0.1 + 0.05*y, 0.15 + 0.03*z, q0_hit, q0_start)[0])
-    #             possible_end_points.append(move_point_xyz(0.4 + 0.05*x, -0.1 + 0.05*y, 0.15 + 0.03*z, q0_hit, q0_end)[0])
-        
+    q0_hit  = move_point_xyz(ball_x_offset, ball_y_offset+0.01, 0.00, q0_hit, q0_hit)[0]  # unwrap to near reference
+    # q0_hit  = move_point_xyz(ball_x_offset+0.005, ball_y_offset+0.02, 0.000, q0_hit, q0_hit)[0]  # unwrap to near reference
+
+    # Previous start points that worked
     # possible_start_points = [move_point_xyz(-0.4, 0.0, 0.25, q0_hit, q0_start)[0]
-    possible_start_points = [move_point_xyz(-0.36, 0.2, 0.236, q0_hit, q0_start)[0]
+    # possible_start_points = [move_point_xyz(-0.36, 0.2, 0.236, q0_hit, q0_start)[0]
     # possible_start_points = [move_point_xyz(-0.5, 0.152, 0.35, q0_hit, q0_start)[0]
-    ]
+    # ]
 
     # possible_end_points = [move_point_xyz(0.5, 0.0, 0.1, q0_hit, q0_end)[0]
     possible_end_points = [move_point_xyz(0.683, 0.127, 0.11, q0_hit, q0_end)[0]
     # possible_end_points = [move_point_xyz(0.683, 0.127, 0.11, q0_hit, q0_end)[0]
-                        #    move_point_xyz(0.5, 0.1, 0.25, q0_hit, q0_end)[0],
-                        #    move_point_xyz(0.4, -0.1, 0.25, q0_hit, q0_end)[0],
-                        #    move_point_xyz(0.4, 0.0, 0.30, q0_hit, q0_end)[0],
-                        #    move_point_xyz(0.4, 0.0, 0.20, q0_hit, q0_end)[0]
+
     ]
 
-    # q_start, _ = move_point_xyz(-0.4, 0.0, 0.25, q0_hit, q0_start) # 60 cm behind and 25 cm above ball
-    # q_end, _   = move_point_xyz( 0.5, 0.0, 0.25, q0_hit, q0_end) # 60 cm in front and 25 cm above ball
+    # After q_hit is computed (you already compute q_hit here) :contentReference[oaicite:1]{index=1}
 
-    # q_start = np.array([-2.35718127, -2.84501045, -0.88769778,  1.27293301,  0.61129035, -0.03746998]) # 60 cm behind and 25 cm above ball
-    # q_exit = np.array([-0.74857402, -2.44563742, -1.97906305,  0.87441754, -1.14358243,  0.7267085]) # 60 cm in front and 25 cm above ball
-    # q0_hit  = np.array([-2.18480298, -2.68658532, -1.75772109,  1.30184109,  0.61400683,  0.50125856])  # reference impact joint config (+X direction)
+    # Default fallback (your current values)
+    default_start_off = np.array([-0.5, 0.152, 0.35], dtype=float)
+    default_end_off   = np.array([ 0.683, 0.127, 0.11], dtype=float)
+
+    off_pairs = []
+    if warmstart_off_pairs:
+        off_pairs.extend(warmstart_off_pairs)
+
+    # Always include fallback at the end (in case KNN gives nonsense)
+    off_pairs.append((default_start_off, default_end_off))
+    # print(f"Using {off_pairs} start/end offset pairs for warmstart.")
+    possible_start_points = []
+    # possible_end_points = []
+    for (start_off, end_off) in off_pairs:
+        # print("Using offset pair:", start_off, end_off)
+        try:
+            q_start, info = move_point_xyz(float(start_off[0]), float(start_off[1]), float(start_off[2]),
+                                     q0_hit, q0_start)
+            # print("Move info:", info)
+            # print("Generated start point:", q_start)
+            q_end   = move_point_xyz(float(end_off[0]), float(end_off[1]), float(end_off[2]),
+                                     q0_hit, q0_end)[0]
+        except Exception:
+            continue
+
+        possible_start_points.append(q_start)
+        # possible_end_points.append(q_end)
+
+    # print(f"Generated {len(possible_start_points)} possible start/end point pairs.")
+    # Optional: truncate to avoid exploding compute
+    possible_start_points = possible_start_points[:1]
+    # possible_start_points = [move_point_xyz(-0.4, 0.0, 0.25, q0_hit, q0_start)[0] # CHANGE HERE
+    possible_end_points   = possible_end_points[:2]
+    print(f"Using {len(possible_start_points)} possible start points and {len(possible_end_points)} possible end points.")
+
 
     # Compute impact joint configuration from desired direction
     impact_direction = np.array([np.cos(np.deg2rad(impact_angle)), np.sin(np.deg2rad(impact_angle)), 0.0])
     
     ball_center = fk_ur10(q0_hit)[-1][:3, 3] + np.array([0.02133, 0.0, 0.0])  # TCP position at zero angle + offset
     q_hit = impact_joint_config_from_direction(q0_hit, impact_direction, ball_center=ball_center)
-    q_hit = move_point_xyz(0.0, 0.0, -0.005, q_hit, q_hit)[0]  # unwrap to near reference
+    # q_hit = move_point_xyz(0.0, 0.0, -0.005, q_hit, q_hit)[0]  # unwrap to near reference
     # waypoints = [q_start, q_hit, q_end]
     # print("Q_HIT:")
     # print(q_hit)
@@ -901,47 +935,104 @@ def generate_trajectory(impact_speed, impact_angle, ball_x_offset, ball_y_offset
                    "problem": "Impact speed not feasible"}
         return results
 
+    best_cost = float("inf")
     best_segment = None
-    best_Q_all   = None
-    best_dQ_all  = None
+    best_Q_all = None
+    best_dQ_all = None
     best_ddQ_all = None
-    found_any    = False
+    waypoints_best = None
+
+    # choose the penalty you want for *selection* (this is separate from time_penalty_default used in planning)
+    time_penalty_select_seg0 = 0.2   # <-- set this
 
     for q_start in possible_start_points:
         for q_end in possible_end_points:
             waypoints = [q_start, q_hit, q_end]
+            # print("start key:", np.round(q_start, 4))
+
+
             segments_i, Q_all_i, dQ_all_i, ddQ_all_i = plan_piecewise_quintic(
-                waypoints, impact_idx, lin_velocity
+                waypoints, impact_idx, lin_velocity, time_penalty_default=0.2, time_penalty_impact=0.2
             )
 
-            if Q_all_i is not None:
-                # First feasible configuration found – stop searching
+            if Q_all_i is None:
+                continue  # infeasible full trajectory, skip
+
+            # --- score ONLY the first segment ---
+            seg0 = segments_i[0]
+            peak_ddq_seg0 = float(np.max(np.abs(seg0["DDQ"])))
+            peak_ddq_seg1 = float(np.max(np.abs(segments_i[1]["DDQ"])))
+            # print(f"Segment 0 peak ddq: {peak_ddq_seg0:.3f}, Segment 1 peak ddq: {peak_ddq_seg1:.3f}")
+            T0 = float(seg0["T"])
+            cost = peak_ddq_seg0 + time_penalty_select_seg0 * T0
+
+            if cost < best_cost:
+                best_cost = cost
                 best_segment = segments_i
                 best_Q_all   = Q_all_i
                 best_dQ_all  = dQ_all_i
                 best_ddQ_all = ddQ_all_i
                 waypoints_best = waypoints
-                found_any = True
-                break  # break inner loop
 
-        if found_any:
-            break  # break outer loop
+    if best_Q_all is None:
+        
+        # possible_start_points = [move_point_xyz(-0.4, 0.0, 0.25, q0_hit, q0_start)[0]
+        # possible start_points = [move_point_xyz(-0.36, 0.2, 0.236, q0_hit, q0_start)[0]
+        print("[INFO] Optimized start points returned no feasible trajectory. Trying defaults.")
+        possible_start_points = [move_point_xyz(-0.5, 0.152, 0.35, q0_hit, q0_start)[0],
+                                 move_point_xyz(-0.4, 0.0, 0.25, q0_hit, q0_start)[0],
+                                 move_point_xyz(-0.36, 0.2, 0.236, q0_hit, q0_start)[0]
+        ]
+        for q_start in possible_start_points:
+            for q_end in possible_end_points:
+                waypoints = [q_start, q_hit, q_end]
+                # print("start key:", np.round(q_start, 4))
 
-    if not found_any:
-        print("[ERROR] Trajectory planning failed.")
-        results = {
-            "t_plan": None,
-            "P_plan": None,
-            "Q_plan": None,
-            "dQ_plan": None,
-            "ddQ_plan": None,
-            "segments": None,
-            "waypoints": None,
-            "problem": "Trajectory planning failed for all start/end candidates.",
-        }
-        return results
 
-    # Use the first feasible trajectory we found
+                segments_i, Q_all_i, dQ_all_i, ddQ_all_i = plan_piecewise_quintic(
+                    waypoints, impact_idx, lin_velocity, time_penalty_default=0.2, time_penalty_impact=0.2
+                )
+
+                if Q_all_i is None:
+                    continue  # infeasible full trajectory, skip
+
+                # --- score ONLY the first segment ---
+                seg0 = segments_i[0]
+                peak_ddq_seg0 = float(np.max(np.abs(seg0["DDQ"])))
+                peak_ddq_seg1 = float(np.max(np.abs(segments_i[1]["DDQ"])))
+                # print(f"Segment 0 peak ddq: {peak_ddq_seg0:.3f}, Segment 1 peak ddq: {peak_ddq_seg1:.3f}")
+                T0 = float(seg0["T"])
+                cost = peak_ddq_seg0 + time_penalty_select_seg0 * T0
+
+                if cost < best_cost:
+                    best_cost = cost
+                    best_segment = segments_i
+                    best_Q_all   = Q_all_i
+                    best_dQ_all  = dQ_all_i
+                    best_ddQ_all = ddQ_all_i
+                    waypoints_best = waypoints
+            
+        
+        if best_Q_all is None:
+            print("[ERROR] Trajectory planning failed.")
+            results = {
+                "t_plan": None,
+                "P_plan": None,
+                "Q_plan": None,
+                "dQ_plan": None,
+                "ddQ_plan": None,
+                "segments": None,
+                "waypoints": None,
+                "problem": "Trajectory planning failed for all start/end candidates.",
+            }
+            return results
+
+
+    print(f"[SELECT] Best seg0 cost = {best_cost:.3f} "
+        f"(peak_ddq={np.max(np.abs(best_segment[0]['DDQ'])):.3f}, "
+        f"T0={best_segment[0]['T']:.3f}, "
+        f"time_penalty={time_penalty_select_seg0})")
+
     segments = best_segment
     Q_all    = best_Q_all
     dQ_all   = best_dQ_all
@@ -1015,32 +1106,159 @@ def tcp_path_from_Q(Q: np.ndarray) -> np.ndarray:
     return np.array([fk_ur10(q)[-1][:3, 3] for q in Q])
 
 
-if __name__ == '__main__':
-    # Test impact_joint_config_from_direction function
-    q0_hit = np.array([-2.18480298, -2.68658532, -1.75772109,  1.30184109,  0.61400683,  0.50125856])
+def plot_tcp_positions_2d_with_vectors(q0_hit, angles_deg):
+    """
+    2D XY plot of TCP positions for varying impact directions.
 
-    angles = np.linspace(-90, 90, 51)
+    Arrows correspond to the impact direction, but are drawn such that
+    the arrow HEAD ends exactly at the TCP impact point.
+
+    Also shows the ball center as a bigger marker.
+    """
+    angles = np.asarray(angles_deg, dtype=float)
+
     tcp_pos = []
+    angles_ok = []
+
+    # Reference TCP seed and ball center
     tcp_seed = np.array(fk_ur10(q0_hit)[-1][:3, 3])
     ball_center = tcp_seed + np.array([0.02133, 0.0, 0.0])
 
+    # Compute feasible TCP positions
     for angle in angles:
-        v_dir = np.array([np.cos(np.deg2rad(angle)), np.sin(np.deg2rad(angle)), 0.0])
-        q_new = impact_joint_config_from_direction(q0_hit, v_dir, ball_center=ball_center)
+        v_dir = np.array([
+            np.cos(np.deg2rad(angle)),
+            np.sin(np.deg2rad(angle)),
+            0.0
+        ])
+
+        q_new = impact_joint_config_from_direction(
+            q0_hit, v_dir, ball_center=ball_center
+        )
+
         if q_new is None:
             continue
 
         tcp_pos.append(fk_ur10(q_new)[-1][:3, 3])
+        angles_ok.append(angle)
 
-    fig = plt.figure(figsize=(8,6))
-    ax = fig.add_subplot(111, projection='3d')
-    tcp_pos = np.array(tcp_pos)
-    ax.plot(tcp_pos[:,0], tcp_pos[:,1], tcp_pos[:,2], marker='o')
-    ax.scatter(tcp_seed[0], tcp_seed[1], tcp_seed[2], color='r', s=100, label='Seed TCP Position')
-    ax.scatter(ball_center[0], ball_center[1], ball_center[2], color='g', s=100, label='Ball Center')
-    ax.set_xlabel('X [m]')
-    ax.set_ylabel('Y [m]')
-    ax.set_zlabel('Z [m]')
-    ax.set_title('TCP Positions for Varying Impact Directions')
-    ax.axis('equal')
+    if len(tcp_pos) == 0:
+        print("[WARNING] No feasible IK solutions found.")
+        return
+
+    tcp_pos = np.asarray(tcp_pos)             # (N,3)
+    angles_ok = np.asarray(angles_ok, float)  # (N,)
+
+    # Unit direction vectors in XY
+    dirs_xy = np.column_stack([
+        np.cos(np.deg2rad(angles_ok)),
+        np.sin(np.deg2rad(angles_ok)),
+    ])  # (N,2)
+
+    # Arrow length
+    L = 0.01  # meters
+
+    # ------------------------------------------------------------
+    # Shift arrow START points backward so arrow ENDS at TCP point
+    #
+    # head = tcp_pos_xy
+    # tail = tcp_pos_xy - L * dir
+    # ------------------------------------------------------------
+    arrow_tail = tcp_pos[:, :2] - L * dirs_xy
+    arrow_dxdy = L * dirs_xy
+
+    # ------------------------------------------------------------
+    # Plot
+    # ------------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    # TCP XY curve
+    # ax.plot(
+    #     tcp_pos[:, 0],
+    #     tcp_pos[:, 1],
+    #     marker='o',
+    #     linestyle='-',
+    #     label="TCP positions"
+    # )
+
+    # Seed TCP
+        # Ball center (bigger)
+    from matplotlib.patches import Circle
+
+    ball_radius = 0.02133   # meters
+
+    ball = Circle(
+        (ball_center[0], ball_center[1]),
+        radius=ball_radius,
+        color="orange",
+        alpha=1.0,
+        label="Ball"
+    )
+
+    ax.add_patch(ball)
+
+    ax.scatter(
+        tcp_seed[0], tcp_seed[1],
+        color="r",
+        s=120,
+        label="Seed TCP",
+        marker='X',
+    )
+
+
+    # Impact-direction arrows (ending at TCP points)
+    ax.quiver(
+        arrow_tail[:, 0], arrow_tail[:, 1],   # tails
+        arrow_dxdy[:, 0], arrow_dxdy[:, 1],   # directions
+        angles="xy",
+        scale_units="xy",
+        scale=1.0,
+        width=0.005,
+        headwidth=8.0,
+        headlength=10.0,
+        headaxislength=8.0,
+        alpha=0.85,
+        label="Impact direction"
+    )
+
+    ax.set_xlabel("X [m]")
+    ax.set_ylabel("Y [m]")
+    # ax.set_title("TCP impact positions with direction arrows ending at impact")
+    ax.set_aspect("equal", adjustable="box")
+    ax.grid(False)
+    ax.legend(loc="lower right")
     plt.show()
+
+
+
+if __name__ == '__main__':
+    # Test impact_joint_config_from_direction function
+    q0_hit = np.array([-2.18480298, -2.68658532, -1.75772109,  1.30184109,  0.61400683,  0.50125856])
+
+    angles = np.linspace(-90, 90, 11)
+    tcp_pos = []
+    tcp_seed = np.array(fk_ur10(q0_hit)[-1][:3, 3])
+    ball_center = tcp_seed + np.array([0.02133, 0.0, 0.0])
+
+    # for angle in angles:
+    #     v_dir = np.array([np.cos(np.deg2rad(angle)), np.sin(np.deg2rad(angle)), 0.0])
+    #     q_new = impact_joint_config_from_direction(q0_hit, v_dir, ball_center=ball_center)
+    #     if q_new is None:
+    #         continue
+
+    #     tcp_pos.append(fk_ur10(q_new)[-1][:3, 3])
+
+    # fig = plt.figure(figsize=(8,6))
+    # ax = fig.add_subplot(111, projection='3d')
+    # tcp_pos = np.array(tcp_pos)
+    # ax.plot(tcp_pos[:,0], tcp_pos[:,1], tcp_pos[:,2], marker='o')
+    # ax.scatter(tcp_seed[0], tcp_seed[1], tcp_seed[2], color='r', s=100, label='Seed TCP Position')
+    # ax.scatter(ball_center[0], ball_center[1], ball_center[2], color='g', s=100, label='Ball Center')
+    # ax.set_xlabel('X [m]')
+    # ax.set_ylabel('Y [m]')
+    # ax.set_zlabel('Z [m]')
+    # ax.set_title('TCP Positions for Varying Impact Directions')
+    # ax.axis('equal')
+    # plt.show()
+
+    plot_tcp_positions_2d_with_vectors(q0_hit, angles_deg=np.linspace(-180, 180, 21))

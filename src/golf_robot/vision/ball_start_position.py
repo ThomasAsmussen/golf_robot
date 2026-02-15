@@ -69,7 +69,7 @@ def capture_single_frame(
         )
     finally:
         ret, img = cap.read()
-        print("img.shape =", img.shape)
+        # print("img.shape =", img.shape)
         if shutdown_cap:
             cap.release()
 
@@ -108,7 +108,7 @@ def get_ball_start_position(debug=True, return_debug_image=False, debug_raw=Fals
     # 2) Rectify / find homography on the UNDISTORTED image
     H_plane, corners, meters_per_pixel_x, meters_per_pixel_y = rectify_with_chessboard(undistorted, debug=False)
 
-    print("Resolution meters_per_pixel (x,y):", meters_per_pixel_x, meters_per_pixel_y)
+    # print("Resolution meters_per_pixel (x,y):", meters_per_pixel_x, meters_per_pixel_y)
 
 
     # 3) Compute WB gains also on UNDISTORTED image
@@ -126,8 +126,8 @@ def get_ball_start_position(debug=True, return_debug_image=False, debug_raw=Fals
     img_wb = apply_white_balance(img_ud, gains)
 
     # Correct the orientation of x and y
-    S = np.array([[0, 1, 0],
-                [1, 0, 0],
+    S = np.array([[0, -1, 0],
+                [-1, 0, 0],
                 [0, 0, 1]], dtype=np.float64)
 
     H_plane_corrected = S @ H_plane
@@ -136,7 +136,7 @@ def get_ball_start_position(debug=True, return_debug_image=False, debug_raw=Fals
     # Find ball position
     ball_position = detect_ball_position(img_wb, debug=False,hue_high=20, sat_low=200, val_low=130) # low_hue=1,high_hue=10,sat_thresh=150,min_area=50, circularity_thresh=0.45,
 
-    print(ball_position)
+    # print(ball_position)
     if ball_position is None:
         cv2.imshow("Error image", cv2.resize(img_wb, (640, 480)))
         cv2.waitKey(0)
@@ -164,12 +164,12 @@ def get_ball_start_position(debug=True, return_debug_image=False, debug_raw=Fals
     idx_br = np.argmax(u + v)
 
     u_tr, v_tr = corners2[idx_tr]
-    print("TR corner pixel:", u_tr, v_tr)
+    # print("TR corner pixel:", u_tr, v_tr)
 
     ref_x, ref_y = pixel_to_plane(u_tr, v_tr, H_plane_corrected)
 
 
-    print("Ref plane:", ref_x, ref_y)
+    # print("Ref plane:", ref_x, ref_y)
 
     # Distance to origo from plane:
     x_tr_to_0 = 0.548
@@ -181,12 +181,12 @@ def get_ball_start_position(debug=True, return_debug_image=False, debug_raw=Fals
 
 
     # Now you can express ball relative to that reference corner in plane coords
-    print("origo:", x0, y0)
-    print("ball pos:", ball_x, ball_y)
+    # print("origo:", x0, y0)
+    # print("ball pos:", ball_x, ball_y)
     dx = ball_x - x0
     dy = ball_y - y0
 
-    print("Difference from origo:", dx, dy)
+    # print("Difference from origo:", dx, dy)
 
     if debug:
         # Debug visual image
@@ -208,7 +208,7 @@ def get_ball_start_position(debug=True, return_debug_image=False, debug_raw=Fals
         p0 = (int(u0), int(v0))
         px = (int(u_x), int(v_x))
         py = (int(u_y), int(v_y))
-        print(p0,px,py)
+        # print(p0,px,py)
         cv2.arrowedLine(dbg, p0, px, (0, 0, 255), 3, tipLength=0.15)  # +X (red)
         cv2.arrowedLine(dbg, p0, py, (0, 255, 0), 3, tipLength=0.15)  # +Y (green)
         # Labels
@@ -227,6 +227,6 @@ def get_ball_start_position(debug=True, return_debug_image=False, debug_raw=Fals
     return (dx, dy)
 
 if __name__ == "__main__":
-    dx, dy = get_ball_start_position(debug = True, use_cam=True, debug_raw=True, camera_index=2, operating_system="linux")
+    dx, dy = get_ball_start_position(debug = True, use_cam=True, debug_raw=True, camera_index=4, operating_system="linux")
     
     print("Ball start position (dx, dy) from origo:", dx, dy)

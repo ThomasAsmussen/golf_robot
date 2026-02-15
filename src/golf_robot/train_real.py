@@ -17,7 +17,7 @@ from PIL import Image, ImageTk
 import cv2
 #from contextual_bandit2 import training
 # from SAC_bandit import training
-from thompson_bandit import training
+
 from vision.ball2hole_distance import get_ball_final_position
 from vision.ball_start_position import get_ball_start_position
 from planning.generate_trajectory_csv import generate_trajectory_csv
@@ -34,9 +34,17 @@ CAMERA_INDEX_END   = 2  # ending camera index for real robot
 #CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
 #CAMERA_END = r'@device_pnp_\\?\usb#vid_046d&pid_08e5&mi_00#8&2e31d80&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\global'
 END_POS = [-2.47, -2.38, -1.55, 1.66, 0.49, -0.26]
-algorithm = "thompson_bandit"  # "contextual_bandit2", "SAC_bandit", "thompson_bandit"
+algorithm = "thompson_bandit"  # "contextual_bandit2", "SAC_bandit", "thompson_bandit", ucb
 planner = "quintic"
 
+if algorithm == "thompson_bandit":
+    from thompson_bandit import training
+elif algorithm == "contextual_bandit2":
+    from contextual_bandit2 import training
+elif algorithm == "SAC_bandit":
+    from SAC_bandit import training
+elif algorithm == "ucb":
+    from ucb_bandit import training
 def real_init_parameters(camera_index, cap=None, chosen_hole=None):
     # Ball
     bx, by, dbg = get_ball_start_position(debug=True, return_debug_image=True, debug_raw=False, use_cam=True, camera_index=camera_index, cap=cap, operating_system=OPERATING_SYSTEM)
@@ -48,8 +56,9 @@ def real_init_parameters(camera_index, cap=None, chosen_hole=None):
     
     # Holes
     if chosen_hole is None:
-        chosen_hole = np.random.choice([1,2,3])
-        # chosen_hole = 2
+        chosen_hole = np.random.choice([1, 2, 3], p=[0.25, 0.5, 0.25])
+        # chosen_hole = np.random.choice([1, 2, 3])
+        # chosen_hole = 3
     # chosen_hole = 1  # for testing purposes
     here = Path(__file__).resolve().parent
     config_dir = here.parents[1] / "configs"
@@ -65,12 +74,20 @@ def real_init_parameters(camera_index, cap=None, chosen_hole=None):
     disc_positions = [] # not used for now in real training
     
     # Confirm
-    prompter.show_hole(chosen_hole) # Show big hole number
-    prompter.confirm_or_exit("Trajectory ready. Continue to execute?")
-    prompter.clear_hole() # clear headline
+    # prompter.show_hole(chosen_hole) # Show big hole number
+    # prompter.confirm_or_exit("Trajectory ready. Continue to execute?")
+    # prompter.clear_hole() # clear headline
     
     return ball_start_position, hole_position, disc_positions, chosen_hole
     
+
+def ban_self_from_cores(cores):
+    allowed = set(os.sched_getaffinity(0))
+    ban = set(cores)
+    new_allowed = allowed - ban
+    if new_allowed != allowed:
+        os.sched_setaffinity(0, new_allowed)
+        print(f"[Affinity] Python allowed cores now: {sorted(new_allowed)}")
 
 def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quintic", check_rtt=False, chosen_hole=None):
     print(f"Impact velocity: {impact_velocity} m/s, swing angle: {swing_angle} deg, ball start pos: {ball_start_position} m")
@@ -112,36 +129,90 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
             print("RTTs (ms):", rtts)
             print("avg:", sum(rtts)/len(rtts))
     
-    
+    prompter.show_hole(chosen_hole) # Show big hole number
     prompter.confirm_or_exit("Ready to execute trajectory. Continue?")
+    prompter.clear_hole() # clear headline
 
     here = Path(__file__).resolve().parent
     traj_exe = here / "communication" / "traj_streamer"
 
-    if OPERATING_SYSTEM == "linux":
-        traj_cmd = [str(traj_exe)]
+    # if OPERATING_SYSTEM == "linux":
+    #     # traj_cmd = [str(traj_exe)]
+    #     core = "2"
+    #     traj_cmd = ["taskset", "-c", core, "nice", "-n", "-10", str(traj_exe)]
 
-    elif OPERATING_SYSTEM == "windows":
-        win_path = here / "communication" / "traj_streamer"
-        wsl_path = subprocess.check_output(
-            ["wsl", "wslpath", "-a", str(win_path)],
-            text=True
-        ).strip()
-        traj_cmd = ["wsl", wsl_path]
+    # elif OPERATING_SYSTEM == "windows":
+    #     win_path = here / "communication" / "traj_streamer"
+    #     wsl_path = subprocess.check_output(
+    #         ["wsl", "wslpath", "-a", str(win_path)],
+    #         text=True
+    #     ).strip()
+    #     traj_cmd = ["wsl", wsl_path]
 
-    else:
-        raise RuntimeError(f"Unsupported OS: {OPERATING_SYSTEM}")
+    # else:
+    #     raise RuntimeError(f"Unsupported OS: {OPERATING_SYSTEM}")
     
+    # def run_traj():
+    #     with open(os.devnull, "w") as dn:
+    #         return subprocess.run(
+    #             traj_cmd,
+    #             check=False,
+    #             stdout=dn,
+    #             stderr=dn,
+    #         )
+
+    # def run_traj():
+    #     # target_core = 11
+    #     with open(os.devnull, "w") as dn:
+    #         # p = subprocess.Popen(["sudo","chrt","-f","80", str(traj_exe)], stdout=dn, stderr=dn)
+
+    #         # Pin traj_streamer to core 10 and 11 (regardless of Python's own affinity)
+    #         # os.sched_setaffinity(p.pid, {10, 11})  # allow traj_streamer to use core 10 and 11
+    #         p = subprocess.Popen(
+    #             ["sudo", "/usr/bin/chrt", "-f", "80", "/usr/bin/taskset", "-c", "10,11", str(traj_exe)],
+    #             stdout=dn, stderr=dn
+    #         )
+    #         out, err = p.communicate()
+    #         print("rc:", p.returncode)
+    #         print("stderr:", err)
+    #         # Verify *child* affinity
+    #         # print("[Affinity] Python allowed cores:", sorted(os.sched_getaffinity(0)))
+    #         print("[Affinity] traj_streamer allowed cores:", sorted(os.sched_getaffinity(p.pid)))
+
+    #         # Priority (0 = default; negative needs privileges)
+    #         try:
+    #             os.setpriority(os.PRIO_PROCESS, p.pid, 0)
+    #         except PermissionError:
+    #             pass
+
+    #         rc = p.wait()
+    #         return subprocess.CompletedProcess(args=[str(traj_exe)], returncode=rc)
+
     def run_traj():
-        return subprocess.run(
-            traj_cmd,
-            check=False,
-            capture_output=False,
-            text=True,
-        )
+        with open(os.devnull, "w") as dn:
+            # Start the real binary directly (no sudo/taskset wrapper)
+            p = subprocess.Popen([str(traj_exe)], stdout=dn, stderr=dn)
 
+            # Pin it to cores 10-11
+            os.sched_setaffinity(p.pid, {10, 11})
+            print("[Affinity] traj_streamer allowed cores:", sorted(os.sched_getaffinity(p.pid)))
+
+            # Optional: try to raise to FIFO (will fail unless permitted)
+            rt = subprocess.run(
+                ["sudo", "-n", "/usr/bin/chrt", "-f", "-p", "80", str(p.pid)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            if rt.returncode != 0:
+                # Not fatal; just means you don't have RT permission
+                if rt.stderr.strip():
+                    print("[chrt stderr]:", rt.stderr.strip())
+            else: 
+                print("[chrt check stderr]:", rt.stderr.strip())
+            rc = p.wait()
+            return subprocess.CompletedProcess(args=[str(traj_exe)], returncode=rc)
     
-    result = prompter.run_with_spinner("Shooting", run_traj)
+    # result = prompter.run_with_spinner("Shooting", run_traj)
+    result = prompter.run_blocking("Shooting…", run_traj)
 
     print("Trajectory streamer output:")
     print(result.stdout)
@@ -248,8 +319,8 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
                     )
                     dist_at_hole.append(dist_at_hole_tmp)
                     speed_at_hole.append(speed_at_hole_tmp)
-                print("Distance at hole list:", dist_at_hole)
-                print("Speed at hole list:", speed_at_hole)
+                # print("Distance at hole list:", dist_at_hole)
+                # print("Speed at hole list:", speed_at_hole)
                 if dist_at_hole[2] is not None:
                     traj_3_worked = True
 
@@ -293,7 +364,7 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
         "wrong_hole": wrong_hole,
         "on_green": on_green,
     }
-    print("meta:", meta)
+    # print("meta:", meta)
     return ball_final_position[0], ball_final_position[1], in_hole, meta
     
 
@@ -301,6 +372,7 @@ def run_real(impact_velocity, swing_angle, ball_start_position, planner = "quint
 #run_real(impact_velocity=1.0, swing_angle=0.0, ball_start_position=ball_start_position, planner="quintic", check_rtt=True)
 
 def main():
+    ban_self_from_cores([10, 11])  # keep core 10 and 11 free for traj streamer subprocess
     global prompter
 
     # Create UI once (Tk must live in main thread)

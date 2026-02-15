@@ -62,6 +62,8 @@ def main():
         algo, diff = parse_project_name(p.name)
         if algo is None:
             continue
+        if diff == 0:
+            continue
         projects.append((p.name, algo, diff))
     # projects = [
     #     ("golf_robot_ddpg_v3", "ddpg", 3)

@@ -14,16 +14,6 @@ import uuid
 from rl_common import *
 
 
-# =========================================================
-# Algorithm: Bootstrapped Thompson + CEM planning + Double Critic per head
-# =========================================================
-# - K heads (bootstrapped)
-# - Each head has TWO critics: Q1_k, Q2_k
-# - Thompson action selection: sample head k, plan with score(a)=min(Q1_k, Q2_k)
-# - Train both critics by supervised regression to reward
-# - Evaluation: wrap a planner as an "actor" so evaluation_policy_short() works
-
-
 # ---------------------------------------------------------
 # CEM planner
 # ---------------------------------------------------------
@@ -79,6 +69,320 @@ def cem_plan_action(
 # ---------------------------------------------------------
 # Planner wrappers for evaluation_policy_short()
 # ---------------------------------------------------------
+
+class BestHeadThenThompsonActor(nn.Module):
+    """
+    Best-head preselect + Thompson sampling:
+
+    Step 1 (best-head scan):
+      - For each head k: run a small/cheap CEM to estimate the head's best attainable value
+      - Pick best_head = argmax_k best_score_k
+
+    Step 2 (Thompson):
+      - Choose final head:
+          with prob p_best: use best_head
+          else: sample head uniformly at random (Thompson)
+
+    Step 3 (final action):
+      - Run full CEM on the chosen head and return the action
+
+    Notes:
+      - This keeps a "Thompson flavor" while still anchoring on the best-looking head.
+      - Use reset() at episode start if you want per-episode head selection / warm-start reset.
+    """
+    def __init__(
+        self,
+        critics1,
+        critics2,
+        rl_cfg,
+        device,
+        seed=0,
+        sample_per_episode=True,
+        use_warm_start=False,
+        p_best=0.5,              # probability of picking best_head vs uniform Thompson
+        # cheap scan CEM settings (per-head)
+        scan_cem_pop=96,
+        scan_cem_iters=1,
+        # final CEM settings (picked head)
+        final_cem_pop=None,      # if None -> use cfg eval/pop defaults
+        final_cem_iters=None,    # if None -> use cfg eval/iters defaults
+        warm_start_from_best=True,  # warm-start final CEM from best-head action (else use a_prev)
+    ):
+        super().__init__()
+        self.critics1 = nn.ModuleList(critics1)
+        self.critics2 = nn.ModuleList(critics2)
+        self.rl_cfg = rl_cfg
+        self.device = device
+
+        self.rng = np.random.RandomState(seed)
+        self.sample_per_episode = bool(sample_per_episode)
+        self.use_warm_start = bool(use_warm_start)
+
+        self.p_best = float(p_best)
+        self.scan_cem_pop = int(scan_cem_pop)
+        self.scan_cem_iters = int(scan_cem_iters)
+
+        self.final_cem_pop = final_cem_pop
+        self.final_cem_iters = final_cem_iters
+
+        self.warm_start_from_best = bool(warm_start_from_best)
+
+        self._head = None
+        self._best_head = None
+        self.a_prev = None  # warm-start memory (episode-level or step-level)
+
+    def reset(self):
+        """Call at start of each eval episode (or whenever you want a clean slate)."""
+        self._head = None
+        self._best_head = None
+        self.a_prev = None
+
+    def _sample_thompson_head(self, K: int) -> int:
+        return int(self.rng.randint(K))
+
+    @torch.no_grad()
+    def forward(self, state):
+        s = state.squeeze(0)
+        cfg = self.rl_cfg["training"]
+
+        action_dim = self.rl_cfg["model"]["action_dim"]
+
+        cem_elite_frac = cfg.get("cem_elite_frac", 0.2)
+        cem_init_std   = cfg.get("cem_init_std", 0.4)
+        cem_min_std    = cfg.get("cem_min_std", 0.1)
+
+        # ---- final CEM settings
+        default_final_pop = cfg.get("cem_pop_eval", cfg.get("cem_pop", 384))
+        default_final_it  = cfg.get("cem_iters_eval", cfg.get("cem_iters", 2))
+        final_pop  = int(self.final_cem_pop  if self.final_cem_pop  is not None else default_final_pop)
+        final_it   = int(self.final_cem_iters if self.final_cem_iters is not None else default_final_it)
+
+        K = len(self.critics1)
+
+        # =========================================================
+        # 1) Best-head scan (cheap CEM per head)
+        # =========================================================
+        # If sample_per_episode=True, only compute best head once per episode.
+        if (self._best_head is None) or (not self.sample_per_episode):
+            s1 = s.unsqueeze(0)  # [1, state_dim]
+
+            best_head = 0
+            best_score = None
+            best_action = None
+
+            for k in range(K):
+                c1, c2 = self.critics1[k], self.critics2[k]
+
+                def score_fn(s_batch, a_batch, c1=c1, c2=c2):
+                    q1 = c1(s_batch, a_batch).squeeze(-1)
+                    q2 = c2(s_batch, a_batch).squeeze(-1)
+                    return torch.minimum(q1, q2)
+
+                a_k, stats_k = cem_plan_action(
+                    s=s,
+                    score_fn=score_fn,
+                    action_dim=action_dim,
+                    device=self.device,
+                    cem_iters=self.scan_cem_iters,
+                    cem_pop=self.scan_cem_pop,
+                    cem_elite_frac=cem_elite_frac,
+                    init_std=cem_init_std,
+                    min_std=cem_min_std,
+                    init_mu=None,
+                    return_stats=True,
+                )
+
+                sc = stats_k["best_score"]
+                if (best_score is None) or (sc > best_score):
+                    best_score = sc
+                    best_head = k
+                    best_action = a_k.detach()
+
+            self._best_head = int(best_head)
+            best_action_for_warm_start = best_action
+        else:
+            best_action_for_warm_start = None
+
+        # =========================================================
+        # 2) Thompson sampling head selection (biased to best head)
+        # =========================================================
+        # If sample_per_episode=True, keep same sampled head for whole episode.
+        if (self._head is None) or (not self.sample_per_episode):
+            if self.rng.rand() < self.p_best:
+                self._head = int(self._best_head)
+            else:
+                self._head = self._sample_thompson_head(K)
+
+        head = int(self._head)
+        c1, c2 = self.critics1[head], self.critics2[head]
+
+        def final_score_fn(s_batch, a_batch):
+            q1 = c1(s_batch, a_batch).squeeze(-1)
+            q2 = c2(s_batch, a_batch).squeeze(-1)
+            return torch.minimum(q1, q2)
+
+        # =========================================================
+        # 3) Final CEM on chosen head
+        # =========================================================
+        init_mu = None
+        if self.use_warm_start:
+            if self.warm_start_from_best and best_action_for_warm_start is not None:
+                init_mu = best_action_for_warm_start
+            elif self.a_prev is not None:
+                init_mu = self.a_prev
+
+        a = cem_plan_action(
+            s=s,
+            score_fn=final_score_fn,
+            action_dim=action_dim,
+            device=self.device,
+            cem_iters=final_it,
+            cem_pop=final_pop,
+            cem_elite_frac=cem_elite_frac,
+            init_std=cem_init_std,
+            min_std=cem_min_std,
+            init_mu=init_mu,
+        )
+
+        if self.use_warm_start:
+            self.a_prev = a.detach()
+
+        return a.unsqueeze(0)
+    
+
+class BestMinOverHeadsActor(nn.Module):
+    """
+    Eval actor:
+      - For each head k:
+          plan with CEM using score_k(a) = min(Q1_k(s,a), Q2_k(s,a))
+          get candidate a_k and its best_score_k from CEM
+      - Select the head/candidate with the best achieved min-value
+      - Return that action
+
+    This is "try each head and select the best min of those".
+    """
+    def __init__(
+        self,
+        critics1,
+        critics2,
+        rl_cfg,
+        device,
+        # planning settings
+        cem_pop=None,
+        cem_iters=None,
+        cem_elite_frac=None,
+        cem_init_std=None,
+        cem_min_std=None,
+        # warm-start
+        use_warm_start=False,
+        sample_per_episode=False,   # if True: keep chosen head across episode (requires reset())
+        seed=0,
+    ):
+        super().__init__()
+        self.critics1 = nn.ModuleList(critics1)
+        self.critics2 = nn.ModuleList(critics2)
+        self.rl_cfg = rl_cfg
+        self.device = device
+
+        tr = rl_cfg["training"]
+        self.cem_pop = int(cem_pop if cem_pop is not None else tr.get("cem_pop_eval", tr.get("cem_pop", 384)))
+        self.cem_iters = int(cem_iters if cem_iters is not None else tr.get("cem_iters_eval", tr.get("cem_iters", 3)))
+        self.cem_elite_frac = float(cem_elite_frac if cem_elite_frac is not None else tr.get("cem_elite_frac", 0.2))
+        self.cem_init_std = float(cem_init_std if cem_init_std is not None else tr.get("cem_init_std", 0.4))
+        self.cem_min_std = float(cem_min_std if cem_min_std is not None else tr.get("cem_min_std", 0.1))
+
+        self.use_warm_start = bool(use_warm_start)
+        self.sample_per_episode = bool(sample_per_episode)
+
+        self.rng = np.random.RandomState(seed)
+        self._chosen_head = None
+        self.a_prev = None
+
+    def reset(self):
+        """Call at start of each eval episode if sample_per_episode=True or if you want to clear warm-start."""
+        self._chosen_head = None
+        self.a_prev = None
+
+    @torch.no_grad()
+    def forward(self, state):
+        s = state.squeeze(0)
+        action_dim = self.rl_cfg["model"]["action_dim"]
+        K = len(self.critics1)
+
+        # If we keep the head per episode, just re-plan on that head.
+        if self.sample_per_episode and (self._chosen_head is not None):
+            k = int(self._chosen_head)
+            c1, c2 = self.critics1[k], self.critics2[k]
+
+            def score_fn(s_batch, a_batch):
+                q1 = c1(s_batch, a_batch).squeeze(-1)
+                q2 = c2(s_batch, a_batch).squeeze(-1)
+                return torch.minimum(q1, q2)
+
+            init_mu = self.a_prev if (self.use_warm_start and self.a_prev is not None) else None
+            a = cem_plan_action(
+                s=s,
+                score_fn=score_fn,
+                action_dim=action_dim,
+                device=self.device,
+                cem_iters=self.cem_iters,
+                cem_pop=self.cem_pop,
+                cem_elite_frac=self.cem_elite_frac,
+                init_std=self.cem_init_std,
+                min_std=self.cem_min_std,
+                init_mu=init_mu,
+            )
+            if self.use_warm_start:
+                self.a_prev = a.detach()
+            return a.unsqueeze(0)
+
+        # Otherwise: brute-force across heads each call.
+        best_a = None
+        best_v = None
+        best_k = None
+
+        # optional shared warm-start seed for all heads (helps stabilize selection)
+        init_mu_global = self.a_prev if (self.use_warm_start and self.a_prev is not None) else None
+
+        for k in range(K):
+            c1, c2 = self.critics1[k], self.critics2[k]
+
+            def score_fn(s_batch, a_batch, c1=c1, c2=c2):
+                q1 = c1(s_batch, a_batch).squeeze(-1)
+                q2 = c2(s_batch, a_batch).squeeze(-1)
+                return torch.minimum(q1, q2)
+
+            a_k, stats_k = cem_plan_action(
+                s=s,
+                score_fn=score_fn,
+                action_dim=action_dim,
+                device=self.device,
+                cem_iters=self.cem_iters,
+                cem_pop=self.cem_pop,
+                cem_elite_frac=self.cem_elite_frac,
+                init_std=self.cem_init_std,
+                min_std=self.cem_min_std,
+                init_mu=init_mu_global,
+                return_stats=True,
+            )
+
+            # stats_k["best_score"] is already the best achieved min(Q1,Q2) during CEM
+            v_k = float(stats_k["best_score"])
+
+            if (best_v is None) or (v_k > best_v):
+                best_v = v_k
+                best_a = a_k.detach()
+                best_k = int(k)
+
+        if self.sample_per_episode:
+            self._chosen_head = best_k
+
+        if self.use_warm_start:
+            self.a_prev = best_a.detach()
+
+        return best_a.unsqueeze(0)
+    
+
 class MeanPlannerActor(nn.Module):
     """
     Deterministic eval actor:
@@ -98,8 +402,8 @@ class MeanPlannerActor(nn.Module):
         # print(state)
         s = state.squeeze(0)
 
-        cem_pop = self.rl_cfg["training"].get("cem_pop_eval", self.rl_cfg["training"].get("cem_pop", 256))
-        cem_iters = self.rl_cfg["training"].get("cem_iters_eval", self.rl_cfg["training"].get("cem_iters", 2))
+        cem_pop = self.rl_cfg["training"].get("cem_pop_eval", self.rl_cfg["training"].get("cem_pop", 384))
+        cem_iters = self.rl_cfg["training"].get("cem_iters_eval", self.rl_cfg["training"].get("cem_iters", 3))
         cem_elite_frac = self.rl_cfg["training"].get("cem_elite_frac", 0.2)
         cem_init_std = self.rl_cfg["training"].get("cem_init_std", 0.4)
         cem_min_std = self.rl_cfg["training"].get("cem_min_std", 0.1) #0.1
@@ -131,6 +435,379 @@ class MeanPlannerActor(nn.Module):
         )
         return a.unsqueeze(0)
 
+
+import numpy as np
+import torch
+import torch.nn as nn
+
+class TrainingLikeThompsonCEMActor(nn.Module):
+    """
+    Matches the *training* action-selection exactly:
+
+      - Sample head ~ Uniform{0..K-1} **every call** (like: head = int(np.random.randint(K)))
+      - Plan action with CEM using score(a) = min(Q1_head(s,a), Q2_head(s,a))
+      - CEM hyperparams come from rl_cfg["training"] (NOT *_eval)
+      - Warm-start behavior matches training:
+          init_mu = a_prev if (cem_warm_start and a_prev is not None) else None
+        and a_prev is updated every call (a_prev = a.detach()), same as training.
+    """
+    def __init__(self, critics1, critics2, rl_cfg, device):
+        super().__init__()
+        assert len(critics1) == len(critics2), "critics1/critics2 must have same number of heads"
+        self.critics1 = nn.ModuleList(critics1)
+        self.critics2 = nn.ModuleList(critics2)
+        self.rl_cfg = rl_cfg
+        self.device = device
+
+        self.a_prev = None
+        self.last_info = {}  # optional: head + cem stats for debugging/logging
+
+    def reset(self):
+        """Call at episode start if you want training-like episode boundaries for warm-start memory."""
+        self.a_prev = None
+        self.last_info = {}
+
+    @torch.no_grad()
+    def forward(self, state):
+        # state: [B, state_dim] (evaluation uses B=1)
+        s = state.squeeze(0)
+
+        tr = self.rl_cfg["training"]
+        action_dim = self.rl_cfg["model"]["action_dim"]
+        K = len(self.critics1)
+
+        # ---- EXACTLY like training
+        head = int(np.random.randint(K))
+
+        cem_pop       = int(tr.get("cem_pop", 256))
+        cem_iters     = int(tr.get("cem_iters", 1))
+        cem_elite_frac= float(tr.get("cem_elite_frac", 0.1))
+        cem_init_std  = float(tr.get("cem_init_std", 0.4))
+        cem_min_std   = float(tr.get("cem_min_std", 0.1))
+        use_warm_start= bool(tr.get("cem_warm_start", False))
+
+        c1 = self.critics1[head]
+        c2 = self.critics2[head]
+
+        def score_fn(s_batch, a_batch):
+            q1 = c1(s_batch, a_batch).squeeze(-1)
+            q2 = c2(s_batch, a_batch).squeeze(-1)
+            return torch.minimum(q1, q2)
+
+        init_mu = self.a_prev if (use_warm_start and self.a_prev is not None) else None
+
+        a, cem_stats = cem_plan_action(
+            s=s,
+            score_fn=score_fn,
+            action_dim=action_dim,
+            device=self.device,
+            cem_iters=cem_iters,
+            cem_pop=cem_pop,
+            cem_elite_frac=cem_elite_frac,
+            init_std=cem_init_std,
+            min_std=cem_min_std,
+            init_mu=init_mu,
+            return_stats=True,
+        )
+
+        # training updates a_prev every step (even if warm-start is disabled)
+        self.a_prev = a.detach()
+
+        # optional debug/log info (won't break evaluation_policy_short)
+        self.last_info = {
+            "thompson_head": head,
+            "cem_best_score": float(cem_stats["best_score"]),
+            "cem_std_mean": float(cem_stats["cem_std"].mean().item()),
+            "cem_std_max": float(cem_stats["cem_std"].max().item()),
+            "cem_mu": cem_stats["cem_mu"].detach().cpu(),
+            "cem_std": cem_stats["cem_std"].detach().cpu(),
+        }
+
+        return a.unsqueeze(0)
+    
+    
+class SingleHeadThompsonActor(nn.Module):
+    """
+    Single-head Thompson + CEM (matches your training policy):
+      - Sample one head per episode (or per call)
+      - Plan with CEM on min(Q1_head, Q2_head)
+      - Optional CEM warm-start using previous action (a_prev)
+    """
+    def __init__(self, critics1, critics2, rl_cfg, device,
+                 seed=0,
+                 sample_per_episode=True,
+                 use_warm_start=False):
+        super().__init__()
+        self.critics1 = nn.ModuleList(critics1)
+        self.critics2 = nn.ModuleList(critics2)
+        self.rl_cfg = rl_cfg
+        self.device = device
+
+        self.rng = np.random.RandomState(seed)
+        self.sample_per_episode = bool(sample_per_episode)
+        self.use_warm_start = bool(use_warm_start)
+
+        self._head = None
+        self.a_prev = None  # warm-start memory
+
+    def reset(self):
+        """Call at start of each eval episode to match training episode boundaries."""
+        self._head = None
+        self.a_prev = None
+
+    def _pick_head(self):
+        K = len(self.critics1)
+        self._head = int(self.rng.randint(K))
+
+    @torch.no_grad()
+    def forward(self, state):
+        s = state.squeeze(0)
+
+        cfg = self.rl_cfg["training"]
+        cem_pop = cfg.get("cem_pop_eval", cfg.get("cem_pop", 384))
+        # cem_pop = 512
+        cem_iters = cfg.get("cem_iters_eval", cfg.get("cem_iters", 2))
+        cem_elite_frac = cfg.get("cem_elite_frac", 0.2)
+        cem_init_std = cfg.get("cem_init_std", 0.4)
+        cem_min_std = cfg.get("cem_min_std", 0.1)
+        action_dim = self.rl_cfg["model"]["action_dim"]
+        print(f"SingleHeadThompsonActor: head={self._head}, cem_pop={cem_pop}, cem_iters={cem_iters}, cem_elite_frac={cem_elite_frac}, cem_init_std={cem_init_std}, cem_min_std={cem_min_std}")
+
+        # head sampling policy
+        
+        self._pick_head()
+
+        c1 = self.critics1[self._head]
+        c2 = self.critics2[self._head]
+
+        def score_fn(s_batch, a_batch):
+            q1 = c1(s_batch, a_batch).squeeze(-1)
+            q2 = c2(s_batch, a_batch).squeeze(-1)
+            return torch.minimum(q1, q2)
+
+        init_mu = self.a_prev if (self.use_warm_start and self.a_prev is not None) else None
+
+        a = cem_plan_action(
+            s=s,
+            score_fn=score_fn,
+            action_dim=action_dim,
+            device=self.device,
+            cem_iters=cem_iters,
+            cem_pop=cem_pop,
+            cem_elite_frac=cem_elite_frac,
+            init_std=cem_init_std,
+            min_std=cem_min_std,
+            init_mu=init_mu,
+        )
+
+        if self.use_warm_start:
+            self.a_prev = a.detach()
+
+        return a.unsqueeze(0)
+    
+class BestOfKThompsonActor(nn.Module):
+    """
+    Eval actor:
+      - Sample k heads
+      - For each head: plan with CEM using min(Q1_h, Q2_h)
+      - Pick best candidate action using an aggregator across heads (default: mean of min)
+    """
+    def __init__(self, critics1, critics2, rl_cfg, device, k=5, selector="mean"):
+        super().__init__()
+        self.critics1 = nn.ModuleList(critics1)
+        self.critics2 = nn.ModuleList(critics2)
+        self.rl_cfg = rl_cfg
+        self.device = device
+        self.k = int(k)
+        self.selector = selector  # "mean", "median", "q70"
+
+    @torch.no_grad()
+    def forward(self, state):
+        s = state.squeeze(0)
+
+        cfg_tr = self.rl_cfg["training"]
+        cem_pop = cfg_tr.get("cem_pop_eval", cfg_tr.get("cem_pop", 256))
+        cem_iters = 2
+        cem_elite_frac = cfg_tr.get("cem_elite_frac", 0.2)
+        cem_init_std = cfg_tr.get("cem_init_std", 0.4)
+        cem_min_std = cfg_tr.get("cem_min_std", 0.1)
+        action_dim = self.rl_cfg["model"]["action_dim"]
+
+        K = len(self.critics1)
+
+        # --- selector: score a finished candidate action robustly ---
+        def selector_score(s_batch, a_batch):
+            vals = []
+            for c1, c2 in zip(self.critics1, self.critics2):
+                q1 = c1(s_batch, a_batch).squeeze(-1)
+                q2 = c2(s_batch, a_batch).squeeze(-1)
+                vals.append(torch.minimum(q1, q2))
+            v = torch.stack(vals, dim=0)  # [K, B]
+
+            if self.selector == "mean":
+                return v.mean(dim=0)
+            elif self.selector == "median":
+                return v.median(dim=0).values
+            elif self.selector == "q70":
+                # 70th percentile across heads (less pessimistic than median)
+                q = 0.70
+                return torch.quantile(v, q, dim=0)
+            else:
+                raise ValueError(f"Unknown selector: {self.selector}")
+
+        # --- plan k times with different sampled heads ---
+        best_a = None
+        best_v = None
+
+        # sample heads with replacement (simple Thompson)
+        for _ in range(self.k):
+            h = torch.randint(low=0, high=K, size=(1,)).item()
+            c1, c2 = self.critics1[h], self.critics2[h]
+
+            def score_fn(s_batch, a_batch):
+                q1 = c1(s_batch, a_batch).squeeze(-1)
+                q2 = c2(s_batch, a_batch).squeeze(-1)
+                return torch.minimum(q1, q2)
+
+            a = cem_plan_action(
+                s=s,
+                score_fn=score_fn,
+                action_dim=action_dim,
+                device=self.device,
+                cem_iters=cem_iters,
+                cem_pop=cem_pop,
+                cem_elite_frac=cem_elite_frac,
+                init_std=cem_init_std,
+                min_std=cem_min_std,
+            )
+
+            # evaluate candidate (B=1)
+            s1 = s.unsqueeze(0)
+            a1 = a.unsqueeze(0)
+            v = selector_score(s1, a1).squeeze(0)
+
+            if (best_v is None) or (v > best_v):
+                best_v = v
+                best_a = a
+
+        return best_a.unsqueeze(0)
+    
+import torch
+import torch.nn as nn
+
+class TopMPlannerActor(nn.Module):
+    """
+    Stronger deterministic eval actor:
+      - Plans using mean of Top-m heads of min(Q1,Q2)
+      - More exploitative than median, less brittle than max
+      - Returns normalized action in [-1,1]^action_dim
+    """
+    def __init__(self, critics1, critics2, rl_cfg, device, m=3):
+        super().__init__()
+        assert len(critics1) == len(critics2)
+        self.critics1 = nn.ModuleList(critics1)
+        self.critics2 = nn.ModuleList(critics2)
+        self.rl_cfg = rl_cfg
+        self.device = device
+        self.m = m
+
+    @torch.no_grad()
+    def forward(self, state):
+        # state: [B, state_dim], eval uses B=1
+        s = state.squeeze(0)
+
+        tr = self.rl_cfg["training"]
+
+        # Let eval be strictly stronger than train
+        cem_pop       = 768
+        cem_iters     = 6
+        cem_elite_frac= 0.2
+        cem_init_std  = 0.05
+        cem_min_std   = 0.4
+
+        action_dim = self.rl_cfg["model"]["action_dim"]
+        K = len(self.critics1)
+        m = int(max(1, min(self.m, K)))
+
+        @torch.no_grad()
+        def score_fn(s_batch, a_batch):
+            # v_k = min(Q1_k, Q2_k)  -> [K, B]
+            vals = []
+            for c1, c2 in zip(self.critics1, self.critics2):
+                q1 = c1(s_batch, a_batch).squeeze(-1)
+                q2 = c2(s_batch, a_batch).squeeze(-1)
+                vals.append(torch.minimum(q1, q2))
+            v = torch.stack(vals, dim=0)  # [K, B]
+
+            # Take Top-m across heads for each batch element, then mean -> [B]
+            topm = torch.topk(v, k=m, dim=0, largest=True).values  # [m, B]
+            return topm.mean(dim=0)  # [B]
+
+        a = cem_plan_action(
+            s=s,
+            score_fn=score_fn,
+            action_dim=action_dim,
+            device=self.device,
+            cem_iters=cem_iters,
+            cem_pop=cem_pop,
+            cem_elite_frac=cem_elite_frac,
+            init_std=cem_init_std,
+            min_std=cem_min_std,
+        )
+        return a.unsqueeze(0)
+    
+class MedianPlannerActor(nn.Module):
+    """
+    Deterministic eval actor:
+      - Plans using median across heads of min(Q1,Q2)
+      - Returns normalized action in [-1,1]^2
+    """
+    def __init__(self, critics1, critics2, rl_cfg, device):
+        super().__init__()
+        self.critics1 = nn.ModuleList(critics1)
+        self.critics2 = nn.ModuleList(critics2)
+        self.rl_cfg = rl_cfg
+        self.device = device
+
+    @torch.no_grad()
+    def forward(self, state):
+        # state: [B, state_dim], eval uses B=1
+        s = state.squeeze(0)
+
+        cem_pop = self.rl_cfg["training"].get("cem_pop_eval", self.rl_cfg["training"].get("cem_pop", 384))
+        cem_iters = self.rl_cfg["training"].get("cem_iters_eval", self.rl_cfg["training"].get("cem_iters", 3))
+        cem_elite_frac = self.rl_cfg["training"].get("cem_elite_frac", 0.2)
+        cem_init_std = self.rl_cfg["training"].get("cem_init_std", 0.4)
+        cem_min_std = self.rl_cfg["training"].get("cem_min_std", 0.1)
+
+        action_dim = self.rl_cfg["model"]["action_dim"]
+
+        @torch.no_grad()
+        def score_fn(s_batch, a_batch):
+            # median_k min(Q1_k, Q2_k)
+            vals = []
+            for c1, c2 in zip(self.critics1, self.critics2):
+                q1 = c1(s_batch, a_batch).squeeze(-1)
+                q2 = c2(s_batch, a_batch).squeeze(-1)
+                vals.append(torch.minimum(q1, q2))
+
+            v = torch.stack(vals, dim=0)          # [K, B]
+            v = v.median(dim=0).values            # [B]
+            return v
+
+        a = cem_plan_action(
+            s=s,
+            score_fn=score_fn,
+            action_dim=action_dim,
+            device=self.device,
+            cem_iters=cem_iters,
+            cem_pop=cem_pop,
+            cem_elite_frac=cem_elite_frac,
+            init_std=cem_init_std,
+            min_std=cem_min_std,
+        )
+        return a.unsqueeze(0)
+    
 
 # ---------------------------------------------------------
 # Checkpoint helpers
@@ -237,7 +914,7 @@ def training(
     cem_init_std = rl_cfg["training"].get("cem_init_std", 0.4)
     cem_min_std = rl_cfg["training"].get("cem_min_std", 0.1) #0.1
     use_cem_warm_start = bool(rl_cfg["training"].get("cem_warm_start", False))
-
+    print(f"Using Warm-start for CEM: {use_cem_warm_start}")
     state_dim  = rl_cfg["model"]["state_dim"]
     action_dim = rl_cfg["model"]["action_dim"]
     hidden_dim = rl_cfg["model"]["hidden_dim"]
@@ -402,7 +1079,7 @@ def training(
         # -------------------------------------------------
         # Encode + scale state (NO engineered features)
         # -------------------------------------------------
-        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 5)
+        state_vec = encode_state_with_discs(ball_start_obs, hole_pos_obs, disc_positions, 0)
         state_norm = scale_state_vec(state_vec)
         s = torch.tensor(state_norm, dtype=torch.float32, device=device)
 
@@ -454,7 +1131,7 @@ def training(
                 swing_angle=angle_deg,
                 ball_start_position=ball_start_obs,
                 planner="quintic",
-                check_rtt=True,
+                check_rtt=False,
                 chosen_hole=chosen_hole,
             )
 
@@ -604,7 +1281,7 @@ def training(
                 break
 
             if use_wandb:
-                step = episode_logger.get_length() + 1
+                step = episode_logger.get_length() -909 + 1
                 wandb.log(log_payload, step=step)
 
         # -------------------------------------------------

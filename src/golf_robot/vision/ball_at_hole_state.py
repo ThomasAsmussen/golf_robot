@@ -218,13 +218,13 @@ def process_video(
             hole_x, hole_y = pixel_to_plane(hu, hv, H_plane_corrected)
             hole_xo, hole_yo = to_origo_frame(hole_x, hole_y, ref_x, ref_y, offset_x, offset_y)
             hole_positions.append( (hole_xo, hole_yo) )
-            print(f"Hole {hole_idx} (origo frame): x={hole_xo:.4f} m, y={hole_yo:.4f} m")
+            # print(f"Hole {hole_idx} (origo frame): x={hole_xo:.4f} m, y={hole_yo:.4f} m")
     
     hu, hv = load_hole_center_px(chosen_hole, path="data/holes_pixel_config.json")
     hole_x, hole_y = pixel_to_plane(hu, hv, H_plane_corrected)
     hole_xo, hole_yo = to_origo_frame(hole_x, hole_y, ref_x, ref_y, offset_x, offset_y)
 
-    print(f"Hole (origo frame): x={hole_xo:.4f} m, y={hole_yo:.4f} m")
+    # print(f"Hole (origo frame): x={hole_xo:.4f} m, y={hole_yo:.4f} m")
 
 
     # 3) Compute WB gains also on UNDISTORTED image
@@ -235,7 +235,7 @@ def process_video(
         cb_rows=6,
     )
 
-    print("WB gains:", gains)
+    # print("WB gains:", gains)
 
     # 4) Metric scaling (as before, but now bw should be measured on the rectified or undistorted board)
     bw = 137.9586      # board width in *this* domain (update if needed)
@@ -280,7 +280,7 @@ def process_video(
     while True:
         ret, frame_raw = cap.read()
         if not ret:
-            print(ret)
+            # print(ret)
             break
         
         frame_idx += 1  # count frames processed
@@ -475,9 +475,9 @@ def process_video(
                         else:
                             dist = float(np.hypot(bx - hole_xo, by - hole_yo))
 
-                        print("\n=== Crossing detected (x crosses hole_x) ===")
-                        print(f"idx={idx_cross}, t={ts_hist[idx_cross]:.3f}s")
-                        print(f"Ball pos (filtered): x={bx:.4f} m, y={by:.4f} m")
+                        # print("\n=== Crossing detected (x crosses hole_x) ===")
+                        # print(f"idx={idx_cross}, t={ts_hist[idx_cross]:.3f}s")
+                        # print(f"Ball pos (filtered): x={bx:.4f} m, y={by:.4f} m")
                         if compute_all_holes:
                             for i, d_i in enumerate(dist):
                                 print(f"Distance to hole {i+1}: {d_i:.4f} m")
@@ -686,11 +686,11 @@ def process_video(
     # #return ts, xs, ys, vxs, vys, speed, csv_path
     
 if __name__ == "__main__":
-    video_path = "data/OBS_saved_replay_buffer/2026-01-30_11-10-15.mp4"
+    video_path = "data/OBS_saved_replay_buffer/Replay_2026-02-10_13-38-07.mp4"
 
     process_video(
         video_path,
-        chosen_hole=2,
+        chosen_hole=1,
         real_time_show=True,
         GUI_mode=False,   # turn off GUI if running batch
         compute_all_holes=False

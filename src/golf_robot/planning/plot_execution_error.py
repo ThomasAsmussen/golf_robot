@@ -29,8 +29,8 @@ SHOW_PLOTS = True  # if False, uses non-interactive backend and saves PNGs
 OUT_DIR = "log"
 
 PLANNED_CSV = "log/trajectory_sim.csv"   # planner-produced CSV
-KF_CSV      = os.path.join(OUT_DIR, "kf_predictions.csv")  # KF log
-# KF_CSV = "log/streamed_measurements.csv"  # KF log
+# KF_CSV      = os.path.join(OUT_DIR, "kf_predictions.csv")  # KF log
+KF_CSV = "log/streamed_measurements.csv"  # KF log
 
 # ---------------------------------------------------------------------
 # Matplotlib backend selection

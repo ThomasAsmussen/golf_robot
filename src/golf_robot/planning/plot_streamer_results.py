@@ -26,7 +26,7 @@ from kinematics import *
 # SHOW_PLOTS = True
 SHOW_PLOTS = True
 ONLY_KF = True
-if SHOW_PLOTS:
+if SHOW_PLOTS or True:
     # Try a sequence of common interactive backends; fall back to default
     for bk in ('TkAgg', 'Qt5Agg', 'GTK3Agg', 'WXAgg'):
         try:
@@ -268,10 +268,21 @@ def plot_tcp_orientation_error_rpy(t_plan, Q_plan, t_meas, Q_meas, out_prefix=No
 
     # Plot roll/pitch/yaw errors
     fig, axes = plt.subplots(3, 1, figsize=(12, 9), sharex=True)
-    labels = ["roll error (deg)", "pitch error (deg)", "yaw error (deg)"]
+    labels = ["rx (deg)", "ry (deg)", "rz (deg)"]
     for i in range(3):
         ax = axes[i]
-        ax.plot(t_m, np.rad2deg(err[:, i]), '-', linewidth=1.5, label='Measured - Planned')
+        ax.plot(t_m, np.rad2deg(rpy_meas_u[:, i]), '-', linewidth=1.5, label='Measured')
+        ax.plot(t_m, np.rad2deg(rpy_p_interp[:, i]), '-', linewidth=1.5, label='Planned')
+        ax.set_ylabel(labels[i])
+        ax.grid(True)
+        ax.legend()
+
+
+    fig, axes = plt.subplots(3, 1, figsize=(12, 9), sharex=True)
+    labels = ["rx error (deg)", "ry error (deg)", "rz error (deg)"]
+    for i in range(3):
+        ax = axes[i]
+        ax.plot(t_m, np.rad2deg(err[:, i]), '-', linewidth=1.5, label='Error = Measured - Planned')
         ax.set_ylabel(labels[i])
         ax.grid(True)
         ax.legend()
@@ -456,14 +467,15 @@ def plot_comparisons(t_plan, Q_plan, dQ_plan, t_meas, Q_meas, dQ_meas, out_prefi
     for i in range(6):
         if a_plan.size > 0:
             axes[i].plot(t_plan, a_plan[:,i], 'b-', label='Planned accel', linewidth=2)
-        if a_meas.size > 0:
-            axes[i].plot(t_meas, a_meas[:,i], 'r.', label='Measured accel', linewidth=1)
+        # if a_meas.size > 0:
+        #     axes[i].plot(t_meas, a_meas[:,i], 'r.', label='Measured accel', linewidth=1)
 
         axes[i].set_xlabel('Time (s)')
         axes[i].set_ylabel(f'Joint {i+1} Accel (rad/s^2)')
         axes[i].legend()
         axes[i].grid(True)
     plt.tight_layout()
+    plt.show()
     fn_accel = os.path.join(OUT_DIR, f'comparison_joint_accelerations_{ts}.png')
     if SHOW_PLOTS:
         try:
@@ -592,7 +604,7 @@ def plot_tcp_position_error_xyz(t_plan, Q_plan, t_meas, Q_meas, out_prefix=None)
     labels = ["x error (m)", "y error (m)", "z error (m)"]
     for i in range(3):
         ax = axes[i]
-        ax.plot(t_m, err[:, i], '-', linewidth=1.5, label='Measured - Planned')
+        ax.plot(t_m, err[:, i], '-', linewidth=1.5, label='Error = Measured - Planned')
         ax.set_ylabel(labels[i])
         ax.grid(True)
         ax.legend()
@@ -889,6 +901,9 @@ def main():
 
     print(f"[INFO] Loading planned CSV: {planned_path}")
     t_plan, Q_plan, dQ_plan = load_planned_csv(planned_path)
+    # Adjust planned by 1 offset
+    Q_plan[1:, :] = Q_plan[:-1, :]
+    dQ_plan[1:, :] = dQ_plan[:-1, :]
     print(f"[INFO] Loading streamer log: {streamer_log}")
     t_meas, Q_meas, dQ_meas = load_streamer_log(streamer_log)
 
