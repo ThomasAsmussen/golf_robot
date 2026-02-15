@@ -12,6 +12,9 @@ wandb/
 log/
 tuning_results/
 models/rl/
+data/OBS_saved_replay_buffer/
+data/trajectory_recording_*
+models/mujoco/golf_world_tmp_*
 # Mac OS-specific storage files
 .DS_Store
 
