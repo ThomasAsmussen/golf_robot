@@ -567,12 +567,12 @@ def run_sim(aim_yaw_deg, vx_des, hole_pos_xy, cfg, disc_positions):
     reset_club_pose(model, data, ids, cfg["club"].get("start_angle_deg", 40.0))
     max_vel = math.radians(float(cfg["club"].get("max_vel_deg_s", 1000.0)))
 
-    ball_x, ball_y, in_hole = run_loop(model, data, cfg,
+    return run_loop(model, data, cfg,
              (qadr_base, vadr_base),
              (base_pos_baked, base_quat_baked),
              ids, nstep, max_vel, float(vx_des))
 
-    return ball_x, ball_y, in_hole
+    # return ball_x, ball_y, in_hole
 # ---------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------
@@ -620,7 +620,7 @@ def main():
     # keep default render unless user explicitly overrode
     if render is not None:
         cfg["sim"]["render"] = bool(render)
-
+    cfg["sim"]["render"] = True
     # cfg["club"]["max_vel_deg_s"] = args.club_max_vel_deg_s
     # cfg["club"]["start_angle_deg"] = args.club_start_angle
 
@@ -629,9 +629,10 @@ def main():
     # cfg["ball"]["start_pos"] = list(args.ball_start_pos)
     cfg["sim"]["csv_path"] = str(project_root) + "/" + cfg["sim"]["csv_path"]
     cfg["sim"]["csv_period"] = args.csv_period
-    aim_yaw = 90
-    vx_des =  0.9
-    hole_pos_xy = [-2.49, -1.12]
+    aim_yaw = 4.91
+    vx_des =  1.2
+    hole_pos_xy = [3.85*0.4,0.33*0.4]
+    # hole_pos_xy = [1.8*0.2, 3.12*0.2]
     # disc_positions = [( 0.0, 0.7), (0.001, 0.3), (0.0, -0.3), (0.0, -0.7)]
     disc_positions = generate_disc_positions(num_discs=4, x_min=-2.5, x_max=2.5, y_min=-2.0, y_max=2.0, hole_xy=hole_pos_xy)
 

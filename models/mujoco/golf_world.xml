@@ -1,11 +1,12 @@
 <mujoco model="golf_world">
   <compiler angle="degree"/>
-  <option timestep="0.002" gravity="0 0 -9.81" integrator="RK4"/>
+  <!-- <option timestep="0.002" gravity="0 0 -9.81" integrator="RK4"/> -->
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="RK4" cone="elliptic"/>
 
   <!-- Defaults: enable 6D friction and make contacts crisp -->
   <default>
     <geom condim="6" solref="0.002 1" solimp="0.95 0.99 0.001"
-          friction="0.30831 1.83703e-05 0.00081743"/> <!-- 0.6 0.001 0.0048 slide, spin, roll -->
+          friction="0.30831 1.83703e-05 0.000817"/> <!-- 0.6 0.001 0.0048 slide, spin, roll -->
   </default>
 
 
@@ -58,14 +59,22 @@
   <contact>
     <!-- Ball–club impact: set restitution ~0.62 via damp_ratio ≈ 0.1504 -->
     <pair geom1="ball_geom" geom2="club_head"
-          solref="0.014271934393272637 0.4087097102776629"  
-          solimp="0.7837685139716153 1.11639 0.00107829"/>
+          solref="0.01850 0.29919"  
+          solimp="0.78377 1.11639 0.00108"/>
   </contact>
 
   
   <worldbody>
     <!-- ==== GROUND: 6x4 m area, 0.04 m thick, with a 0.106 m opening at (2, 0) ==== -->
     <!-- Top slab (y in [ +0.053, +2 ]) -->
+    <light name="sun_top"
+          pos="2 0 3"
+          dir="0 0 -1"
+          directional="true"
+          diffuse="1 1 1"
+          specular="0.2 0.2 0.2"
+          castshadow="true"/>
+          
     <geom name="green_plus_y" type="box"
           pos="0 0 -0.02" size="0.5 0.5 0.02"
           material="green_mat"/>

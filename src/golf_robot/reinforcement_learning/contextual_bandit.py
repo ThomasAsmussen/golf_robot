@@ -346,7 +346,7 @@ def training(rl_cfg, mujoco_cfg, project_root, continue_training=False):
     max_num_discs = 0
     stage_start_episode = 0
     noise_std_stage_start = noise_std
-
+    
     for episode in range(episodes):
         # -------------------------------------------------
         # Sample a context (ball start + hole + discs)

@@ -11,16 +11,24 @@ import numpy as np
 import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
-from kinematics import numeric_jacobian
-from trajectory import tcp_path_from_Q, generate_trajectory
 
+try:
+    from planning.kinematics import numeric_jacobian
+    from planning.trajectory import tcp_path_from_Q, generate_trajectory
+    from planning.warmstart_knn import load_warmstart_knn
+except ImportError:
+    from kinematics import fk_ur10, numeric_jacobian
+    from trajectory import tcp_path_from_Q, generate_trajectory
+    from warmstart_knn import load_warmstart_knn
+
+_WARM_KNN = None
 # Toggle to True to show TCP position and TCP velocity plots after planning
 SAVE_PLOTS = False
 SHOW_PLOTS = False
 CSV_OUTPUT_PATH = 'log/trajectory_sim.csv'
 
 
-def generate_trajectory_csv(impact_speed, impact_direction, ball_x_offset, ball_y_offset, path):
+def generate_trajectory_csv(impact_speed, impact_direction, ball_x_offset, ball_y_offset, path = CSV_OUTPUT_PATH):
     """
     Generate a trajectory via the planner and save it to CSV.
     
@@ -32,7 +40,32 @@ def generate_trajectory_csv(impact_speed, impact_direction, ball_x_offset, ball_
     outputs:
     - results: dict from generate_trajectory() containing planned trajectory data or None on failure
     """
-    results = generate_trajectory(impact_speed, impact_direction, ball_x_offset=ball_x_offset, ball_y_offset=ball_y_offset)
+    global _WARM_KNN
+    if _WARM_KNN is None:
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+        start_end_jsonl_path = os.path.join(project_root, 'log', 'end_start_points', 'speed_angle_grid_start_end_all.jsonl')
+        print(f"[INFO] Loading warmstart KNN from: {start_end_jsonl_path}")
+        _WARM_KNN = load_warmstart_knn(start_end_jsonl_path)  # adjust path
+
+    warm_pairs = _WARM_KNN.query(
+        impact_speed=float(impact_speed),
+        impact_angle_deg=float(impact_direction),   # your arg name is "impact_direction" but it’s actually angle deg in your usage
+        ball_x_offset=float(ball_x_offset),
+        ball_y_offset=float(ball_y_offset),
+        k=25,
+        n_keep=8,
+        prefer_low_J=True,
+    )
+
+    results = generate_trajectory(
+        impact_speed,
+        impact_direction,
+        ball_x_offset=ball_x_offset,
+        ball_y_offset=ball_y_offset,
+        warmstart_off_pairs=warm_pairs,
+    )
+
+    # results = generate_trajectory(impact_speed, impact_direction, ball_x_offset=ball_x_offset, ball_y_offset=ball_y_offset)
 
     if results is None:
         print("[ERROR] Trajectory generation failed")
@@ -42,7 +75,10 @@ def generate_trajectory_csv(impact_speed, impact_direction, ball_x_offset, ball_
     t_plan = results.get('t_plan')
     Q_all  = results.get('Q_plan')
     dQ_all = results.get('dQ_plan')
-    
+    ddQ_all = results.get('ddQ_plan')
+    peak_ddq = np.max(np.abs(ddQ_all)) if ddQ_all is not None else None
+    # print(f"[INFO] Peak joint accel: {peak_ddq:.2f} rad/s²")
+
     # Basic validity checks
     if t_plan is None or Q_all is None or dQ_all is None:
         print("[ERROR] Planner did not return a complete trajectory")
@@ -294,7 +330,7 @@ def make_angle_reachability_heatmap(
 
     # Small tolerance for speed check
     speed_tol = 0.05  # m/s
-
+    count_infeasible = 0
     for ix, x_off in enumerate(xs):
         for iy, y_off in enumerate(ys):
             # Keep only points within circular radius
@@ -302,9 +338,11 @@ def make_angle_reachability_heatmap(
                 continue  # remains False
 
             all_ok = True
-
+            
             for ang in angles_deg:
+                print(f"Checking offset ({x_off:.2f}, {y_off:.2f}), angle {ang:.1f}°")
                 # Call planner directly; it may print warnings/errors if infeasible
+
                 results = generate_trajectory(
                     impact_speed,
                     ang,  # impact angle in degrees (same as in main())
@@ -312,11 +350,18 @@ def make_angle_reachability_heatmap(
                     ball_y_offset=y_off,
                 )
 
+                
                 # Any kind of failure or missing data => this angle is not OK
                 if not results:
                     all_ok = False
                     break
 
+                problem = results.get("problem", None)
+                if problem == "Impact speed not feasible":
+                    count_infeasible += 1
+                    
+                if problem is not None:
+                    print(f"problem: {problem}")
                 impact_idx = results.get("impact_sample_idx", None)
                 Q_all      = results.get("Q_plan", None)
                 dQ_all     = results.get("dQ_plan", None)
@@ -379,13 +424,129 @@ def make_angle_reachability_heatmap(
         plt.tight_layout()
         plt.show()
 
+    print(f"Total infeasible cases encountered: {count_infeasible}")
     return xs, ys, heat_bool
 
 
+############### Added ################# 
+
+def plot_tcp_path_with_waypoints(
+    P_plan: np.ndarray,
+    t_plan: np.ndarray | None,
+    *,
+    waypoints_q: list[np.ndarray] | None = None,
+    fk_func=None,
+    impact_sample_idx: int | None = None,
+    waypoint_labels: tuple[str, ...] = ("Start", "Impact", "Post", "End"),
+    save_path: str | None = None,
+    save_plots: bool = True,
+    show: bool = False,
+):
+    """
+    Plot planned TCP 3D path and (optionally) overlay TCP waypoint markers computed via FK.
+
+    Parameters
+    ----------
+    P_plan : (N,3) array
+        Planned TCP positions sampled along the trajectory.
+    t_plan : (N,) array or None
+        Planned time samples (unused except for convenience; kept for signature symmetry).
+    waypoints_q : list of (6,) arrays, optional
+        Joint-space waypoints (e.g. [q_start, q_hit, q_post, q_end]).
+        If provided, FK is used to compute their TCP positions and plot them.
+    fk_func : callable, optional
+        Your forward kinematics function. Must satisfy: fk_func(q)[-1][:3,3] -> (3,)
+        Example: fk_ur10
+        Required if waypoints_q is provided.
+    impact_sample_idx : int, optional
+        Index into P_plan to mark as the sampled "impact" point.
+        (This is separate from the waypoint-based markers.)
+    waypoint_labels : tuple of str
+        Labels for waypoint markers in order. Extra waypoints get generic labels.
+    save_path : str, optional
+        If provided and save_plots=True, saves the figure to this path.
+    save_plots : bool
+        Whether to save if save_path is provided.
+    show : bool
+        Whether to plt.show() at the end.
+
+    Returns
+    -------
+    fig, ax : matplotlib Figure and Axes3D
+    """
+    import matplotlib.pyplot as plt
+
+    P_plan = np.asarray(P_plan, dtype=float)
+    if P_plan.ndim != 2 or P_plan.shape[1] != 3:
+        raise ValueError(f"P_plan must be (N,3), got {P_plan.shape}")
+
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection="3d")
+
+    # Main planned path
+    ax.plot(P_plan[:, 0], P_plan[:, 1], P_plan[:, 2], linewidth=2, label="Planned")
+
+    # Mark sampled impact point (from the discretized plan)
+    if impact_sample_idx is not None:
+        i = int(impact_sample_idx)
+        if i < 0 or i >= len(P_plan):
+            raise IndexError(f"impact_sample_idx={i} out of range for P_plan with N={len(P_plan)}")
+        ax.scatter([P_plan[i, 0]], [P_plan[i, 1]], [P_plan[i, 2]],
+                   marker="*", s=120, label="Impact (sample)")
+        ax.text(P_plan[i, 0], P_plan[i, 1], P_plan[i, 2], " Impact(sample)")
+
+    # Mark start/end samples
+    ax.scatter([P_plan[0, 0]], [P_plan[0, 1]], [P_plan[0, 2]],
+               marker="o", s=80, label="Start (sample)")
+    ax.scatter([P_plan[-1, 0]], [P_plan[-1, 1]], [P_plan[-1, 2]],
+               marker="o", s=80, label="End (sample)")
+
+    # Overlay waypoint markers (computed via FK, so they plot even if not on a sample index)
+    P_wps = None
+    if waypoints_q is not None:
+        if fk_func is None:
+            raise ValueError("fk_func must be provided when waypoints_q is provided (e.g., fk_ur10).")
+
+        P_wps = np.array([np.asarray(fk_func(q)[-1][:3, 3], dtype=float).reshape(3,) for q in waypoints_q])
+
+        # Marker styles for first few waypoints
+        markers = ["o", "*", "^", "s", "D", "P", "X"]
+        sizes   = [90, 140, 110, 90, 90, 90, 90]
+
+        for k in range(len(P_wps)):
+            label = waypoint_labels[k] if k < len(waypoint_labels) else f"WP{k}"
+            m = markers[k] if k < len(markers) else "o"
+            s = sizes[k] if k < len(sizes) else 90
+
+            ax.scatter([P_wps[k, 0]], [P_wps[k, 1]], [P_wps[k, 2]],
+                       marker=m, s=s, label=f"{label} (wp)")
+            ax.text(P_wps[k, 0], P_wps[k, 1], P_wps[k, 2], f" {label}")
+
+        # Optional: dashed segments between waypoints (nice for debugging)
+        ax.plot(P_wps[:, 0], P_wps[:, 1], P_wps[:, 2], linestyle="--", linewidth=1.5, label="Waypoints (wp)")
+
+    ax.set_xlabel("X (m)")
+    ax.set_ylabel("Y (m)")
+    ax.set_zlabel("Z (m)")
+    ax.set_title("Planned TCP 3D Path")
+    ax.legend()
+    ax.axis("equal")
+    plt.tight_layout()
+
+    if save_plots and save_path:
+        plt.savefig(save_path)
+        print(f"[INFO] Saved TCP path plot: {save_path}")
+
+    if show:
+        plt.show()
+
+    return fig, ax, P_wps
+
+############### Added ################# 
 
 def main():
     csv_out = CSV_OUTPUT_PATH
-    impact_speed = 1.6  # m/s
+    impact_speed = 1.5  # m/s
     impact_angle = 0.0  # desired impact angle (degrees)
     ball_x_offset = 0.0  # desired ball x offset
     ball_y_offset = 0.0  # desired ball y offset
@@ -402,6 +563,28 @@ def main():
         Q_all      = results.get('Q_plan')
         dQ_all     = results.get('dQ_plan')
         impact_idx = results["impact_sample_idx"]
+
+
+        ################## ADDED ##################
+
+        # results from generate_trajectory(...)
+        P_plan = results["P_plan"]
+        t_plan = results["t_plan"]
+        waypoints_q = results["waypoints"]  # [q_start, q_hit, q_post, q_end] after you add it
+        impact_sample_idx = results.get("impact_sample_idx", None)
+
+        plot_tcp_path_with_waypoints(
+            P_plan,
+            t_plan,
+            waypoints_q=waypoints_q,
+            fk_func=fk_ur10,
+            impact_sample_idx=impact_sample_idx,
+            save_path="log/planned_tcp_path.png",
+            save_plots=SAVE_PLOTS,
+            show=not SAVE_PLOTS,
+        )
+
+        ################## ADDED ##################
 
         plot_joint_positions(t_plan, Q_all, impact_idx)
         plot_joint_velocities(t_plan, dQ_all, impact_idx)

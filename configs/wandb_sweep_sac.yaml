@@ -1,0 +1,69 @@
+program: src/golf_robot/SAC_bandit_5.py  # <-- adjust if filename differs
+method: bayes   # bayes or grid or "random" if you prefer
+project: golf_robot_sac_v5
+
+metric:
+  name: final_success_rate
+  goal: maximize
+
+parameters:
+  # terminal bonus
+  in_hole_reward:
+    distribution: uniform
+    min: 1.0
+    max: 8.0
+
+  # exp(-k * distance)
+  distance_scale:
+    distribution: log_uniform_values
+    min: 1.0
+    max: 10.0
+
+  # tradeoff weight
+  w_distance:
+    distribution: uniform
+    min: 0.2
+    max: 0.95
+
+  # desired speed at hole (units as in your meta/sim)
+  optimal_speed:
+    distribution: uniform
+    min: 0.55
+    max: 1.05
+
+  # exp(-k * dist_at_hole)
+  dist_at_hole_scale:
+    distribution: log_uniform_values
+    min: 0.2
+    max: 10.0
+
+  # exp(-k * speed_error or speed term)
+  optimal_speed_scale:
+    distribution: log_uniform_values
+    min: 0.3
+    max: 10.0
+
+  actor_lr:
+    distribution: log_uniform_values
+    min: 1e-4
+    max: 5e-3
+
+  critic_lr:
+    distribution: log_uniform_values
+    min: 1e-4
+    max: 5e-3
+
+  # -------- SAC entropy/temperature knobs --------
+  # target for logp; more negative => more exploration
+  target_entropy:
+    values: [-1.0, -2.0, -3.0, -4.0, -6.0]
+
+  # initial temperature (alpha); you’ll set log_alpha = log(alpha_init)
+  alpha_init:
+    distribution: log_uniform_values
+    min: 0.02
+    max: 0.5
+
+  # alpha_lr = actor_lr * alpha_lr_mult (decouple temperature tuning from actor lr)
+  alpha_lr_mult:
+    values: [0.1, 0.33, 1.0, 3.0]

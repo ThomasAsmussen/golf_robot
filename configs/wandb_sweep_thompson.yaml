@@ -1,0 +1,31 @@
+program: src/golf_robot/thompson_bandit_0.py
+method: bayes
+project: golf_robot_thompson_v_zero_final_training
+
+metric:
+  name: final_success_rate
+  goal: maximize
+
+parameters:
+  # terminal bonus
+
+  bootstrap_p:
+    distribution: uniform
+    min: 0.0
+    max: 1.0
+
+  cem_iters:
+    distribution: int_uniform
+    min: 1
+    max: 4
+
+  cem_pop:
+    distribution: q_log_uniform_values
+    min: 64
+    max: 512
+    q: 64
+
+  critic_lr:
+    distribution: log_uniform_values
+    min: 5e-4
+    max: 5e-3

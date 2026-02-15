@@ -161,7 +161,7 @@ import socket
 
 # ---------- example usage ----------
 if __name__ == "__main__":
-    # HOST = "192.168.56.101" #SIM
+    #HOST = "192.168.56.101" #SIM
     HOST = "192.38.66.227"   # UR10
     PORT_logger = 30003
     PORT_cmd = 30002

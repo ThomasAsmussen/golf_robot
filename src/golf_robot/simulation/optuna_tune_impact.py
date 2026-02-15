@@ -159,9 +159,9 @@ def apply_params(model, ids, trial):
     model.pair_solref[pid][0] = trial.suggest_float("solref_tc", 0.005, 0.1, log=True)
     model.pair_solref[pid][1] = trial.suggest_float("solref_dr", 0.05, 0.5)
 
-    #model.pair_solimp[pid][0] = trial.suggest_float("solimp_a", 0.3, 0.9)
-    #model.pair_solimp[pid][1] = trial.suggest_float("solimp_b", 0.8, 1.3)
-    #model.pair_solimp[pid][2] = trial.suggest_float("solimp_c", 5e-4, 5e-3, log=True)
+    model.pair_solimp[pid][0] = trial.suggest_float("solimp_a", 0.7, 1.2)
+    model.pair_solimp[pid][1] = trial.suggest_float("solimp_b", 0.8, 1.2)
+    model.pair_solimp[pid][2] = trial.suggest_float("solimp_c", 1e-4, 1e-2, log=True)
 
     #slide = trial.suggest_float("friction_slide", 0.2, 0.8)
     #spin  = trial.suggest_float("friction_spin", 1e-5, 1e-3, log=True)
@@ -227,7 +227,7 @@ def main():
 
     study = optuna.create_study(
         direction="minimize",
-        sampler=optunahub.load_module("samplers/auto_sampler").AutoSampler(),
+        sampler=optuna.samplers.CmaEsSampler(),  # <-- FORCE CMA-ES #sampler=optunahub.load_module("samplers/auto_sampler").AutoSampler(),
         study_name=args.study_name,
         storage=args.storage,
         load_if_exists=True,
