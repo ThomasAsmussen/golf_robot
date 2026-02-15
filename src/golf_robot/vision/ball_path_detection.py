@@ -8,6 +8,11 @@ import matplotlib.pyplot as plt
 import time
 import csv
 
+# --- Diameter check parameters ---
+GOLF_BALL_DIAM_M = 0.07   # official golf ball diameter ≈ 42.7 mm
+DIAM_TOL_M       = 0.06    # allow ±15 mm tolerance (tighten later if stable)
+INIT_CONSEC      = 2        # require N consecutive "ball-sized" detections before using meas
+STOP_X_M = 2.4
 
 
 class KalmanFilterCV2D:
@@ -18,19 +23,38 @@ class KalmanFilterCV2D:
     Optional outlier rejection via Mahalanobis gating.
     """
     def __init__(self, dt,
-                 q_pos=1e-4,
-                 q_vel=1e-3,
-                 meas_std=0.005,
-                 gate_threshold=0.005):
+                 sigma_a=1.0,      # [m/s^2] accel noise std
+                 meas_std=0.005,   # [m]
+                 gate_threshold=20):
         """
-        dt            : time step [s] (e.g. 1 / src_fps)
-        q_pos         : process noise on position
-        q_vel         : process noise on velocity
+        dt            : nominal time step [s]
+        sigma_a       : std dev of (white) acceleration noise [m/s^2]
         meas_std      : measurement std dev [m]
         gate_threshold: Mahalanobis distance^2 for gating (≈9 ≈ 3σ in 2D)
         """
+        self.dt = float(dt)
+        self.sigma_a = float(sigma_a)
+        self.init_buffer = []
+        self.init_N = 5
 
+        self.H = np.array([
+            [1, 0, 0, 0],
+            [0, 1, 0, 0]
+        ], dtype=np.float32)
+
+        self.R = (meas_std**2) * np.eye(2, dtype=np.float32)
+
+        self.x = None  # state (4x1)
+        self.P = None  # covariance (4x4)
+        self.gate_threshold = gate_threshold
+
+        # Initialize F and Q from dt
+        self._set_dt(self.dt)
+
+    def _set_dt(self, dt):
+        dt = float(dt)
         self.dt = dt
+
         self.F = np.array([
             [1, 0, dt, 0],
             [0, 1, 0, dt],
@@ -38,162 +62,126 @@ class KalmanFilterCV2D:
             [0, 0, 0,  1]
         ], dtype=np.float32)
 
-        self.H = np.array([
-            [1, 0, 0, 0],
-            [0, 1, 0, 0]
+        dt2 = dt * dt
+        dt3 = dt2 * dt
+        sa2 = self.sigma_a * self.sigma_a
+
+        self.Q = sa2 * np.array([
+            [1/3 * dt3, 0.0,         0.5 * dt2,  0.0],
+            [0.0,        1/3 * dt3,  0.0,        0.5 * dt2],
+            [0.5 * dt2,  0.0,         dt,        0.0],
+            [0.0,        0.5 * dt2,   0.0,        dt],
         ], dtype=np.float32)
 
-        self.Q = np.diag([q_pos, q_pos, q_vel, q_vel]).astype(np.float32)
-        self.R = (meas_std**2) * np.eye(2, dtype=np.float32)
-
-        self.x = None  # state (4x1)
-        self.P = None  # covariance (4x4)
-        self.gate_threshold = gate_threshold
-
-    def step(self, z):
+    def step(self, z, dt=None, t=None):
         """
         Perform one predict+update step.
-        z: measurement (x_m, y_m) in meters, or None for predict-only.
+        z : measurement (x_m, y_m) in meters, or None for predict-only.
+        dt: optional timestep override [s] (useful if frame intervals vary)
 
         Returns:
             x, y, vx, vy, used_measurement (bool)
         """
+        if dt is not None:
+            self._set_dt(dt)
+        if t is not None:
+            self.t = t
+        
         if self.x is None:
+
             if z is None:
-                # No measurement, no state yet: nothing to do
                 return None, None, None, None, False
 
-            # Initialize at first measurement with zero velocity
+            # Store measurement and time
             x_m, y_m = z
-            self.x = np.array([[x_m],
-                               [y_m],
-                               [0.0],
-                               [0.0]], dtype=np.float32)
-            self.P = np.eye(4, dtype=np.float32) * 1e-3
-            return float(x_m), float(y_m), 0.0, 0.0, True
+            self.init_buffer.append((x_m, y_m, self.t))
+
+            if len(self.init_buffer) < self.init_N:
+                return None, None, None, None, False
+
+            # Estimate velocity from buffer
+            x0, y0, t0 = self.init_buffer[0]
+            xN, yN, tN = self.init_buffer[-1]
+
+            vx0 = (xN - x0) / (tN - t0)
+            vy0 = (yN - y0) / (tN - t0)
+
+            # Initialize KF state
+            self.x = np.array([
+                [xN],
+                [yN],
+                [vx0],
+                [vy0]
+            ], dtype=np.float32)
+
+            # High velocity uncertainty
+            self.P = np.diag([0.005**2, 0.005**2, 1e-1**2, 1e-1**2])
+
+            return float(xN), float(yN), float(vx0), float(vy0), True
+
 
         # Predict
         x_pred = self.F @ self.x
         P_pred = self.F @ self.P @ self.F.T + self.Q
 
         if z is None:
-            # No measurement: just use prediction
-            self.x = x_pred
-            self.P = P_pred
+            self.x, self.P = x_pred, P_pred
             return float(self.x[0, 0]), float(self.x[1, 0]), float(self.x[2, 0]), float(self.x[3, 0]), False
 
         # Measurement update with gating
         z_vec = np.array([[z[0]], [z[1]]], dtype=np.float32)
-        y_k = z_vec - (self.H @ x_pred)        # innovation
+        y_k = z_vec - (self.H @ x_pred)  # innovation
         S = self.H @ P_pred @ self.H.T + self.R
 
         try:
             S_inv = np.linalg.inv(S)
             mahalanobis2 = float((y_k.T @ S_inv @ y_k)[0, 0])
         except np.linalg.LinAlgError:
+            # If S is singular, fall back to accepting measurement (or reject—your choice)
             mahalanobis2 = 0.0
+            S_inv = None
 
-        if mahalanobis2 < self.gate_threshold:
-            # Accept measurement
+        if mahalanobis2 < self.gate_threshold and S_inv is not None:
             K_gain = P_pred @ self.H.T @ S_inv
             self.x = x_pred + K_gain @ y_k
             self.P = (np.eye(4, dtype=np.float32) - K_gain @ self.H) @ P_pred
             used = True
         else:
-            # Reject measurement → keep prediction
-            self.x = x_pred
-            self.P = P_pred
+            self.x, self.P = x_pred, P_pred
             used = False
 
         return float(self.x[0, 0]), float(self.x[1, 0]), float(self.x[2, 0]), float(self.x[3, 0]), used
 
 
-
-def undistort_camera(image_glob: str = "data/calibration_images/*.jpg", 
-                                 img_shape: tuple = (1920, 1080),
-                                 cb_rows: int = 7, cb_cols: int = 9,
-                                 square_size: float = 0.036):
-    
-    # Prepare object points
-    objp = np.zeros((cb_rows*cb_cols, 3), np.float32)
-    objp[:, :2] = np.mgrid[0:cb_cols, 0:cb_rows].T.reshape(-1, 2)
-    objp *= square_size
-    obj_points = []  # 3D points
-    img_points = []  # 2D points
-    images = glob.glob(image_glob)  # your images
-    gray = None
-    #print(len(images))
-    
-    for fname in images:
-        img = cv2.imread(fname)
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-        
-        
-        ret, corners = cv2.findChessboardCorners(gray, (cb_cols, cb_rows), None)
-
-        if ret:
-            obj_points.append(objp)
-            img_points.append(corners)
-
-    # Calibrate
-    ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(
-        obj_points, img_points, gray.shape[::-1], None, None
-    )
-    
-    newcameramtx, roi = cv2.getOptimalNewCameraMatrix(
-        mtx, dist, img_shape, 1, img_shape
-    )
-    
-    return ret, mtx, dist, newcameramtx, roi
-
 def load_camera_params(path):
-    # Best calibration was done with MATLAB
-    # Load the data saved from MATLAB
     location = os.path.join(path, 'camParamsForPython.mat')
     data = sio.loadmat(location)
-    K = data['K']                 # 3x3 intrinsic matrix
-    distCoeffs = data['distCoeffs'].astype(np.float64).ravel()  # 1D array
-    
+    K = data['K']  # 3x3
+    distCoeffs = data['distCoeffs'].astype(np.float64).ravel()
     imageSize = data['imageSize'].flatten().astype(int)  # (height, width)
     h = imageSize[0]
     w = imageSize[1]
-    
-    # (Optional) get optimal new camera matrix
     newK, roi = cv2.getOptimalNewCameraMatrix(K, distCoeffs, (w, h), 1, (w, h))
     return K, distCoeffs, imageSize, newK, roi
 
+
 def rectify_with_chessboard(image,
-                            cb_cols = 8,
-                            cb_rows = 6,
-                            square_size_m=0.030,
-                            debug=True,
-                            win_size=(11,11),
+                            cb_cols=8,
+                            cb_rows=6,
+                            debug=False,
+                            win_size=(11, 11),
                             refine_eps=0.001,
-                            refine_iters=30
-                            ):
+                            refine_iters=30):
     """
-    Rectify an image using a detected chessboard pattern.
-
-    Parameters:
-        img          : input BGR image
-        cb_cols      : number of internal corners horizontally
-        cb_rows      : number of internal corners vertically
-        debug        : whether to display debug images
-        win_size     : window size for cornerSubPix
-        refine_eps   : epsilon for corner refinement
-        refine_iters : max iterations for corner refinement
-
     Returns:
-        rectified    : rectified full image (complete warped canvas)
-        H_full       : 3×3 homography mapping original -> rectified coords
-        corners      : refined chessboard corners (N×2)
+        rectified : warped image
+        H_plane   : homography mapping original undistorted pixels -> rectified plane pixels
+        corners   : refined chessboard corners (N,2) in original undistorted pixels
+        out_wh    : (out_w, out_h)
     """
-
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     pattern_size = (cb_cols, cb_rows)
 
-    # 1) Detect chessboard
     found, corners = cv2.findChessboardCorners(
         gray, pattern_size,
         flags=cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_NORMALIZE_IMAGE
@@ -201,18 +189,10 @@ def rectify_with_chessboard(image,
     if not found:
         raise RuntimeError("Chessboard not found.")
 
-    # 2) Refine corners
-    criteria = (
-        cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
-        refine_iters,
-        refine_eps
-    )
-    corners = cv2.cornerSubPix(gray, corners, win_size, (-1, -1), criteria)
-    corners = corners.reshape(-1, 2)          # (N,2)
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, refine_iters, refine_eps)
+    corners = cv2.cornerSubPix(gray, corners, win_size, (-1, -1), criteria).reshape(-1, 2)
 
-    # 3) Gridify corner array
     corners_grid = corners.reshape(cb_rows, cb_cols, 2)
-
     TL = corners_grid[0, 0]
     TR = corners_grid[0, -1]
     BR = corners_grid[-1, -1]
@@ -220,17 +200,6 @@ def rectify_with_chessboard(image,
 
     src_quad = np.float32([TL, TR, BR, BL])
 
-    # Debug: visualize TL/TR/BR/BL
-    if debug:
-        dbg = image.copy()
-        colors = [(0,0,255), (0,255,0), (255,0,0), (0,255,255)]
-        for p, c in zip([TL, TR, BR, BL], colors):
-            cv2.circle(dbg, tuple(p.astype(int)), 10, c, -1)
-            print("Corner:", p)
-        cv2.imshow("Quad corners", cv2.resize(dbg, (600,400)))
-        cv2.waitKey(0)
-
-    # 4) Compute board size in the original image
     bw = np.linalg.norm(TR - TL)
     bh = np.linalg.norm(BL - TL)
 
@@ -241,18 +210,10 @@ def rectify_with_chessboard(image,
         [0,      bh - 1]
     ])
 
-    # 5) Homography for plane rectification
     H, _ = cv2.findHomography(src_quad, dst_quad)
 
-    # 6) Expand canvas for full warp
     h, w = gray.shape[:2]
-    image_corners = np.float32([
-        [0, 0],
-        [w-1, 0],
-        [w-1, h-1],
-        [0, h-1]
-    ]).reshape(-1, 1, 2)
-
+    image_corners = np.float32([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]]).reshape(-1, 1, 2)
     warped = cv2.perspectiveTransform(image_corners, H)
 
     xs = warped[:, 0, 0]
@@ -266,114 +227,55 @@ def rectify_with_chessboard(image,
                   [0, 0, 1]], dtype=np.float32)
 
     H_plane = T @ H
-
     out_w = int(np.ceil(max_x - min_x))
     out_h = int(np.ceil(max_y - min_y))
 
     rectified = cv2.warpPerspective(image, H_plane, (out_w, out_h))
-
     return rectified, H_plane, corners, (out_w, out_h)
 
+
 def pixel_to_plane(u, v, H_plane):
-    # Convert to homogeneous
     p = np.array([u, v, 1.0], dtype=np.float32)
-    
-    # Transform
     P = H_plane @ p
-    
-    # Normalize
     X = P[0] / P[2]
     Y = P[1] / P[2]
-    return X, Y
+    return float(X), float(Y)
 
-def compute_wb_gains_from_corners(
-    image,
-    corners,
-    cb_cols = 8,
-    cb_rows = 6,
-    erode_ksize=5,
-    target_gray=None
-):
-    """
-    Given an image and known chessboard corners (already refined),
-    build a chessboard mask and compute white-balance gains.
 
-    Parameters:
-        image        : BGR image
-        corners      : refined corners, shape (N, 2)
-        cb_rows      : number of internal corners vertically
-        cb_cols      : number of internal corners horizontally
-        erode_ksize  : mask erosion kernel size (to avoid edge bleeding)
-        target_gray  : if None → gray-world; otherwise, enforce fixed brightness (e.g. 180)
-
-    Returns:
-        gains        : np.array([gainB, gainG, gainR])
-        mask         : uint8 mask of chessboard region (255 = board)
-    """
-
+def compute_wb_gains_from_corners(image, corners, cb_cols=8, cb_rows=6, erode_ksize=5, target_gray=None):
     h, w = image.shape[:2]
     mask = np.zeros((h, w), dtype=np.uint8)
 
-    # Reshape corner list into grid shape
     corners_grid = corners.reshape(cb_rows, cb_cols, 2)
-
-    # Extract outer quadrilateral of the chessboard
     TL = corners_grid[0, 0]
     TR = corners_grid[0, -1]
     BR = corners_grid[-1, -1]
     BL = corners_grid[-1, 0]
 
     board_poly = np.array([TL, TR, BR, BL], dtype=np.int32)
-
-    # Fill chessboard polygon
     cv2.fillConvexPoly(mask, board_poly, 255)
 
-    # Optional erosion to avoid mixed black/white edges
     if erode_ksize > 0:
         kernel = np.ones((erode_ksize, erode_ksize), np.uint8)
         mask = cv2.erode(mask, kernel)
 
-    # Extract board pixels
     pixels = image[mask == 255].reshape(-1, 3).astype(np.float32)
     mean_bgr = pixels.mean(axis=0)
 
-    # Determine the target gray level
-    if target_gray is None:
-        target = mean_bgr.mean()   # gray-world
-    else:
-        target = float(target_gray)
-
+    target = mean_bgr.mean() if target_gray is None else float(target_gray)
     gains = (target / mean_bgr).astype(np.float32)
-
     return gains, mask
 
+
 def apply_white_balance(image, gains):
-    """
-    Apply computed WB gains to the whole image.
-    """
     img_f = image.astype(np.float32)
-    img_f *= gains  # broadcast over channel dimension
+    img_f *= gains
     img_f = np.clip(img_f, 0, 255)
     return img_f.astype(np.uint8)
 
+
 def find_most_circular_blob(mask, min_area=50, circularity_thresh=0.45):
-    """
-    Finds the most circular blob in a binary mask using circularity = 4πA / P².
-
-    Parameters:
-        mask : uint8 binary image (0 or 255)
-        min_area : minimum area for considering a blob
-        circularity_thresh : minimum circularity required (0→1)
-
-    Returns:
-        center  : (x, y) of circle center, or None
-        radius  : radius in pixels, or None
-        contour : the contour of the best blob, or None
-    """
-    # Ensure mask is correct type
     mask_bin = (mask > 0).astype(np.uint8) * 255
-
-    # Find contours
     contours, _ = cv2.findContours(mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     best_contour = None
@@ -385,43 +287,40 @@ def find_most_circular_blob(mask, min_area=50, circularity_thresh=0.45):
             continue
 
         peri = cv2.arcLength(cnt, True)
-        if peri == 0:
+        if peri <= 1e-9:
             continue
 
         circularity = 4 * np.pi * area / (peri * peri)
-
         if circularity > circularity_thresh and circularity > best_circularity:
             best_circularity = circularity
             best_contour = cnt
 
-    # No valid contour found
     if best_contour is None:
         return None, None, None
 
-    # Compute enclosing circle
     (cx, cy), radius = cv2.minEnclosingCircle(best_contour)
-
     center = (int(cx), int(cy))
     radius = int(radius)
-
     return center, radius, best_contour
 
 
-def process_video(
-    video_path,
-    real_time_show=True,
-):
+def estimate_diameter_m(u, v, r_px, H_plane, meters_per_pixel):
     """
-    Run ball detection + Kalman tracking on a single video.
-
-    Returns:
-        ts, xs, ys, vxs, vys, speed, csv_path
+    Estimate blob diameter in meters by:
+      - mapping center and (center + r_px) into rectified plane pixels
+      - converting that pixel radius to meters via meters_per_pixel
     """
+    Xc, Yc = pixel_to_plane(u, v, H_plane)
+    Xe, Ye = pixel_to_plane(u + r_px, v, H_plane)
+    r_plane_px = float(np.hypot(Xe - Xc, Ye - Yc))
+    r_m = r_plane_px * float(meters_per_pixel)
+    return 2.0 * r_m
 
-    # ---- SETUP ----
+
+def process_video(video_path, real_time_show=True):
+    prev_t_s = None
     video_folder = os.path.abspath(os.path.join("data", "tuning_videos"))
     os.makedirs(video_folder, exist_ok=True)
-    #video_path = os.path.join(video_folder, "test_20251204_111648.avi")
 
     K, distCoeffs, imageSize, newK, roi = load_camera_params(os.path.abspath("data"))
 
@@ -435,7 +334,6 @@ def process_video(
         print("Warning: FPS not found; defaulting to 30.")
         src_fps = 30.0
 
-    # Read first frame 
     ret, first_frame_raw = cap.read()
     if not ret:
         print("Could not read first frame")
@@ -443,45 +341,39 @@ def process_video(
 
     h, w = first_frame_raw.shape[:2]
 
-    # 1) Undistort the first frame
     first_undistorted = cv2.undistort(first_frame_raw, K, distCoeffs)
-    # For faster computing in loop:
-    map1, map2 = cv2.initUndistortRectifyMap(
-        K, distCoeffs, None, K, (w, h), cv2.CV_16SC2
-    )
+    map1, map2 = cv2.initUndistortRectifyMap(K, distCoeffs, None, K, (w, h), cv2.CV_16SC2)
 
-    # 2) Rectify / find homography on the UNDISTORTED image
-    rectified, H_plane, corners, (out_w, out_h) = rectify_with_chessboard(first_undistorted)
+    rectified, H_plane_non_corrected, corners, (out_w, out_h) = rectify_with_chessboard(first_undistorted, debug=False)
 
-    # 3) Compute WB gains also on UNDISTORTED image
-    gains, wb_mask = compute_wb_gains_from_corners(
-        image=first_undistorted,
-        corners=corners
-    )
+    # Correct the orientation of x and y
+    S = np.array([[-1, 0, 0],
+                [0, 1, 0],
+                [0, 0, 1]], dtype=np.float64)
 
+    H_plane = S @ H_plane_non_corrected
+
+    gains, wb_mask = compute_wb_gains_from_corners(image=first_undistorted, corners=corners)
     print("WB gains:", gains)
 
-    # 4) Metric scaling (as before, but now bw should be measured on the rectified or undistorted board)
-    bw = 137.9586      # board width in *this* domain (update if needed)
+    # --- Metric scaling (keep your existing calibration) ---
+    bw = 137.9586      # chessboard width in rectified-pixel units (your existing constant)
     cb_cols = 8
-    square_size = (26.9/9.0)/100.0  # meters per square
-
+    square_size = (26.9 / 9.0) / 100.0  # meters per square (your existing)
     pixels_per_square = bw / (cb_cols - 1)
     meters_per_pixel = square_size / pixels_per_square
 
-
-    # ---- KALMAN FILTER INSTANCE ----
+    dt = 1.0 / src_fps
     dt = 1.0 / src_fps
     kf = KalmanFilterCV2D(
         dt=dt,
-        q_pos=1e-3,      # tune these
-        q_vel=1e-4,
+        sigma_a=0.1,  # m/s²
         meas_std=0.005,  # meters (≈ 5 mm)
-        gate_threshold=15.0
+        gate_threshold=20
     )
 
+    init_streak = 0
 
-    # ---- PROCESS VIDEO ----
     t_start = time.time()
     ball_pixels = []
     ball_world = []
@@ -489,168 +381,238 @@ def process_video(
     ball_vel = []
     frame_idx = 0
 
+    x0_raw = None        # reference for plotted x
+    stop_triggered = False
+    stop_speed = None
+    stop_x_plot = None
+    stop_time = None
+
+
     while True:
         ret, frame_raw = cap.read()
         if not ret:
             break
 
-        frame_idx += 1  # count frames processed
-        
-        # A) Undistort current frame
-        #frame_u = cv2.undistort(frame_raw, K, distCoeffs)
-        frame_u = cv2.remap(frame_raw, map1, map2, interpolation=cv2.INTER_LINEAR)
+        frame_idx += 1
+        green_perimeter_mask = np.ones((h, w), dtype=np.uint8) * 255
+        # green_perimeter_mask[0:120, :] = 0
+        green_perimeter_mask[0:370, :] = 0
+        green_perimeter_mask[950:1080, :] = 0
+        #cv2.imshow("Green perimeter mask", cv2.resize(green_perimeter_mask, (800, 600)))
+        #cv2.waitKey(0)
+        frame_raw = cv2.bitwise_and(frame_raw, frame_raw, mask=green_perimeter_mask)
 
-        # B) Apply the same WB gains
+        frame_u = cv2.remap(frame_raw, map1, map2, interpolation=cv2.INTER_LINEAR)
         frame_wb = apply_white_balance(frame_u, gains)
 
-        # C) Blur
         blurred = cv2.medianBlur(frame_wb, 5)
         blurred = cv2.GaussianBlur(blurred, (3, 3), 0)
 
-        # D) HSV + masks
         hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
-        sat = hsv[:, :, 1]
-        mask_sat = sat >= 150
+        mask_hsv = cv2.inRange(hsv, (8, 150, 100), (18, 255, 255))
 
-        hue = hsv[:, :, 0]
-        low_thres, up_thres = 1, 10 # 2, 10
-        mask_hue = (hue >= low_thres) & (hue <= up_thres)
-
-        blurred[~(mask_sat & mask_hue)] = (0, 0, 0) # Filtered
-
-        # E) Morphology
-        # Open to remove noise
         kernel = np.ones((3, 3), np.uint8)
-        opened = cv2.morphologyEx(blurred, cv2.MORPH_OPEN, kernel)
-        
-        # Close to fill holes
+        opened = cv2.morphologyEx(mask_hsv, cv2.MORPH_OPEN, kernel)
+
         kernel = np.ones((5, 5), np.uint8)
-        closed = cv2.morphologyEx(opened,cv2.MORPH_CLOSE, kernel)
+        closed = cv2.morphologyEx(opened, cv2.MORPH_CLOSE, kernel)
 
-        # F) Blob + circularity
-        gray_closed = cv2.cvtColor(closed, cv2.COLOR_BGR2GRAY)
-        _, mask_bin = cv2.threshold(gray_closed, 1, 255, cv2.THRESH_BINARY)
+        center, radius, contour = find_most_circular_blob(closed, min_area=50, circularity_thresh=0.1)
 
-        center, radius, contour = find_most_circular_blob(mask_bin)
+        debug = frame_u.copy()
 
-        debug = frame_u.copy()  # draw on undistorted image (or frame_raw if you prefer)
+        # --- decide measurement ---
+        meas = None
+        diam_m = None
+        ball_sized = False
 
-        if center is not None:
+        if center is not None and radius is not None and contour is not None:
             u, v = center
 
-            # Plane coords in pixels
-            X_plane, Y_plane = pixel_to_plane(u, v, H_plane)
+            diam_m = estimate_diameter_m(u, v, radius, H_plane, meters_per_pixel)
+            ball_sized = abs(diam_m - GOLF_BALL_DIAM_M) <= DIAM_TOL_M
 
-            # Plane coords in meters (measurement)
-            meas_x = X_plane * meters_per_pixel
-            meas_y = Y_plane * meters_per_pixel
+            if ball_sized:
+                init_streak += 1
+                if init_streak >= INIT_CONSEC:
+                    X_plane, Y_plane = pixel_to_plane(u, v, H_plane)
+                    meas = (X_plane * meters_per_pixel, Y_plane * meters_per_pixel)
+            else:
+                init_streak = 0
+        else:
+            init_streak = 0
 
-            # Time for this detection (based on video FPS, not processing speed)
-            t_s = frame_idx / src_fps
+        # --- Kalman step ---
+        t_s = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+
+        # Compute actual dt
+        if prev_t_s is None:
+            dt_k = 1.0 / src_fps
+        else:
+            dt_k = t_s - prev_t_s
+            # Clamp dt to avoid blow-ups on bad timestamps / seeks
+            dt_k = float(np.clip(dt_k, 1e-3, 0.2))  # 1ms..200ms, tune if needed
+
+        prev_t_s = t_s
+        # --- one single KF call per frame ---
+        filt_x, filt_y, filt_vx, filt_vy, used_meas = kf.step(meas, dt=dt_k, t=t_s)
+        # KF state is in meters; convert -> plane-pixels -> image pixels
+        # ---------------- STOP CONDITION (matches plotted x) ----------------
+        if filt_x is not None:
+
+            # Initialize reference for plotted coordinate
+            if x0_raw is None:
+                x0_raw = float(filt_x)
+
+            # Same x used in plotting: xs -= xs[0]; xs *= -1
+            x_plot = -(float(filt_x) - x0_raw)
+
+            # Stop everything once ball reaches STOP_X_M
+            if x_plot >= STOP_X_M:
+                stop_speed = float(np.hypot(filt_vx, filt_vy))
+                stop_x_plot = x_plot
+                stop_time = t_s
+
+                print("\n==============================")
+                print("STOP CONDITION REACHED")
+                print(f"x_plot = {x_plot:.3f} m   (>= {STOP_X_M})")
+                print(f"speed  = {stop_speed:.3f} m/s")
+                print("==============================\n")
+
+                stop_triggered = True
+                break   # ✅ stops ALL processing immediately
+        # -------------------------------------------------------------------
+
+
+        # time base (video time)
+        t_s = frame_idx / src_fps
+
+        # store only if KF has a state
+        if filt_x is not None:
             ball_times.append(t_s)
-
-            # Kalman filter step with measurement
-            filt_x, filt_y, filt_vx, filt_vy, used_meas = kf.step((meas_x, meas_y))
-
-            # If for some reason KF isn't initialized yet, skip
-            if filt_x is None:
-                continue
-
-            # Store filtered position and velocity
             ball_world.append((filt_x, filt_y))
             ball_vel.append((filt_vx, filt_vy))
 
-            # Keep raw pixel center list for drawing path if you like
-            ball_pixels.append(center)
-
-            # Visualization (still drawn at detected center in pixels)
-            cv2.circle(debug, center, radius, (0, 255, 0), 2)
+        # --- drawing ---
+        if center is not None and radius is not None:
+            col = (0, 255, 0) if ball_sized else (0, 0, 255)
+            cv2.circle(debug, center, radius, col, 2)
             cv2.circle(debug, center, 3, (0, 0, 255), -1)
+            if diam_m is not None:
+                cv2.putText(
+                    debug,
+                    f"{diam_m*1000:.1f}mm",
+                    (center[0] + 10, center[1]),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    col,
+                    1
+                )
 
+        # path in pixel space (for visualization)
+        if center is not None and ball_sized and init_streak >= INIT_CONSEC:
+            ball_pixels.append(center)
             for i in range(1, len(ball_pixels)):
-                cv2.line(debug, ball_pixels[i-1], ball_pixels[i], (255, 0, 0), 2)
-        else:
-            # No detection → prediction only
-            filt_x, filt_y, filt_vx, filt_vy, used_meas = kf.step(None)
+                cv2.line(debug, ball_pixels[i - 1], ball_pixels[i], (255, 0, 0), 2)
 
-            if filt_x is not None:
-                # Still update trajectory with predicted state
-                t_s = frame_idx / src_fps
-                ball_times.append(t_s)
-                ball_world.append((filt_x, filt_y))
-                ball_vel.append((filt_vx, filt_vy))
+        # FPS print
+        t = time.time() - t_start
+        print("Processing FPS:", f"{frame_idx / t:.2f}", end="\r")
 
-        # FPS
-        t = time.time()-t_start
-        print("Processing FPS:", f"{frame_idx / t:.2f}", end='\r')
-        
         if real_time_show:
-            cv2.imshow("Ball tracking (undistorted)", cv2.resize(debug, (800,600)))
-            # Wait according to video FPS (approx real-time playback)
+            cv2.imshow("Ball tracking (undistorted)", cv2.resize(debug, (800, 600)))
             key = cv2.waitKey(int(1000 / src_fps)) & 0xFF
-            if key == 27 or key == ord('q'):  # ESC or 'q' to quit early
+            if key == 27 or key == ord('q'):
                 break
-        
+
     cap.release()
     cv2.destroyAllWindows()
 
+    # --- Plot & save ---
+    if not ball_world:
+        print("\nNo ball trajectory collected.")
+        return None, None, None, None, None, None, None
 
-    # --- Plotting the results ---
-    # --- Convert to arrays and compute velocities ---
-    if ball_world:
-        xs = np.array([p[0] for p in ball_world])
-        ys = np.array([p[1] for p in ball_world])
-        ts = np.array(ball_times)
-        #vxs = np.array([v[0] for v in ball_vel])
-        #vys = np.array([v[1] for v in ball_vel])
-        # Process:
-        xs -= xs[0] # Start at (0,0)
-        ys -= ys[0]
-        xs *= -1
-        ys *= -1  # Flip to match real-world coords
-        #vxs *= -1
-        #vys *= -1
-        
-        # Scalar speed
-        # finite-difference velocity from filtered positions
-        vxs = np.gradient(xs, ts)
-        vys = np.gradient(ys, ts)
+    xs = np.array([p[0] for p in ball_world])
+    ys = np.array([p[1] for p in ball_world])
+    ts = np.array(ball_times)
 
-        # if you want speed from these:
-        speed = np.sqrt(vxs**2 + vys**2)
+    # normalize start + flip to match your previous convention
+    xs -= xs[0]
+    ys -= ys[0]
+    xs *= -1
+    ys *= -1
 
-        # --- Save to CSV ---
-        processed_folder = os.path.join(os.path.dirname(video_folder), "tuning_videos_processed")
-        os.makedirs(processed_folder, exist_ok=True)
+    vxs = np.gradient(xs, ts)
+    vys = np.gradient(ys, ts)
+    speed = np.sqrt(vxs**2 + vys**2)
 
-        video_base = os.path.splitext(os.path.basename(video_path))[0]
-        csv_path = os.path.join(processed_folder, f"{video_base}_trajectory.csv")
-   
-        with open(csv_path, mode="w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["time_s", "x_m", "y_m", "vx_m_s", "vy_m_s", "speed_m_s"])
-            for t_, x_, y_, vx_, vy_, s_ in zip(ts, xs, ys, vxs, vys, speed):
-                writer.writerow([t_, x_, y_, vx_, vy_, s_])
+    processed_folder = os.path.join(os.path.dirname(video_folder), "tuning_videos_processed")
+    os.makedirs(processed_folder, exist_ok=True)
+    video_base = os.path.splitext(os.path.basename(video_path))[0]
+    csv_path = os.path.join(processed_folder, f"{video_base}_trajectory.csv")
 
-        print(f"Saved CSV to: {csv_path}")
+    with open(csv_path, mode="w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["time_s", "x_m", "y_m", "vx_m_s", "vy_m_s", "speed_m_s"])
+        for t_, x_, y_, vx_, vy_, s_ in zip(ts, xs, ys, vxs, vys, speed):
+            writer.writerow([t_, x_, y_, vx_, vy_, s_])
 
-        # --- Optional: plotting ---
-        plt.figure()
-        plt.plot(xs, ys, marker="o")
-        plt.gca().set_aspect("equal", "box")
-        plt.xlabel("X [m]")
-        plt.ylabel("Y [m]")
-        plt.title("Ball trajectory on plane (Kalman filtered)")
-        plt.show()
-    
+    print(f"\nSaved CSV to: {csv_path}")
+
+    plt.figure()
+    plt.plot(xs, ys, marker="o")
+    plt.gca().set_aspect("equal", "box")
+    plt.xlabel("X [m]")
+    plt.ylabel("Y [m]")
+    plt.title("Ball trajectory on plane (Kalman filtered)")
+    plt.grid(True)
+    plt.show()
+
+    plt.figure()
+    plt.plot(ts, xs, marker="o", label="x")
+    plt.plot(ts, ys, marker="o", label="y")
+    plt.xlabel("Time [s]")
+    plt.ylabel("Position [m]")
+    plt.title("Ball position over time")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+    # plt.figure()
+    # plt.plot(ts, vxs, marker="o", label="vx")
+    # plt.plot(ts, vys, marker="o", label="vy")
+    # plt.xlabel("Time [s]")
+    # plt.ylabel("Velocity [m/s]")
+    # plt.title("Ball velocity over time")
+    # plt.legend()
+    # plt.grid(True)
+    # plt.show()
+
+    plt.figure()
+    plt.plot(ts, speed, marker="o")
+    plt.xlabel("Time [s]")
+    plt.ylabel("Speed [m/s]")
+    plt.title("Ball speed over time")
+    plt.grid(True)
+    plt.show()
+
     return ts, xs, ys, vxs, vys, speed, csv_path
-    
+
+def plane_to_pixel(X_plane, Y_plane, H_plane):
+    """
+    X_plane, Y_plane are in rectified-plane pixel units (same units as pixel_to_plane output).
+    Returns (u,v) in the original undistorted image pixel coordinates.
+    """
+    H_inv = np.linalg.inv(H_plane)
+    p = np.array([X_plane, Y_plane, 1.0], dtype=np.float32)
+    U = H_inv @ p
+    u = U[0] / U[2]
+    v = U[1] / U[2]
+    return float(u), float(v)
+
+
 if __name__ == "__main__":
-    video_path = "data/tuning_videos/test_1.0-5.avi"
-
-    ts, xs, ys, vxs, vys, speed, csv_path = process_video(
-        video_path,
-        real_time_show=True,   # turn off GUI if running batch
-    )
-
+    video_path = "data/OBS_variability_quintic_imp_nocam_hole1/2026-02-05_15-27-54.mp4"
+    ts, xs, ys, vxs, vys, speed, csv_path = process_video(video_path, real_time_show=True)
     print("Trajectory CSV:", csv_path)

@@ -11,6 +11,9 @@ MUJOCO_LOG.TXT/
 wandb/
 log/
 tuning_results/
+models/rl/ddpg/
+models/rl/bandit/
+models/rl/older/
 models/rl/
 data/OBS_saved_replay_buffer/
 data/trajectory_recording_*

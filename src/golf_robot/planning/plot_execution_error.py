@@ -12,7 +12,7 @@ The script:
  - time-aligns them by interpolating KF joints to the planned time grid
  - plots:
      (1) planned vs KF joint positions
-     (2) joint error (KF - planned)
+     (2) joint error (measured - planned)
  - saves figures into OUT_DIR (or shows them if SHOW_PLOTS=True)
 """
 

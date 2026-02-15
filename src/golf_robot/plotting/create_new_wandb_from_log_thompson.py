@@ -1,0 +1,176 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any, Dict, Iterable, Optional
+
+import wandb
+import yaml
+
+
+def iter_jsonl(path: Path) -> Iterable[Dict[str, Any]]:
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(path)
+
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                yield json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+
+def relog_jsonl_to_wandb(
+    jsonl_path: Path,
+    *,
+    project: str,
+    entity: Optional[str] = None,
+    run_name: Optional[str] = None,
+    group: Optional[str] = None,
+    tags: Optional[list[str]] = None,
+    used_key: str = "used_for_training",
+    only_used_for_training: bool = True,
+    reward_key: str = "reward",
+    state_key: str = "state_norm",
+    action_key: str = "action_norm",
+    planner_key: str = "planner",
+    planner_value: str = "ts_doublecritic_cem",
+    id: Optional[str] = None,
+    mujoco_cfg: Optional[Dict[str, Any]] = None,
+    rl_cfg: Optional[Dict[str, Any]] = None,
+) -> None:
+
+    run = wandb.init(
+        project=rl_cfg["training"].get("project_name", "rl_golf_no_name"),
+        id=run_id,
+        resume="allow",
+        group="dqn-bts",
+        config={
+            "rl_config": rl_cfg,
+            "mujoco_config": mujoco_cfg,
+        },
+    )
+
+    step = 0
+    logged = 0
+    skipped = 0
+    skipped_planner = 0
+    missing_reward = 0
+    missing_ball_start = 0
+
+    for ep in iter_jsonl(jsonl_path):
+
+        # --- FILTER: used_for_training ---
+        if only_used_for_training and not ep.get(used_key, True):
+            skipped += 1
+            continue
+
+        # --- FILTER: planner ---
+        if ep.get(planner_key) != planner_value:
+            skipped_planner += 1
+            continue
+
+        # --- reward exists ---
+        if reward_key not in ep:
+            missing_reward += 1
+            continue
+
+        step += 1
+
+        payload: Dict[str, Any] = {
+            "reward": float(ep[reward_key]),
+        }
+
+        # ball start history
+        if "ball_start_obs" in ep and ep["ball_start_obs"] is not None:
+            try:
+                x, y = ep["ball_start_obs"]
+                payload["ball_start/x"] = float(x)
+                payload["ball_start/y"] = float(y)
+            except Exception:
+                missing_ball_start += 1
+        else:
+            missing_ball_start += 1
+
+        for k in (
+            "thompson_head",
+            "q1_mean",
+            "q2_mean",
+            "q_min",
+            "replay_big_size",
+            "replay_recent_size",
+            "exploring",
+            "chosen_hole",
+        ):
+            if k in ep and ep[k] is not None:
+                payload[k] = ep[k]
+
+        if state_key in ep:
+            payload["state_norm"] = ep[state_key]
+        if action_key in ep:
+            payload["action_norm"] = ep[action_key]
+        if "speed" in ep:
+            payload["speed"] = float(ep["speed"])
+        if "angle_deg" in ep:
+            payload["angle_deg"] = float(ep["angle_deg"])
+        if "in_hole" in ep:
+            payload["in_hole"] = float(ep["in_hole"])
+        if "dist_at_hole" in ep:
+            payload["dist_at_hole"] = ep["dist_at_hole"]
+        if "speed_at_hole" in ep:
+            payload["speed_at_hole"] = ep["speed_at_hole"]
+        if "out_of_bounds" in ep:
+            payload["out_of_bounds"] = float(ep["out_of_bounds"])
+        if "cem_best_score" in ep:
+            payload["cem_best_score"] = float(ep["cem_best_score"])
+            payload["cem_std_mean"] = float(ep["cem_std_mean"])
+            payload["cem_std_max"] = float(ep["cem_std_max"])
+
+        if "episode" in ep:
+            payload["orig_episode"] = int(ep["episode"])
+        if "time" in ep:
+            payload["orig_time"] = float(ep["time"])
+
+        wandb.log(payload, step=logged + 1)
+        logged += 1
+
+    run.summary["relog_logged"] = logged
+    run.summary["relog_skipped_not_used"] = skipped
+    run.summary["relog_skipped_planner"] = skipped_planner
+    run.summary["relog_missing_reward"] = missing_reward
+    run.summary["relog_missing_ball_start"] = missing_ball_start
+    run.finish()
+
+    print(
+        f"[relog] logged={logged}, skipped_not_used={skipped}, "
+        f"skipped_planner={skipped_planner}, "
+        f"missing_reward={missing_reward}, missing_ball_start={missing_ball_start}"
+    )
+
+
+if __name__ == "__main__":
+    project_root = Path(__file__).parents[2]
+
+    rl_config_path = project_root / "configs" / "rl_config.yaml"
+    mujoco_config_path = project_root / "configs" / "mujoco_config.yaml"
+    with open(rl_config_path, "r") as f:
+        rl_cfg = yaml.safe_load(f)
+    with open(mujoco_config_path, "r") as f:
+        mujoco_cfg = yaml.safe_load(f)
+    run_id = rl_cfg["training"].get("wandb_run_id")
+    project_name = rl_cfg["training"].get("project_name", "rl_golf_wandb")
+    log_path = project_root / "log" / "real_episodes" / "episode_logger_thompson.jsonl"
+    relog_jsonl_to_wandb(
+        log_path,
+        project="golf_robot",
+        entity=None,
+        run_name="relog_fixed_steps",
+        only_used_for_training=True,
+        id=run_id,
+        mujoco_cfg=mujoco_cfg,
+        rl_cfg=rl_cfg,
+    )

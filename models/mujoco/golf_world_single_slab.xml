@@ -1,0 +1,165 @@
+<mujoco model="golf_world">
+  <compiler angle="degree"/>
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="RK4" cone="elliptic"/>
+
+  <!-- Defaults: enable 6D friction and make contacts crisp -->
+  <default>
+    <geom condim="4" solref="0.01 0.5" solimp="1 1 1"
+          friction="0.30831 0.30831 0.00081743"/> <!-- 0.6 0.001 0.0048 slide, spin, roll -->
+  </default>
+
+
+  <asset>
+    <!-- Materials -->
+    <material name="green_mat"     rgba="0.2 0.55 0.2 1"/>
+    <material name="green_mat_out" rgba="0.5 0.5 0.5 1"/>
+    <material name="green_mat_out1" rgba="0.0 0.5 0.5 1"/>
+    <material name="green_mat_out2" rgba="0.5 0.0 0.5 1"/>
+    <material name="cup_mat"       rgba="0.3 0.3 0.3 1"/>
+    <texture  name ="checks" type="2d" builtin="checker" width="512" height="512"
+              rgb1="1 1 1" rgb2="0 0 0" mark="cross" markrgb="1 0 0"/>
+    <material name="ball_mat"  texture="checks" rgba="1 1 1 1"/>
+    <material name="club_mat"  rgba="0.9 0.9 0.9 1"/>
+    <material name="disc_mat"  rgba="0.9 0.1 0.9 1"/>
+
+    <!-- 27 convex wedges (OBJ). Scale x10 vs earlier (0.01) -->
+    <mesh name="cup_w00" file="assets/golf_hole_obj/golf_hole_obj_collision_0.obj"  scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w01" file="assets/golf_hole_obj/golf_hole_obj_collision_1.obj"  scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w02" file="assets/golf_hole_obj/golf_hole_obj_collision_2.obj"  scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w03" file="assets/golf_hole_obj/golf_hole_obj_collision_3.obj"  scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w04" file="assets/golf_hole_obj/golf_hole_obj_collision_4.obj"  scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w05" file="assets/golf_hole_obj/golf_hole_obj_collision_5.obj"  scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w06" file="assets/golf_hole_obj/golf_hole_obj_collision_6.obj"  scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w07" file="assets/golf_hole_obj/golf_hole_obj_collision_7.obj"  scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w08" file="assets/golf_hole_obj/golf_hole_obj_collision_8.obj"  scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w09" file="assets/golf_hole_obj/golf_hole_obj_collision_9.obj"  scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w10" file="assets/golf_hole_obj/golf_hole_obj_collision_10.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w11" file="assets/golf_hole_obj/golf_hole_obj_collision_11.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w12" file="assets/golf_hole_obj/golf_hole_obj_collision_12.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w13" file="assets/golf_hole_obj/golf_hole_obj_collision_13.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w14" file="assets/golf_hole_obj/golf_hole_obj_collision_14.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w15" file="assets/golf_hole_obj/golf_hole_obj_collision_15.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w16" file="assets/golf_hole_obj/golf_hole_obj_collision_16.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w17" file="assets/golf_hole_obj/golf_hole_obj_collision_17.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w18" file="assets/golf_hole_obj/golf_hole_obj_collision_18.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w19" file="assets/golf_hole_obj/golf_hole_obj_collision_19.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w20" file="assets/golf_hole_obj/golf_hole_obj_collision_20.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w21" file="assets/golf_hole_obj/golf_hole_obj_collision_21.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w22" file="assets/golf_hole_obj/golf_hole_obj_collision_22.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w23" file="assets/golf_hole_obj/golf_hole_obj_collision_23.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w24" file="assets/golf_hole_obj/golf_hole_obj_collision_24.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w25" file="assets/golf_hole_obj/golf_hole_obj_collision_25.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w26" file="assets/golf_hole_obj/golf_hole_obj_collision_26.obj" scale="0.01 0.01 0.01"/>
+
+    <mesh name="disc_obs" file="assets/disc_obstacle.stl" scale="0.001 0.001 0.001"/>
+  </asset>
+
+  <!-- Contacts -->
+  <contact>
+    <!-- Ball–club impact: set restitution ~0.62 via damp_ratio ≈ 0.1504 -->
+    <pair geom1="ball_geom" geom2="club_head"
+          solref="0.01 0.5"  
+          solimp="0 0 0"
+          friction="0.0 0.00 0.00"/>
+  </contact>
+
+  
+  <worldbody>
+    <!-- ==== GROUND: 6x4 m area, 0.04 m thick, with a 0.106 m opening at (2, 0) ==== -->
+    <!-- Top slab (y in [ +0.053, +2 ]) -->
+    <geom name="green_plus_y" type="box"
+          pos="0 0 -0.02" size="10 10 0.02"
+          material="green_mat"/>
+
+
+    <!-- ==== CUP (27 convex OBJ wedges; no bottom) -0.110665 ==== -->
+    <body name="cup" pos="2 0 -0.110665">
+      <!-- Give the first wedge explicit friction; others inherit defaults -->
+      <geom type="mesh" mesh="cup_w00" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w01" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w02" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w03" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w04" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w05" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w06" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w07" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w08" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w09" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w10" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w11" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w12" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w13" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w14" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w15" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w16" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w17" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w18" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w19" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w20" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w21" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w22" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w23" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w24" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w25" material="cup_mat" contype="1" conaffinity="1"/>
+      <geom type="mesh" mesh="cup_w26" material="cup_mat" contype="1" conaffinity="1"/>
+
+      <!-- Keep the site for logic/debug -->
+      <site name="hole_center" pos="0 0 0" size="0.055" rgba="0 0 0 0.2" type="sphere"/>
+    </body>
+
+    <body name="disc0" pos="0 0 -10">
+      <geom type="mesh" mesh="disc_obs" size="0.1" material="disc_mat" contype="1" conaffinity="1"/>
+    </body>
+    
+    <body name="disc1" pos="0 0 -10">
+      <geom type="mesh" mesh="disc_obs" size="0.1" material="disc_mat" contype="1" conaffinity="1"/>
+    </body>
+
+    <body name="disc2" pos="0 0 -10">
+      <geom type="mesh" mesh="disc_obs" size="0.1" material="disc_mat" contype="1" conaffinity="1"/>
+    </body>
+
+    <body name="disc3" pos="0 0 -10">
+      <geom type="mesh" mesh="disc_obs" size="0.1" material="disc_mat" contype="1" conaffinity="1"/>
+    </body>
+
+    <body name="disc4" pos="0 0 -10">
+      <geom type="mesh" mesh="disc_obs" size="0.1" material="disc_mat" contype="1" conaffinity="1"/>
+    </body>
+
+
+
+    
+    <!-- ==== BALL ==== -->
+    <camera name="overview" pos="2.0 -3.0 1.5" quat="0.7 0.0 0.7 0.0" fovy="45"/>
+    <body name="ball" pos="0 0 0.021355">
+      <freejoint name="ball_free"/>
+      <geom name="ball_geom" type="sphere" size="0.02135"
+            rgba="0.6 0.2 0.6 1" mass="0.04593" material="ball_mat"
+            condim="6"/>
+    </body>
+
+    <!-- ==== CLUB ==== -->
+    <body name="club_mount" pos="0 0 0">
+      <joint name="mount_free" type="free" damping="20"/>
+      <geom name="mount_inert" type="sphere" size="0.10" mass="5.0"
+            rgba="0 0 0 0" contype="0" conaffinity="0"/>
+
+  
+      <!-- <body name="club_offset" pos="0.0 0.0 0.37865"> -->
+      <body name="club_offset" pos="0.0 0.0 0.381355">
+        <body name="club_link" pos="0 0 0">
+          <joint name="club_hinge" type="hinge" axis="0 1 0" limited="true" range="-60 60" damping="0.1"/>
+          <geom name="club_shaft" type="capsule" fromto="0 0 0  0 0 -0.36" size="0.01" mass="1.0" material="club_mat" contype="0" conaffinity="0"/>
+          <geom name="club_head"  type="box"    pos="0.0 0.0 -0.36" size="0.02 0.05 0.03" mass="0.5" material="club_mat" contype="0" conaffinity="0"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <!-- ==== ACTUATOR ==== -->
+  <actuator>
+    <velocity name="club_motor" joint="club_hinge"
+              kv="20" ctrlrange="-20 20" forcerange="-40 40"/>
+  </actuator>
+</mujoco>

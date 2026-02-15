@@ -1,0 +1,71 @@
+program: src/golf_robot/ucb_bandit_5.py
+method: bayes
+project: golf_robot_ucb_v_5_final_tuning
+
+metric:
+  name: final_success_rate
+  goal: maximize
+
+parameters:
+  # ------------------------------
+  # Learning dynamics
+  # ------------------------------
+  critic_lr:
+    distribution: log_uniform_values
+    min: 5e-4
+    max: 5e-3
+
+  # ------------------------------
+  # Ensemble-UCB exploration
+  # score(a) = mean(Q) + beta * std(Q)
+  # Use anneal beta -> beta_final for stability
+  # ------------------------------
+  ucb_beta:
+    distribution: uniform
+    min: 0.1
+    max: 2.0
+
+  replay_recent_size:
+    distribution: uniform
+    min: 200
+    max: 1000
+
+  mixed_replay_ratio:
+    distribution: uniform
+    min: 0.0
+    max: 1.0
+
+  # Final beta (towards end of training); allows becoming more exploitative
+  ucb_beta_final:
+    distribution: uniform
+    min: 0.0
+    max: 0.6
+
+  # ------------------------------
+  # Bootstrapped ensemble diversity
+  # ------------------------------
+  bootstrap_p:
+    distribution: uniform
+    min: 0.55
+    max: 0.95
+
+  # ------------------------------
+  # CEM planning (search)
+  # Keep discrete to control compute
+  # ------------------------------
+  cem_init_std:
+    distribution: uniform
+    min: 0.2
+    max: 0.8
+
+  cem_iters:
+    values: [2, 3, 4]
+
+  cem_pop:
+    values: [128, 256, 384]
+
+  # Optional: how aggressively CEM focuses on elites
+  cem_elite_frac:
+    distribution: uniform
+    min: 0.10
+    max: 0.30

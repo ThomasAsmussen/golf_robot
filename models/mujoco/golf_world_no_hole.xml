@@ -1,6 +1,6 @@
 <mujoco model="golf_world">
   <compiler angle="degree"/>
-  <option timestep="0.002" gravity="0 0 -9.81" integrator="RK4"/>
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="RK4" cone="elliptic"/>
 
   <!-- Defaults: enable 6D friction and make contacts crisp  friction="0.735084  1.83703e-05 0.000845"-->
   <default>
@@ -20,7 +20,7 @@
 
   <!-- Contacts -->
   <contact>
-    <pair geom1="ball_geom" geom2="club_head" solref="0.026154391629320678 0.42205675239230467" solimp="0.7837685139716153 1.11639 0.00107829"/>
+    <pair geom1="ball_geom" geom2="club_head" solref="0.018456653624695597 0.2831490055941693" solimp="0.7837685139716153 1.11639 0.00107829"/>
   </contact>
   
   <worldbody>

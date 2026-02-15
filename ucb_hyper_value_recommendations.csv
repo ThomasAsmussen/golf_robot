@@ -1,0 +1,11 @@
+hyper_param,best_value_or_bin,mean_success,support
+param.ucb_beta,"(1.706, 1.999]",0.5083673469387755,49
+param.cem_elite_frac,"(0.149, 0.188]",0.50625,48
+param.replay_recent_size,"(548.684, 631.762]",0.5055102040816326,49
+param.bootstrap_p,"(0.55, 0.597]",0.503265306122449,49
+param.ucb_beta_final,"(0.00197, 0.0835]",0.5018367346938776,49
+param.critic_lr,"(0.00156, 0.00201]",0.49416666666666664,48
+param.mixed_replay_ratio,"(0.117, 0.235]",0.4897959183673469,49
+param.cem_init_std,"(0.717, 0.8]",0.4836734693877551,49
+param.cem_pop,384.0,0.48097744360902256,133
+param.cem_iters,2.0,0.4796694214876033,121

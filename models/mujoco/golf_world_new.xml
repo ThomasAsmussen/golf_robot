@@ -1,10 +1,11 @@
 <mujoco model="golf_world">
   <compiler angle="radian"/>
 
-  <option integrator="RK4"/>
+  <option integrator="RK4" cone="elliptic"/>
+  <option integrator="RK4" cone="elliptic"/>
 
   <default>
-    <geom condim="6" friction="0.30831 1.83703e-05 0.00081743" solref="0.002" solimp="0.95 0.99"/>
+    <geom condim="6" friction="0.30831 1.83703e-05 0.00121743" solref="0.002" solimp="0.95 0.99"/>
   </default>
 
   <asset>
@@ -17,43 +18,71 @@
     <material name="ball_mat" texture="checks"/>
     <material name="club_mat" rgba="0.9 0.9 0.9 1"/>
     <material name="disc_mat" rgba="0.9 0.1 0.9 1"/>
-    <mesh name="cup_w00" file="assets/golf_hole_obj/golf_hole_obj_collision_0.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w01" file="assets/golf_hole_obj/golf_hole_obj_collision_1.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w02" file="assets/golf_hole_obj/golf_hole_obj_collision_2.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w03" file="assets/golf_hole_obj/golf_hole_obj_collision_3.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w04" file="assets/golf_hole_obj/golf_hole_obj_collision_4.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w05" file="assets/golf_hole_obj/golf_hole_obj_collision_5.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w06" file="assets/golf_hole_obj/golf_hole_obj_collision_6.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w07" file="assets/golf_hole_obj/golf_hole_obj_collision_7.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w08" file="assets/golf_hole_obj/golf_hole_obj_collision_8.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w09" file="assets/golf_hole_obj/golf_hole_obj_collision_9.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w10" file="assets/golf_hole_obj/golf_hole_obj_collision_10.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w11" file="assets/golf_hole_obj/golf_hole_obj_collision_11.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w12" file="assets/golf_hole_obj/golf_hole_obj_collision_12.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w13" file="assets/golf_hole_obj/golf_hole_obj_collision_13.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w14" file="assets/golf_hole_obj/golf_hole_obj_collision_14.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w15" file="assets/golf_hole_obj/golf_hole_obj_collision_15.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w16" file="assets/golf_hole_obj/golf_hole_obj_collision_16.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w17" file="assets/golf_hole_obj/golf_hole_obj_collision_17.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w18" file="assets/golf_hole_obj/golf_hole_obj_collision_18.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w19" file="assets/golf_hole_obj/golf_hole_obj_collision_19.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w20" file="assets/golf_hole_obj/golf_hole_obj_collision_20.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w21" file="assets/golf_hole_obj/golf_hole_obj_collision_21.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w22" file="assets/golf_hole_obj/golf_hole_obj_collision_22.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w23" file="assets/golf_hole_obj/golf_hole_obj_collision_23.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w24" file="assets/golf_hole_obj/golf_hole_obj_collision_24.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w25" file="assets/golf_hole_obj/golf_hole_obj_collision_25.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="cup_w26" file="assets/golf_hole_obj/golf_hole_obj_collision_26.obj" scale="0.01 0.01 0.01"/>
-    <mesh name="disc_obs" file="assets/disc_obstacle.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="cup_w00" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_0.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w01" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_1.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w02" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_2.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w03" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_3.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w04" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_4.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w05" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_5.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w06" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_6.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w07" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_7.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w08" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_8.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w09" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_9.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w10" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_10.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w11" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_11.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w12" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_12.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w13" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_13.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w14" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_14.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w15" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_15.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w16" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_16.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w17" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_17.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w18" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_18.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w19" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_19.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w20" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_20.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w21" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_21.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w22" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_22.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w23" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_23.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w24" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_24.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w25" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_25.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w26" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_26.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="disc_obs" content_type="model/stl" file="assets/disc_obstacle.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="cup_w00" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_0.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w01" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_1.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w02" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_2.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w03" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_3.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w04" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_4.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w05" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_5.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w06" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_6.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w07" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_7.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w08" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_8.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w09" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_9.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w10" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_10.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w11" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_11.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w12" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_12.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w13" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_13.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w14" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_14.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w15" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_15.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w16" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_16.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w17" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_17.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w18" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_18.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w19" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_19.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w20" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_20.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w21" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_21.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w22" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_22.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w23" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_23.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w24" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_24.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w25" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_25.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="cup_w26" content_type="model/obj" file="assets/golf_hole_obj/golf_hole_obj_collision_26.obj" scale="0.01 0.01 0.01"/>
+    <mesh name="disc_obs" content_type="model/stl" file="assets/disc_obstacle.stl" scale="0.001 0.001 0.001"/>
   </asset>
 
   <worldbody>
-    <geom name="green_plus_y" size="4 0.794158 0.02" pos="3 1.20584 -0.02" type="box" material="green_mat"/>
-    <geom name="green_neg_y" size="4 1.15284 0.02" pos="3 -0.847158 -0.02" type="box" material="green_mat"/>
-    <geom name="green_plus_x" size="1.95798 0.053 0.02" pos="5.04202 0.358683 -0.02" type="box" material="green_mat"/>
-    <geom name="green_neg_x" size="1.98902 0.053 0.02" pos="0.989023 0.358683 -0.02" type="box" material="green_mat"/>
+    <geom name="green_plus_y" size="4 0.0735 0.02" pos="3 1.9265 -0.02" type="box" material="green_mat"/>
+    <geom name="green_neg_y" size="4 1.8735 0.02" pos="3 -0.1265 -0.02" type="box" material="green_mat"/>
+    <geom name="green_plus_x" size="1.9135 0.053 0.02" pos="5.0865 1.8 -0.02" type="box" material="green_mat"/>
+    <geom name="green_neg_x" size="2.0335 0.053 0.02" pos="1.0335 1.8 -0.02" type="box" material="green_mat"/>
     <camera name="overview" pos="2 -3 1.5" quat="0.707107 0 0.707107 0"/>
-    <body name="cup" pos="3.03105 0.358683 -0.110665">
+    <body name="cup" pos="3.12 1.8 -0.110665">
       <geom type="mesh" material="cup_mat" mesh="cup_w00"/>
       <geom type="mesh" material="cup_mat" mesh="cup_w01"/>
       <geom type="mesh" material="cup_mat" mesh="cup_w02"/>
@@ -116,7 +145,7 @@
   </worldbody>
 
   <contact>
-    <pair geom1="ball_geom" geom2="club_head" solref="0.0142719 0.40871" solimp="0.783769 1.11639 0.00107829"/>
+    <pair geom1="ball_geom" geom2="club_head" solref="0.0184567 0.283149" solimp="0.783769 1.11639 0.00107829"/>
   </contact>
 
   <actuator>

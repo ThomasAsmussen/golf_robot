@@ -103,12 +103,12 @@ def estimate_tau_from_logs(traj: pd.DataFrame, meas: pd.DataFrame, thr=0.02):
 
 def main():
     here = pathlib.Path(__file__).resolve()
-    repo = find_repo_root(here.parent)
+    repo = find_repo_root(here.parents[2])
     print(f"[INFO] Running from {repo}")
 
     traj_path = repo / "log" / "trajectory_sim.csv"
     meas_path = repo / "log" / "streamed_measurements.csv"
-
+    print(f"[INFO] Loading trajectory from {traj_path}")
     if not traj_path.exists():
         raise FileNotFoundError(f"Missing: {traj_path}")
     if not meas_path.exists():

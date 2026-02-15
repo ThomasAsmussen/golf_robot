@@ -337,7 +337,7 @@ class NullViewer:
 # ---------------------------------------------------------------------
 def run_loop(model, data, cfg,
              base_idx, base_pose,
-             ids, nstep, max_vel, vx_des, aim_yaw_rad):
+             ids, nstep, max_vel, vx_des, aim_yaw_rad, hole_xy):
     """
     Run the main simulation loop with viewer or headless.
     inputs:
@@ -479,13 +479,15 @@ def run_loop(model, data, cfg,
                 if last_xy is not None:
                     dist = np.linalg.norm(xy - last_xy)
 
-                    if dist > 1e-4:
+                    if dist > 1e-3:
                         # ball has moved
                         last_xy = xy.copy()
                         last_move_t = t
 
                         if not started:
                             started = True
+
+                    
 
                     elif started and ((t - last_move_t) >= 0.05):
                         if do_print:
@@ -498,6 +500,12 @@ def run_loop(model, data, cfg,
                     last_xy = xy.copy()
                     last_move_t = t
 
+                # if ball has gone further in x than the hole, stop sim
+                if (hole_xy[0] - ball_p[0]) < -0.2:
+                    if do_print:
+                        print(f"[{t:7.3f}s] Ball has passed beyond hole x-position, ending simulation.")
+                    return ball_p[0], ball_p[1], is_ball_in_hole(data, cfg, ids), np.array(trajectory)
+                
                 if z < -0.2:
                     if do_print:
                         print(f"[{t:7.3f}s] Ball has fallen below z=-0.2m, ending simulation.")
@@ -604,7 +612,7 @@ def run_sim(aim_yaw_deg, vx_des, hole_pos_xy, cfg, disc_positions=None):
     return run_loop(model, data, cfg,
              (qadr_base, vadr_base),
              (base_pos_baked, base_quat_baked),
-             ids, nstep, max_vel, float(vx_des), math.radians(aim_yaw_deg))
+             ids, nstep, max_vel, float(vx_des), math.radians(aim_yaw_deg), hole_pos_xy)
 
 # ---------------------------------------------------------------------
 # CLI
@@ -649,12 +657,13 @@ def main():
 
     cfg["sim"]["csv_period"] = args.csv_period
     aim_yaw = 0
-    vx_des =  1.3
-    hole_pos_xy = [5, 0]
+    vx_des =  1.2
+    hole_pos_xy = [3.12, 0]
     # disc_positions = generate_disc_positions(5, -3.0, 3.0, -2.0, 2.0, hole_pos_xy)
-    disc_positions = [(1.4956361419452078, -0.29096378977334414), (-0.20827146563258125, -0.5665742751926417), (-1.1686851660689785, -0.7053216711723784), (-2.1658353815296345, -0.6954762744879543)]
-    cfg["ball"]["start_pos"] = [np.float64(-0.10126499661175004), np.float64(-0.48780616912307617), 0.02135]
-    cfg["ball"]["obs_start_pos"] = [np.float64(-0.1013574481871513), np.float64(-0.4878724069881774), 0.02135]
+    # disc_positions = [(1.4956361419452078, -0.29096378977334414), (-0.20827146563258125, -0.5665742751926417), (-1.1686851660689785, -0.7053216711723784), (-2.1658353815296345, -0.6954762744879543)]
+    disc_positions = []
+    cfg["ball"]["start_pos"] = [0, 0, 0.02135]
+    cfg["ball"]["obs_start_pos"] = [0.0, 0.0, 0.02135]
     run_sim(
         aim_yaw_deg=aim_yaw,
         vx_des=vx_des,

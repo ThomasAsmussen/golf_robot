@@ -1,39 +1,68 @@
-program: src/golf_robot/reinforcement_learning/td3.py
+program: src/golf_robot/TD3_bandit_5.py
 method: bayes     # or "random" if you want pure random search
+project: golf_robot_td3_v5
 
 metric:
   name: final_success_rate
   goal: maximize
 
 parameters:
+  # terminal bonus
+  in_hole_reward:
+    distribution: uniform
+    min: 1.0
+    max: 8.0
+
+  # exp(-k * distance)
+  distance_scale:
+    distribution: log_uniform_values
+    min: 1.0
+    max: 10.0
+
+  # tradeoff weight
+  w_distance:
+    distribution: uniform
+    min: 0.2
+    max: 0.95
+
+  # desired speed at hole (units as in your meta/sim)
+  optimal_speed:
+    distribution: uniform
+    min: 0.55
+    max: 1.05
+
+  # exp(-k * dist_at_hole)
+  dist_at_hole_scale:
+    distribution: log_uniform_values
+    min: 0.2
+    max: 10.0
+
+  # exp(-k * speed_error or speed term)
+  optimal_speed_scale:
+    distribution: log_uniform_values
+    min: 0.3
+    max: 10.0
 
   actor_lr:
-    values: [1e-4, 3e-4, 1e-3]
+    distribution: log_uniform_values
+    min: 1e-4
+    max: 5e-3
 
   critic_lr:
-    values: [3e-4, 1e-3, 3e-3]
-
-  hidden_dim:
-    values: [128, 256, 512]
-
-  batch_size:
-    values: [64, 128, 256]
-
-  grad_steps:
-    values: [1, 2, 4, 8]    # TD3 typically uses fewer updates per env step
+    distribution: log_uniform_values
+    min: 1e-4
+    max: 5e-3
 
   noise_std:
-    values: [0.1, 0.2, 0.3]   # Exploration noise σ
-
-  policy_noise:
-    values: [0.1, 0.2, 0.3]   # TD3 target policy smoothing noise
-
-  noise_clip:
-    values: [0.2, 0.3, 0.5]   # Clipping for target policy smoothing
+    distribution: uniform
+    min: 0.1
+    max: 0.5
 
   tau:
-    values: [0.005, 0.01, 0.02]   # Soft update parameter
+    distribution: log_uniform_values
+    min: 0.001
+    max: 0.02
 
   policy_delay:
-    values: [1, 2, 3]   # Delay between actor updates
+    values: [1, 2, 3, 4, 5, 6]
 
