@@ -22,6 +22,9 @@ Everything else (configs, models, notebooks, cluster scripts) supports the workf
 
 ---
 
+## For Nils
+policy_evaluation contains the policy evaluation plots and mat files
+
 ## Repository Structure
 
 .
