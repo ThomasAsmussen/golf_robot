@@ -126,7 +126,40 @@ These may include:
 
 Refer to the specific training module to see how configs are loaded.
 
+For evaluation set "continue_training = True" in the rl config
+
 ---
+
+## Real-Time Scheduling (Linux)
+
+For stable robot control loops (e.g. streaming `speedj()` commands at ~125 Hz), the trajectory streaming process may use **real-time scheduling** via `chrt`.
+
+By default, `chrt` requires root privileges. To allow your user to run it without entering a password, add a rule in `sudoers`.
+
+Edit the sudoers file:
+
+```bash
+sudo visudo
+```
+
+Add the following line at the bottom (replace `<username>` with your Linux username):
+
+```bash
+<username> ALL=(root) NOPASSWD: /usr/bin/chrt
+```
+
+You can then run a process with FIFO real-time priority, for example:
+
+```bash
+sudo chrt -f 80 ./traj_streamer
+```
+
+Verify the rule with:
+
+```bash
+sudo -l
+```
+
 
 ## Running on a Cluster
 
