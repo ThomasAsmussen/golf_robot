@@ -94,12 +94,12 @@ static const std::array<double,6> TAU_CMD = {
     0.0129   // joint 5
 };
 // static const std::array<double,6> TAU_CMD = {
-//     1,  // joint 0
-//     1,  // joint 1
-//     1,  // joint 2
-//     1,  // joint 3
-//     1,  // joint 4
-//     1   // joint 5
+//     0.0508,  // joint 0
+//     0.0553,  // joint 1
+//     0.0569,  // joint 2
+//     0.0523,  // joint 3
+//     0.0584,  // joint 4
+//     0.0605   // joint 5
 // };
 // static const double TAU_CMD  = 0.024;    // seconds: actuator time constant for dq tracking
 
