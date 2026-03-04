@@ -899,7 +899,7 @@ def generate_trajectory(impact_speed, impact_angle, ball_x_offset, ball_y_offset
 
     # print(f"Generated {len(possible_start_points)} possible start/end point pairs.")
     # Optional: truncate to avoid exploding compute
-    possible_start_points = possible_start_points[:1]
+    possible_start_points = possible_start_points[:2]
     # possible_start_points = [move_point_xyz(-0.4, 0.0, 0.25, q0_hit, q0_start)[0] # CHANGE HERE
     possible_end_points   = possible_end_points[:2]
     print(f"Using {len(possible_start_points)} possible start points and {len(possible_end_points)} possible end points.")
@@ -952,7 +952,7 @@ def generate_trajectory(impact_speed, impact_angle, ball_x_offset, ball_y_offset
 
 
             segments_i, Q_all_i, dQ_all_i, ddQ_all_i = plan_piecewise_quintic(
-                waypoints, impact_idx, lin_velocity, time_penalty_default=0.2, time_penalty_impact=0.2
+                waypoints, impact_idx, lin_velocity, time_penalty_default=time_penalty_select_seg0, time_penalty_impact=time_penalty_select_seg0
             )
 
             if Q_all_i is None:
