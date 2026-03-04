@@ -22,7 +22,7 @@ Everything else (configs, models, notebooks, cluster scripts) supports the workf
 
 ---
 
-## For Nils
+## Policy Evaluation
 policy_evaluation contains the policy evaluation plots and mat files
 
 ## Repository Structure
@@ -126,7 +126,57 @@ These may include:
 
 Refer to the specific training module to see how configs are loaded.
 
+For evaluation set "continue_training = True" in the rl config
+
 ---
+
+## Real-Time Scheduling (Linux)
+
+For stable robot control loops (e.g. streaming `speedj()` commands at ~125 Hz), the trajectory streaming process may use **real-time scheduling** via `chrt`.
+
+By default, `chrt` requires root privileges. To allow your user to run it without entering a password, add a rule in `sudoers`.
+
+Edit the sudoers file:
+
+```bash
+sudo visudo
+```
+
+Add the following line at the bottom (replace `<username>` with your Linux username):
+
+```bash
+<username> ALL=(root) NOPASSWD: /usr/bin/chrt
+```
+
+You can then run a process with FIFO real-time priority, for example:
+
+```bash
+sudo chrt -f 80 ./traj_streamer
+```
+
+Verify the rule with:
+
+```bash
+sudo -l
+```
+## Recording Experiments (OBS Studio)
+
+OBS Studio can be used to record ball trajectory for training and logging.
+
+Install OBS:
+
+```bash
+sudo apt install obs-studio
+```
+Add the camera using 30 FPS, and the correct recording path in settings -> Output -> Recording -> Recording Path
+
+For specifying which cores to use for OBS Studio, start the program from the terminal using: 
+
+```bash
+taskset -c 0-9 obs
+```
+
+For cores 0-9. Make sure these are different from the cores used to run traj_streamer (specified in training and evaluation scripts)
 
 ## Running on a Cluster
 
