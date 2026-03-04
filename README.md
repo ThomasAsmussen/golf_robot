@@ -159,7 +159,24 @@ Verify the rule with:
 ```bash
 sudo -l
 ```
+## Recording Experiments (OBS Studio)
 
+OBS Studio can be used to record ball trajectory for training and logging.
+
+Install OBS:
+
+```bash
+sudo apt install obs-studio
+```
+Add the camera using 30 FPS, and the correct recording path in settings -> Output -> Recording -> Recording Path
+
+For specifying which cores to use for OBS Studio, start the program from the terminal using: 
+
+```bash
+taskset -c 0-9 obs
+```
+
+For cores 0-9. Make sure these are different from the cores used to run traj_streamer (specified in training and evaluation scripts)
 
 ## Running on a Cluster
 
